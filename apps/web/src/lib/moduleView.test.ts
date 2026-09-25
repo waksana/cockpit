@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { ModuleRuntime } from './moduleRuntime';
 import { observeModuleView } from './moduleView';
 import { createCockpitStore } from '../net/store';
-import type { ModuleEventPayload } from '@cockpit/module-api';
+import type { ModuleEventPayload } from '@cockpit/module-api/frontend';
 import { EMPTY_CHAT_WINDOW } from './moduleChatWindow';
 import { metaToSession } from '../net/sessionWindow';
 

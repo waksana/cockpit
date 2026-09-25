@@ -1,4 +1,4 @@
-import type { DraftPurpose } from '@cockpit/module-api';
+import type { DraftPurpose } from '@cockpit/module-api/frontend';
 import { browserDraftStorage, draftIdentity, draftRecord, SessionDraft, type DraftStorage } from './textDraft';
 import { describeReason, reportUxError } from './errorReporter';
 

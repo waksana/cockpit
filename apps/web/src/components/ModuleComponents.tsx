@@ -1,7 +1,7 @@
 import { createContext, createElement, useContext, useSyncExternalStore, type Attributes, type ComponentType, type ReactNode } from 'react';
 import type {
   AttachmentProps, MarkdownNode, MessageProps, ModuleComponentProps, SessionStatusProps,
-} from '@cockpit/module-api';
+} from '@cockpit/module-api/frontend';
 import { ModuleErrorBoundary, moduleRuntime, type ModuleRuntime } from '../lib/moduleRuntime';
 import { sessionActivityIndicators } from '../lib/sessionActivity';
 import { SessionActivity } from './SessionActivity';

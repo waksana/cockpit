@@ -4,7 +4,7 @@ import * as React from 'react';
 import { createPortal } from 'react-dom';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { ServerEvent, type ModuleEventPayload } from '@cockpit/protocol';
-import type { ActivateFrontend, ComposerEditorProps, DraftSchemaHandle, ModuleAsset, ModuleFrontend, ModuleFrontendContext, MarkdownNode, ModuleMenuRegistration, ModuleMenuState, ModuleMenuTarget } from '@cockpit/module-api';
+import type { ActivateFrontend, ComposerEditorProps, DraftSchemaHandle, ModuleAsset, ModuleFrontend, ModuleFrontendContext, MarkdownNode, ModuleMenuRegistration, ModuleMenuState, ModuleMenuTarget } from '@cockpit/module-api/frontend';
 import { ModuleRuntime, validateModuleAsset } from './moduleRuntime';
 import { createSessionDrafts } from './textDraft';
 import { appendFixture, fixtureItem, fixtureSchema, memoryDraftStorage, type FixtureData } from '../test/draftFixture';
@@ -951,7 +951,7 @@ test('draft schemas stage initialization and prepare drafts discovered during as
   let created = 0, finish!: () => void, entered!: () => void;
   const ready = new Promise<void>(resolve => { entered = resolve; });
   const waiting = new Promise<void>(resolve => { finish = resolve; });
-  let handle!: import('@cockpit/module-api').DraftSchemaHandle<FixtureData>;
+  let handle!: import('@cockpit/module-api/frontend').DraftSchemaHandle<FixtureData>;
   const f = fixture([asset()], async context => {
     handle = context.state.registerDraft(fixtureSchema({ create: () => {
       created++;

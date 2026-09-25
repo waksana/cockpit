@@ -1,0 +1,10 @@
+{
+  "name": "sdk-frontend-19-consumer",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@types/react": "19.2.18",
+    "react": "19.2.8",
+    "typescript": "5.9.3"
+  }
+}

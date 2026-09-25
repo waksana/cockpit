@@ -1,4 +1,6 @@
 import type * as React from 'react';
+export type * from './contract.ts';
+export type { ModuleAsset, ModuleManifest, ModuleRole } from './manifest.ts';
 import type {
   ModuleEventPayload,
   NativeAttachmentDescriptor,

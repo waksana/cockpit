@@ -7,11 +7,20 @@ files. It does not contain React, host implementation code, the internal protoco
 registry, or workspace/file dependencies.
 
 The source of truth stays in this repository:
-[`packages/module-api/src/index.ts`](../packages/module-api/src/index.ts) for the
-backend and manifest surface, [`frontend.ts`](../packages/module-api/src/frontend.ts)
-for Web API v2, and [`contract.ts`](../packages/module-api/src/contract.ts) for
-shared public projections and runtime constants. The host imports these same
-types and constants; modules must not copy them.
+[`backend.ts`](../packages/module-api/src/backend.ts),
+[`manifest.ts`](../packages/module-api/src/manifest.ts) and
+[`frontend.ts`](../packages/module-api/src/frontend.ts) own the module APIs.
+Shared wire types are generated from the host's canonical protocol schemas through
+the explicit [public projection](../packages/protocol/src/module-sdk-projection.ts).
+The generated `wire.ts` is checked in for review, not edited by hand.
+[`contract.ts`](../packages/module-api/src/contract.ts) owns the recursive module
+payload and invocation metadata; the host imports these instead of copying them.
+Only flattened public declarations enter the SDK, not Zod or the internal intent
+registry.
+
+After changing a projected schema, run `pnpm sdk:generate`. SDK builds and CI reject
+a stale projection. Generation rejects unresolved/internal type references and
+normalizes property/union ordering so inference order is not an API change.
 
 ## Install from GitHub Packages
 
@@ -42,11 +51,28 @@ package grants that repository read access; set `NODE_AUTH_TOKEN: ${{ github.tok
 use `actions/setup-node` with `registry-url: https://npm.pkg.github.com`. Never
 commit `.npmrc` credentials, a personal access token, or generated auth files.
 
-React and its type declarations are peers because frontend modules reuse the
-host's React instance. Backend-only modules do not load React at runtime. A module
-with a frontend should develop against a supported `react` and `@types/react`
-version without bundling React into the module. Commit the dependency and
-lockfile together, retaining the resolved package integrity.
+Commit the dependency and lockfile together, retaining the resolved package
+integrity. The public entry points have separate environment requirements:
+
+| Import | Surface | Consumer requirements |
+| --- | --- | --- |
+| `@waksana/cockpit-module-sdk` | Common wire, manifest and invocation types; constants | No React or Node types |
+| `@waksana/cockpit-module-sdk/backend` | Backend activation, routes and host calls; common exports | `@types/node` 22 through 25 for TypeScript |
+| `@waksana/cockpit-module-sdk/frontend` | Web API v2, React component and draft contracts; common types | Matching React / `@types/react` 18 or 19 and DOM types |
+| `@waksana/cockpit-module-sdk/runtime` | Runtime constants only | No peers |
+
+Environment peers are optional at installation because a consumer need not use
+every entry point. Install the peers for the entry points you compile; missing
+required declarations fail type checking. A backend consumer does not need
+React. A frontend consumer uses the host's React instance and must not bundle
+another React/ReactDOM. Optional does not mean an incompatible installed peer is
+supported.
+
+The supported compiler baseline is TypeScript 5.9.3 (5.9 series), in NodeNext or
+Bundler resolution mode. ESM is the runtime format; there is no CommonJS entry.
+Backend and frontend types moved out of the root entry in the breaking SDK
+change recorded in [`changes.json`](../packages/module-api/changes.json).
+Update those imports to `/backend` or `/frontend`, not to private `dist` paths.
 
 ## Build and verify
 
@@ -59,11 +85,14 @@ pnpm --filter @waksana/cockpit-module-sdk test
 pnpm --filter @waksana/cockpit-module-sdk pack --pack-destination sdk-output
 ```
 
-The pack test installs the generated archive into an isolated npm consumer,
-imports its runtime constants, compiles a TypeScript consumer, and rejects
-workspace/file dependencies or source-only output. It uses local peer type
-declarations and is not a registry authentication or peer-installation test.
-Consumer CI must separately exercise an authenticated, frozen-lockfile clean
+The pack test starts from locked consumer fixtures, runs `npm ci`, then installs
+the actual tarball with normal peer resolution. It uses no workspace links,
+`--legacy-peer-deps`, or `skipLibCheck`. The matrix covers peer-free common types,
+Node 22/current Node type consumers, React 18/19 frontends, both resolution modes,
+and peer-free runtime imports. It also rejects private deep imports and unwanted
+archive contents. Fixture lockfiles pin the exact compiler, peers and integrity.
+This is local package-consumption evidence, not registry authentication evidence.
+Consumer CI must separately exercise an authenticated, frozen-lockfile registry
 install without a host-source or local-tarball fallback.
 
 ## Versions and compatibility
@@ -74,6 +103,28 @@ changes, applying ordinary semver to the public contract. Host implementations
 may add capability fields while keeping an API version stable; modules must check
 the documented capability member before using it and fail clearly when a required
 capability is absent.
+
+Record each SDK version decision in
+[`packages/module-api/changes.json`](../packages/module-api/changes.json).
+During 0.x, incompatible changes require a minor bump; compatible additions
+also use a minor bump, and compatible fixes may use a patch bump. At 1.x and
+later, incompatible changes require a major bump. Raising the minimum compiler
+or removing a supported peer version is a compatibility change, not just a
+development-tool update.
+
+PR CI compares SDK source, runtime constants, package metadata and compiler
+configuration with the exact base commit. Changes require a newer SDK version
+and a matching change record; host-only changes do not. To run this gate locally:
+
+```sh
+node scripts/check-sdk-changes.mjs EXACT_BASE_COMMIT_SHA
+```
+
+The gate enforces the recorded version decision; it does not infer behavioral
+semver automatically. Review public meaning and capability changes as well as
+type signatures. Change records describe source preparation, not successful
+publication. Release identity checks and an actual registry install remain
+separate requirements.
 
 An SDK version is not proof that every host version supports a module. Module
 releases still record and test their exact host compatibility in the

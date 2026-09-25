@@ -1,10 +1,6 @@
 import { MAX_MODULE_EVENT_BYTES } from '@waksana/cockpit-module-sdk/runtime';
-
-/** Module-owned JSON data, never a host event envelope or a live resource. */
-export type ModuleEventPayload =
-  | null | boolean | number | string
-  | readonly ModuleEventPayload[]
-  | { readonly [key: string]: ModuleEventPayload };
+import type { ModuleEventPayload } from '@waksana/cockpit-module-sdk';
+export type { ModuleEventPayload } from '@waksana/cockpit-module-sdk';
 
 export { MAX_MODULE_EVENT_BYTES };
 const MAX_DEPTH = 64;

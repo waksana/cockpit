@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { test } from 'node:test';
-import type { NativeObservation } from '@cockpit/module-api';
+import type { NativeObservation } from '@cockpit/module-api/backend';
 import { ModuleHost } from './module-host.ts';
 import { installLocalModule, selectModule } from './module-install.ts';
 

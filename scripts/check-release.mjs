@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { checkSdkVersionChange } from './check-sdk-changes.mjs';
 
 function checkExactTagTarget(tag, sourceSha, refs) {
   const targets = new Map();
@@ -58,6 +59,8 @@ export function checkSdkSourceVersion(repository = resolve(fileURLToPath(new URL
   assert.equal(manifest.publishConfig?.registry, 'https://npm.pkg.github.com');
   assert.equal(manifest.dependencies, undefined, 'SDK publication must not have runtime dependencies');
   assert.doesNotMatch(JSON.stringify(manifest), /(?:workspace|file):/, 'SDK publication must not reference the workspace');
+  const records = JSON.parse(readFileSync(resolve(repository, 'packages/module-api/changes.json'), 'utf8'));
+  checkSdkVersionChange(manifest.version, manifest.version, false, records);
   return manifest.version;
 }
 

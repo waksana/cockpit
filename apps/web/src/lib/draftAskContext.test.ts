@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { DraftAskContext } from '@cockpit/module-api';
+import type { DraftAskContext } from '@cockpit/module-api/frontend';
 import { DraftCache } from './draftSelection';
 import { resolveDraft } from './textDraft';
 import { memoryDraftStorage } from '../test/draftFixture';

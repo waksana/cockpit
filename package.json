@@ -9,6 +9,8 @@
     "node": ">=22.12.0"
   },
   "scripts": {
+    "sdk:generate": "node scripts/generate-module-sdk.mjs --write",
+    "sdk:check": "node scripts/generate-module-sdk.mjs --check",
     "dev:server": "pnpm --filter @cockpit/server dev",
     "dev:web": "pnpm --filter @cockpit/web dev",
     "build": "pnpm -r build",

@@ -17,7 +17,7 @@ export interface ChatSession extends SessionMeta {
   controlsStale?: boolean;
   controlsDisplay?: NonNullable<SessionMeta['controls']>;
   controlsError?: string;
-  activityDisplay?: import('@cockpit/module-api').SessionActivityDisplay;
+  activityDisplay?: import('@cockpit/module-api/frontend').SessionActivityDisplay;
   messages: ChatMessage[];
   materialized: boolean;
   historyStale: boolean;

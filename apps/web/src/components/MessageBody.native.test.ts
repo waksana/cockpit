@@ -6,7 +6,7 @@ import { MessageBody } from './MessageBody';
 import { MessageContent } from './MessageContent';
 import { hasMessageContent } from '../lib/messageContent';
 import type { ChatMessage } from '@cockpit/protocol';
-import type { ActivateFrontend, MarkdownNode, MessageIdentity } from '@cockpit/module-api';
+import type { ActivateFrontend, MarkdownNode, MessageIdentity } from '@cockpit/module-api/frontend';
 import { ModuleRuntime, moduleRuntime } from '../lib/moduleRuntime';
 import { ModuleRuntimeProvider } from './ModuleComponents';
 import { failOnReport } from '../test/failOnReport';

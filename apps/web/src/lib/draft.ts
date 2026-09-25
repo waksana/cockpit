@@ -1,5 +1,5 @@
 import { Intents, type IntentBody } from '@cockpit/protocol';
-import type { DraftNativeFields, DraftReference } from '@cockpit/module-api';
+import type { DraftNativeFields, DraftReference } from '@cockpit/module-api/frontend';
 
 type DraftIntent = 'prompt' | 'respondAsk' | 'planSupersede';
 export type NativeDraftRequest = {

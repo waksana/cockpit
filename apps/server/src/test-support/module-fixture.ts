@@ -3,7 +3,7 @@ import { chmod, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { TestContext } from 'node:test';
 import { gzipSync } from 'node:zlib';
-import type { ModuleManifest, NativeObservation } from '@cockpit/module-api';
+import type { ModuleManifest, NativeObservation } from '@cockpit/module-api/backend';
 
 export interface TarEntry { path: string; content?: string | Buffer; kind?: string; link?: string; size?: number }
 export function archive(entries: TarEntry[]): Buffer {

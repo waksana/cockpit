@@ -22,7 +22,7 @@ import { sessionSettingsBlockReason, type SessionSettingsAction, type SessionSet
 import type { NativeDraftRequest } from '../lib/draft';
 import { observeDraftDecisions, retireDraftSession } from '../lib/draftSelection';
 import { findPendingDecision } from '../lib/pendingDecisions';
-import type { DraftReference, DraftSendBlockReason, ModuleEventPayload } from '@cockpit/module-api';
+import type { DraftReference, DraftSendBlockReason, ModuleEventPayload } from '@cockpit/module-api/frontend';
 
 // Background tabs release their native chat read.
 type MutationOwner = 'caller' | 'chat' | 'global';

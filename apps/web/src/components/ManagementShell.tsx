@@ -7,7 +7,7 @@ import { Shell, MasterPane, DetailPane } from './Shell';
 import { PaneHeader } from './PaneHeader';
 import { StateNotice } from './StateNotice';
 import { IconButton, RefreshButton } from './Button';
-import type { ManagementHeaderProps, ManagementDetailHeaderProps } from '@cockpit/module-api';
+import type { ManagementHeaderProps, ManagementDetailHeaderProps } from '@cockpit/module-api/frontend';
 import { useModuleElement } from './ModuleComponents';
 
 export type ManageSection = 'mcp' | 'skills';

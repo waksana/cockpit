@@ -3,7 +3,7 @@ import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markd
 import remarkGfm from 'remark-gfm';
 import { CopyButton } from './CopyButton';
 import { MarkdownReplacement, MessagePresentation } from './ModuleComponents';
-import type { MessageIdentity, MessageOrigin } from '@cockpit/module-api';
+import type { MessageIdentity, MessageOrigin } from '@cockpit/module-api/frontend';
 import { ORIGINAL_MARKDOWN_TARGET, originalMarkdownTarget, remarkOriginalMarkdownTargets } from '../lib/messageContent';
 
 const OriginContext = createContext<MessageOrigin | undefined>(undefined);

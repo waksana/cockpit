@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { ActivateFrontend, ComponentMiddleware, MessageProps } from '@cockpit/module-api';
+import type { ActivateFrontend, ComponentMiddleware, MessageProps } from '@cockpit/module-api/frontend';
 import { ModuleRuntime } from '../lib/moduleRuntime';
 
 const decorate: ComponentMiddleware<MessageProps> = Base => function AsyncCard(props) {

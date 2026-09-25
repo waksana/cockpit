@@ -6,7 +6,7 @@ import { CHAT_STREAM_URL, intentUrl } from '../lib/config';
 import { dismissUxError, getUxErrors } from '../lib/errorReporter';
 import { DraftCache, getDraftSession } from '../lib/draftSelection';
 import { ModuleRuntime } from '../lib/moduleRuntime';
-import type { DraftPurpose, DraftSchemaHandle, ModuleFrontendContext } from '@cockpit/module-api';
+import type { DraftPurpose, DraftSchemaHandle, ModuleFrontendContext } from '@cockpit/module-api/frontend';
 import { appendFixture, fixtureItem, fixtureSchema, type FixtureData } from '../test/draftFixture';
 import { IntentHttpError, isSessionUnloadedError, SessionUnloadedError } from './client';
 import { createCockpitStore } from './store';

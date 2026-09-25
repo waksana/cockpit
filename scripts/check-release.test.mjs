@@ -33,6 +33,9 @@ function fixture(t) {
     version: '0.1.1',
     publishConfig: { registry: 'https://npm.pkg.github.com' },
   }));
+  writeFileSync(join(root, 'packages/module-api/changes.json'), JSON.stringify([
+    { version: '0.1.1', kind: 'fix', summary: 'SDK fixture release.' },
+  ]));
   const manifest = { format: 1, product: 'cockpit', version: '0.1.0', sourceSha: 'a'.repeat(40),
     node: process.versions.node, platform: 'linux', arch: 'x64' };
   const archive = join(root, 'runtime.tar.gz');
@@ -51,7 +54,9 @@ test('checked-in workspace, MCP and delivery notes use one version', () => {
 });
 
 test('checked-in SDK keeps its independent release version', () => {
-  assert.equal(checkSdkSourceVersion(fileURLToPath(new URL('..', import.meta.url))), '0.1.1');
+  const version = checkSdkSourceVersion(fileURLToPath(new URL('..', import.meta.url)));
+  const records = JSON.parse(readFileSync(new URL('../packages/module-api/changes.json', import.meta.url), 'utf8'));
+  assert.equal(version, records[0].version);
 });
 
 test('release notes keep only the current version', t => {
@@ -86,6 +91,10 @@ test('SDK source version is independent but keeps strict package identity', t =>
   const manifest = JSON.parse(readFileSync(join(f.root, 'packages/module-api/package.json'), 'utf8'));
   manifest.version = '2.3.4';
   writeFileSync(join(f.root, 'packages/module-api/package.json'), JSON.stringify(manifest));
+  assert.throws(() => checkSdkSourceVersion(f.root), /must match the package version/);
+  writeFileSync(join(f.root, 'packages/module-api/changes.json'), JSON.stringify([
+    { version: '2.3.4', kind: 'fix', summary: 'SDK fixture release.' },
+  ]));
   assert.equal(checkSdkSourceVersion(f.root), '2.3.4');
   manifest.dependencies = { internal: 'workspace:*' };
   writeFileSync(join(f.root, 'packages/module-api/package.json'), JSON.stringify(manifest));

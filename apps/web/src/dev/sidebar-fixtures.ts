@@ -1,5 +1,5 @@
 import { createElement } from 'react';
-import type { ActivateFrontend } from '@cockpit/module-api';
+import type { ActivateFrontend } from '@cockpit/module-api/frontend';
 import type { SessionRole } from '@cockpit/protocol';
 import { ModuleRuntime } from '../lib/moduleRuntime';
 import { activityFixture } from './activity-fixtures';

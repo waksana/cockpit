@@ -1,0 +1,17 @@
+[
+  {
+    "version": "0.2.0",
+    "kind": "breaking",
+    "summary": "Move backend and frontend contracts from the root to dedicated entry points. Generate wire types from the canonical protocol, including all preparation statuses. Make environment peers optional and verify isolated TypeScript 5.9.3 / React 18 and 19 consumption."
+  },
+  {
+    "version": "0.1.1",
+    "kind": "fix",
+    "summary": "Allocate a new release identity after the unsuccessful initial publication and correct local tarball publication."
+  },
+  {
+    "version": "0.1.0",
+    "kind": "initial",
+    "summary": "Introduce the standalone ESM and declaration SDK. This source change record does not establish registry publication."
+  }
+]
