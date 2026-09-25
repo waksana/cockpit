@@ -23,7 +23,7 @@ export const REQUIRED_FILES = [
   'packages/protocol/package.json', 'packages/protocol/dist/index.js',
   'packages/protocol/src/index.ts',
   'packages/module-api/package.json', 'packages/module-api/dist/index.js',
-  'packages/module-api/dist/index.d.ts',
+  'packages/module-api/dist/index.d.ts', 'packages/module-api/runtime.js',
 ];
 // Build outputs copied from the checkout; the Web is separately copied into the runtime.
 const compiledPackages = ['apps/server', 'apps/mcp', 'packages/core', 'packages/protocol', 'packages/module-api'];
@@ -35,6 +35,7 @@ const sourceRoots = [
   'LICENSE', 'NOTICE.md', 'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml',
   'apps/web/package.json',
   ...packagePaths.map(path => `${path}/package.json`),
+  'packages/module-api/runtime.js', 'packages/module-api/runtime.d.ts',
   'apps/server/src', 'packages/core/src', 'packages/protocol/src',
 ];
 const omittedDirectories = new Set([
@@ -184,7 +185,9 @@ async function runtimePackageJson(path, compiled) {
       manifest.exports = Object.fromEntries(Object.entries(manifest.exports).map(([key, value]) => [key, compiledExport(value)]));
     }
     for (const value of [manifest.main, ...Object.values(manifest.exports ?? {})]) {
-      if (value !== undefined && !/^\.\/dist\/.+\.js$/.test(value)) throw new Error(`Unsupported runtime entry in ${path}: ${JSON.stringify(value)}`);
+      if (value !== undefined && !/^\.\/(?:dist\/.+|runtime)\.js$/.test(value)) {
+        throw new Error(`Unsupported runtime entry in ${path}: ${JSON.stringify(value)}`);
+      }
     }
   }
   await writeFile(path, `${JSON.stringify(manifest, null, 2)}\n`);

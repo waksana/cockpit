@@ -1,4 +1,4 @@
-import { MAX_MODULE_EVENT_BYTES } from '@waksana/cockpit-module-sdk';
+import { MAX_MODULE_EVENT_BYTES } from '@waksana/cockpit-module-sdk/runtime';
 
 /** Module-owned JSON data, never a host event envelope or a live resource. */
 export type ModuleEventPayload =

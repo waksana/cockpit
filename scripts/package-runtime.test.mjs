@@ -35,7 +35,11 @@ function fakeDeploy(source, target, app, state) {
   cpSync(join(source, `apps/${app}/package.json`), join(target, 'package.json'));
   cpSync(join(source, `apps/${app}/dist`), join(target, 'dist'), { recursive: true });
   const modules = join(target, 'node_modules');
-  const published = { core: ['dist', 'src'], protocol: ['dist', 'src'], 'module-api': ['dist'] };
+  const published = {
+    core: ['dist', 'src'],
+    protocol: ['dist', 'src'],
+    'module-api': ['dist', 'runtime.js', 'runtime.d.ts'],
+  };
   const workspace = name => {
     const packageName = name === 'module-api' ? '@waksana/cockpit-module-sdk' : `@cockpit/${name}`;
     const scope = packageName.slice(1).split('/')[0];
@@ -90,7 +94,7 @@ async function fixture(t, { realDeploy = false } = {}) {
   };
   for (const path of ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'apps/web/package.json',
     'apps/server/package.json', 'apps/mcp/package.json', 'packages/core/package.json', 'packages/protocol/package.json',
-    'packages/module-api/package.json']) {
+    'packages/module-api/package.json', 'packages/module-api/runtime.js', 'packages/module-api/runtime.d.ts']) {
     track(path, readFileSync(join(repository, path), 'utf8'));
   }
   track('LICENSE', 'Synthetic first-party license');

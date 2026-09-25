@@ -1,14 +1,10 @@
+export { MAX_MODULE_EVENT_BYTES, MCP_INVOCATION_META_KEY } from '../runtime.js';
+
 /** Module-owned JSON data, never a host event envelope or a live resource. */
 export type ModuleEventPayload =
   | null | boolean | number | string
   | readonly ModuleEventPayload[]
   | { readonly [key: string]: ModuleEventPayload };
-
-/** Maximum UTF-8 byte length of a serialized module event payload. */
-export const MAX_MODULE_EVENT_BYTES = 64 * 1024;
-
-/** Request `_meta` key the host sets on every module HTTP MCP tool call. */
-export const MCP_INVOCATION_META_KEY = 'cockpit/invocation';
 
 export interface McpInvocationMeta {
   readonly sessionId: string;

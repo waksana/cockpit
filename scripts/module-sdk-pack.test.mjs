@@ -19,7 +19,10 @@ test('module SDK pack is a standalone JS and declaration package', async t => {
   const packed = JSON.parse(packOutput.slice(packOutput.lastIndexOf('\n{') + 1));
   const archive = packed.filename;
   const files = execFileSync('tar', ['-tzf', archive], { encoding: 'utf8' }).trim().split('\n');
-  for (const required of ['package/dist/index.js', 'package/dist/index.d.ts', 'package/dist/contract.js']) {
+  for (const required of [
+    'package/dist/index.js', 'package/dist/index.d.ts', 'package/dist/contract.js',
+    'package/runtime.js', 'package/runtime.d.ts',
+  ]) {
     assert.ok(files.includes(required), `${required} is missing`);
   }
   assert.ok(files.every(file => !file.startsWith('package/src/')), 'source TypeScript must not be published');
