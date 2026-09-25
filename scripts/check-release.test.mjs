@@ -30,7 +30,7 @@ function fixture(t) {
   mkdirSync(join(root, 'packages/module-api'), { recursive: true });
   writeFileSync(join(root, 'packages/module-api/package.json'), JSON.stringify({
     name: '@waksana/cockpit-module-sdk',
-    version: '0.1.0',
+    version: '0.1.1',
     publishConfig: { registry: 'https://npm.pkg.github.com' },
   }));
   const manifest = { format: 1, product: 'cockpit', version: '0.1.0', sourceSha: 'a'.repeat(40),
@@ -48,6 +48,10 @@ function fixture(t) {
 
 test('checked-in workspace, MCP and delivery notes use one version', () => {
   checkSourceVersion(fileURLToPath(new URL('..', import.meta.url)));
+});
+
+test('checked-in SDK keeps its independent release version', () => {
+  assert.equal(checkSdkSourceVersion(fileURLToPath(new URL('..', import.meta.url))), '0.1.1');
 });
 
 test('release notes keep only the current version', t => {
@@ -78,7 +82,7 @@ test('host delivery permits an independently versioned module SDK', t => {
 
 test('SDK source version is independent but keeps strict package identity', t => {
   const f = fixture(t);
-  assert.equal(checkSdkSourceVersion(f.root), '0.1.0');
+  assert.equal(checkSdkSourceVersion(f.root), '0.1.1');
   const manifest = JSON.parse(readFileSync(join(f.root, 'packages/module-api/package.json'), 'utf8'));
   manifest.version = '2.3.4';
   writeFileSync(join(f.root, 'packages/module-api/package.json'), JSON.stringify(manifest));
@@ -97,10 +101,10 @@ test('SDK release binds its independent tag to the packed name and version', t =
   writeFileSync(join(sdkRoot, 'package/dist/index.d.ts'), 'export {};\n');
   const archive = join(f.root, 'sdk.tgz');
   execFileSync('tar', ['-czf', archive, '-C', sdkRoot, 'package']);
-  assert.equal(checkSdkRelease('module-sdk-v0.1.0', 'a'.repeat(40), archive, f.root).package,
+  assert.equal(checkSdkRelease('module-sdk-v0.1.1', 'a'.repeat(40), archive, f.root).package,
     '@waksana/cockpit-module-sdk');
   assert.throws(() => checkSdkRelease('v0.1.0', 'a'.repeat(40), archive, f.root), /SDK release tags/);
-  assert.throws(() => checkSdkRelease('module-sdk-v0.1.1', 'a'.repeat(40), archive, f.root), /match the tag/);
+  assert.throws(() => checkSdkRelease('module-sdk-v0.1.0', 'a'.repeat(40), archive, f.root), /match the tag/);
 });
 
 test('release metadata binds the tag, all workspace versions, fixed archive and current Node platform', t => {
@@ -148,6 +152,6 @@ test('release binds both lightweight and annotated remote tags and rejects moved
 
 test('SDK release binds its own tag namespace without accepting host tags', () => {
   const sha = 'a'.repeat(40);
-  checkSdkTagTarget('module-sdk-v0.1.0', sha, `${sha}\trefs/tags/module-sdk-v0.1.0\n`);
+  checkSdkTagTarget('module-sdk-v0.1.1', sha, `${sha}\trefs/tags/module-sdk-v0.1.1\n`);
   assert.throws(() => checkSdkTagTarget('v0.1.0', sha, `${sha}\trefs/tags/v0.1.0\n`));
 });

@@ -52,4 +52,4 @@ jobs:
       - name: Publish to GitHub Packages
         env:
           NODE_AUTH_TOKEN: ${{ github.token }}
-        run: npm publish sdk-output/waksana-cockpit-module-sdk-*.tgz
+        run: node scripts/publish-module-sdk.mjs ./sdk-output/waksana-cockpit-module-sdk-*.tgz

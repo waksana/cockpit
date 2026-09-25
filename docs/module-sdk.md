@@ -25,7 +25,7 @@ Configure the `@waksana` scope without writing a token into the repository:
 Then install an explicit SDK version:
 
 ```sh
-NODE_AUTH_TOKEN=... npm install --save-dev @waksana/cockpit-module-sdk@0.1.0
+NODE_AUTH_TOKEN=... npm install --save-dev @waksana/cockpit-module-sdk@0.1.1
 ```
 
 For a private package, a developer token needs `read:packages` and repository
