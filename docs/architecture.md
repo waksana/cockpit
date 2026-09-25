@@ -212,10 +212,19 @@ Interaction rules:
 
 **Global menu → 默认新会话模型** selects the model used only for future new
 sessions. Cockpit owns this preference in `$COCKPIT_HOME/config.json`
-(`~/.cockpit/config.json` when unset), as `{ "modelId": "gpt-6-astra" }`.
-An absent file means `gpt-6-astra`; saving atomically replaces it and survives
-refresh and restart. Invalid settings and storage errors are explicit, not a
-reset. Copilot's own user configuration is never written.
+(`~/.cockpit/config.json` when unset), in `values.sessionDefaults`:
+
+```json
+{ "schemaVersion": 1, "revision": 1, "values": { "sessionDefaults": { "modelId": "gpt-6-astra" } } }
+```
+
+An absent file or unset `values.sessionDefaults` means `gpt-6-astra`. Saving
+under the host storage writer lease preserves unrelated `values`, increments the
+revision and atomically replaces the file; it survives refresh and restart.
+The earlier flat `{ "modelId": "..." }` format is still read without changing
+the selected model and becomes versioned only on explicit save. Reads never
+rewrite configuration. Invalid settings, unsupported versions and storage errors
+are explicit, not a reset. Copilot's own user configuration is never written.
 
 `settings/session-defaults` returns the saved ID, fresh native model candidates
 and `modelError`. A catalog failure returns `models:null` with the saved ID and

@@ -1,10 +1,15 @@
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
+import type { SessionMeta } from '@cockpit/protocol';
 
 // Chat Lab browser smoke: every page loads the production components on
 // synthetic fixtures only. Screenshots are saved as the CI visual baseline
 // (artifact `chat-lab-screenshots`); they are reviewed, not pixel-compared.
 
 type Guard = { problems: string[] };
+type SyntheticState = { activeId: string | null; sessions: SessionMeta[]; sendDraft: () => Promise<boolean> };
+type SyntheticStoreModule = {
+  useCockpit: { setState(update: Partial<SyntheticState> | ((state: SyntheticState) => Partial<SyntheticState>)): void };
+};
 
 async function open(page: Page, query: string): Promise<Guard> {
   const guard: Guard = { problems: [] };
@@ -114,6 +119,42 @@ for (const [name, query, ready] of appPages) {
   });
 }
 
+for (const section of ['mcp', 'skills'] as const) {
+  test(`global module ${section} rows share native list styling without substitute controls`, async ({ page }, testInfo) => {
+    const guard = await open(page, `scene=resources&page=${section}`);
+    const native = page.getByRole('region', { name: '全局配置', exact: true });
+    const modules = page.getByRole('region', { name: '模块提供', exact: true });
+    await expect(modules.locator('.manage-row').first()).toBeVisible();
+    await settle(page);
+    const profiles = await page.locator('.manage-list .manage-row').evaluateAll(rows => rows.map(row => {
+      const identity = row.querySelector<HTMLElement>('.manage-resource-identity')!;
+      const name = row.querySelector<HTMLElement>('.manage-row-name')!;
+      const style = getComputedStyle(row);
+      const text = getComputedStyle(identity);
+      return {
+        rowPadding: style.padding, gap: style.gap, border: style.border, radius: style.borderRadius,
+        background: style.backgroundColor, align: style.alignItems,
+        identityPadding: text.padding, minHeight: text.minHeight, font: text.font, color: text.color,
+        nameFont: getComputedStyle(name).font,
+        inset: identity.getBoundingClientRect().left - row.getBoundingClientRect().left,
+      };
+    }));
+    expect(profiles.length).toBeGreaterThan(1);
+    for (const profile of profiles) expect(profile).toEqual(profiles[0]);
+    await expect(native.getByRole('switch').first()).toBeVisible();
+    await expect(modules.getByRole('switch')).toHaveCount(0);
+    await expect(modules.locator('.manage-resource-controls')).toHaveCount(0);
+    await expect(modules).not.toContainText(/随角色启用|只读|不能全局关闭|由模块管理/);
+    await expect(modules.locator('a button')).toHaveCount(0);
+    await snapshot(page, testInfo, `global-module-${section}-rows`);
+    if (section === 'skills') {
+      await modules.getByRole('link').first().click();
+      await expect(page.locator('.manage-detail-body')).toBeVisible();
+    }
+    await expectHealthy(page, guard);
+  });
+}
+
 test('dark theme keeps the workspace and transcript readable', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'one dark baseline is enough');
   await page.emulateMedia({ colorScheme: 'dark' });
@@ -144,6 +185,82 @@ test('composer accepts real typing without sending anything', async ({ page }) =
   await editor.click();
   await page.keyboard.type('合成输入 smoke');
   await expect(editor).toHaveValue(/合成输入 smoke/);
+  await expectHealthy(page, guard);
+});
+
+test('ask_user multiline submission restores empty shared-composer geometry', async ({ page }, testInfo) => {
+  const guard = await open(page, 'scene=full-web&case=ask');
+  const editor = page.getByRole('textbox', { name: '消息输入', exact: true });
+  await expect(editor).toBeVisible();
+  await settle(page);
+  const measure = () => editor.evaluate(element => {
+    const { width, height } = element.getBoundingClientRect();
+    return { width, height, scrollWidth: element.scrollWidth, clientWidth: element.clientWidth };
+  });
+  const empty = await measure();
+  await editor.fill('多行自由回复。\n第二行中文内容。\n' + 'LongUnbrokenAnswer'.repeat(30));
+  await settle(page);
+  const expanded = await measure();
+  expect(expanded.height).toBeGreaterThan(empty.height);
+  expect(expanded.width).toBeCloseTo(empty.width, 0);
+  expect(expanded.scrollWidth - expanded.clientWidth).toBeLessThanOrEqual(1);
+  await snapshot(page, testInfo, 'ask-multiline-before-send');
+  await page.getByRole('button', { name: '提交回答', exact: true }).click();
+  await expect(editor).toHaveValue('');
+  await snapshot(page, testInfo, 'ask-multiline-after-send');
+  const cleared = await measure();
+  testInfo.annotations.push({ type: 'geometry', description: JSON.stringify({ empty, expanded, cleared }) });
+  expect(cleared.width).toBeCloseTo(empty.width, 0);
+  expect(cleared.height).toBeLessThanOrEqual(empty.height + 1);
+  await expectHealthy(page, guard);
+});
+
+test('ask_user drafts retain text on rejection and size themselves independently when switching questions', async ({ page }) => {
+  const guard = await open(page, 'scene=full-web&case=ask');
+  const editor = page.getByRole('textbox', { name: '消息输入', exact: true });
+  await expect(editor).toBeVisible();
+  await settle(page);
+  const emptyHeight = await editor.evaluate(element => element.getBoundingClientRect().height);
+  const text = '未接受的多行回答。\n第二行应保留。\n' + '中文换行'.repeat(100);
+  await page.evaluate(async path => {
+    const { useCockpit } = await import(path) as SyntheticStoreModule;
+    useCockpit.setState({ sendDraft: async () => false });
+  }, '/src/net/store.ts');
+  await editor.fill(text);
+  await page.getByRole('button', { name: '提交回答', exact: true }).click();
+  await expect(editor).toHaveValue(text);
+  await expect(page.getByRole('button', { name: '提交回答', exact: true })).toBeEnabled();
+  expect(await editor.evaluate(element => element.getBoundingClientRect().height)).toBeGreaterThan(emptyHeight);
+
+  await page.evaluate(async path => {
+    const { useCockpit } = await import(path) as SyntheticStoreModule;
+    useCockpit.setState(state => ({ sessions: state.sessions.map(session => {
+      if (session.sessionId !== state.activeId || !session.ask) return session;
+      return { ...session, decisions: [
+        { kind: 'ask', request: session.ask },
+        { kind: 'ask', request: { requestId: 'second-question', question: '第二个合成问题', allowFreeform: true } },
+      ] };
+    }) }));
+  }, '/src/net/store.ts');
+  await page.getByRole('tab', { name: '问题 2', exact: true }).click();
+  await expect(editor).toHaveValue('');
+  expect(await editor.evaluate(element => element.getBoundingClientRect().height)).toBeLessThanOrEqual(emptyHeight + 1);
+  await page.getByRole('tab', { name: '问题 1', exact: true }).click();
+  await expect(editor).toHaveValue(text);
+  expect(await editor.evaluate(element => element.getBoundingClientRect().height)).toBeGreaterThan(emptyHeight);
+  await editor.fill('');
+  expect(await editor.evaluate(element => element.getBoundingClientRect().height)).toBeLessThanOrEqual(emptyHeight + 1);
+
+  await editor.fill(text);
+  await page.evaluate(async path => {
+    const { useCockpit } = await import(path) as SyntheticStoreModule;
+    useCockpit.setState(state => ({ sessions: state.sessions.map(session => session.sessionId !== state.activeId ? session
+      : { ...session, decisions: [{ kind: 'ask', request: {
+        requestId: 'replacement-question', question: '新的合成问题', allowFreeform: true,
+      } }] }) }));
+  }, '/src/net/store.ts');
+  await expect(editor).toHaveValue('');
+  expect(await editor.evaluate(element => element.getBoundingClientRect().height)).toBeLessThanOrEqual(emptyHeight + 1);
   await expectHealthy(page, guard);
 });
 

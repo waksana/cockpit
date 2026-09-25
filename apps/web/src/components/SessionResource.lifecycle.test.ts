@@ -1879,9 +1879,8 @@ test('session Skills rows show source · description as one summary line beside 
   assert.equal(summary.textContent, `个人 · ${long}`);
   assert.equal(summary.getAttribute('data-lines'), '1');
   assert.ok(first.querySelector('[aria-label="展开github-coding摘要"]'), 'a clipped summary stays readable through its own disclosure');
-  const controls = first.querySelector('.manage-resource-controls')!;
-  assert.equal(controls.querySelector('[role="switch"]'), null, 'module resources follow their role');
-  assert.equal(controls.textContent, '随角色启用');
+  assert.equal(first.querySelector('.manage-resource-controls'), null, 'no placeholder replaces a module switch');
+  assert.doesNotMatch(first.textContent!, /随角色启用/);
   const plainControls = row('plain').querySelector('.manage-resource-controls')!;
   assert.equal(plainControls.querySelector('[role="switch"]')!.getAttribute('aria-label'), '本会话启用 plain');
   assert.equal(plainControls.querySelector('.manage-row-status'), null, 'enabled state is not repeated as text');

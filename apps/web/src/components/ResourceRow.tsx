@@ -13,7 +13,7 @@ import { OperationResult } from './OperationResult';
 // actions and their lifecycle stay with the caller. A link makes the identity
 // a selectable master item; the control always stays outside it.
 export function ResourceRow({ name, summary, badge, control, status, feedback, title, link, connection = false }: {
-  name: string; control: ReactNode;
+  name: string; control?: ReactNode;
   summary?: ReactNode; badge?: ReactNode; status?: ReactNode; feedback?: ReactNode; title?: string;
   link?: { to: string; replace?: boolean; selected: boolean }; connection?: boolean;
 }) {
@@ -28,10 +28,10 @@ export function ResourceRow({ name, summary, badge, control, status, feedback, t
       ? <Link className="manage-resource-identity ck-button" to={link.to} replace={link.replace}
         aria-current={link.selected ? 'page' : undefined}>{identity}</Link>
       : <div className="manage-resource-identity">{identity}</div>}
-    <div className="manage-resource-controls">
+    {(status || control) && <div className="manage-resource-controls">
       {status && <div className="manage-row-status" role="status">{status}</div>}
       {control}
-    </div>
+    </div>}
     {feedback}
   </div>;
 }
@@ -41,11 +41,6 @@ export function ResourceList({ hint, children }: { hint?: ReactNode; children: R
     {hint && <p className="manage-list-hint">{hint}</p>}
     <div className="manage-list">{children}</div>
   </>;
-}
-
-// Module role resources follow role assembly; they have no switch here.
-export function RoleEnabled() {
-  return <span className="manage-role-enabled">随角色启用</span>;
 }
 
 export function ResourceProgress({ children }: { children: ReactNode }) {

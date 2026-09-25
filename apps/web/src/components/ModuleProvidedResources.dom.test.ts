@@ -71,12 +71,12 @@ test('global Skills page groups module-provided skills read-only with derived mo
   const native = screen.getByRole('region', { name: '全局配置' });
   assert.equal(within(modules).queryAllByRole('switch').length, 0, 'module resources cannot be toggled globally');
   assert.equal(within(modules).queryAllByRole('link').length, 3, 'each non-deduplicated module Skill has a detail link');
-  assert.match(modules.textContent!, /不能全局关闭/);
+  assert.doesNotMatch(modules.textContent!, /不能全局关闭|随角色启用|只读|由模块管理/);
+  assert.equal(modules.querySelector('.manage-resource-controls'), null, 'no placeholder replaces the absent switch');
 
   const all = row(modules, 'board-tree');
   assert.equal(all.querySelector('.module-label-name')?.textContent, 'Board');
   assert.equal(all.querySelector('.role-badge-name'), null, 'every role carries it: module name only');
-  assert.equal(within(all).getByText('随角色启用').tagName, 'SPAN');
   assert.match(all.textContent!, /Everyone reads this\./);
 
   const [partial, other] = Array.from(modules.querySelectorAll<HTMLElement>('[data-resource-name="board-owner"]'));
@@ -226,6 +226,8 @@ test('global MCP page lists module servers with tool subsets and keeps native to
   assert.match(review.textContent!, /工具：read、report/);
   assert.equal(review.querySelector('.role-badge-name')?.textContent, 'Executor');
   assert.equal(within(modules).queryAllByRole('switch').length, 0);
+  assert.equal(modules.querySelector('.manage-resource-controls'), null);
+  assert.doesNotMatch(modules.textContent!, /不能全局关闭|随角色启用|只读|由模块管理/);
   assert.ok(within(screen.getByRole('region', { name: '全局配置' })).getByRole('switch', { name: '全局默认启用 native' }));
 });
 
@@ -252,7 +254,7 @@ test('a failed module catalog stays visible without hiding native resources', as
 });
 
 for (const [label, Component] of [['MCP', SessionMcp], ['Skills', SessionSkills]] as const) {
-  test(`session ${label}: module resources show 随角色启用 while other rows keep working switches`, async t => {
+  test(`session ${label}: module resources omit slogans while other rows keep working switches`, async t => {
     const calls: Array<[string, string, boolean]> = [];
     const module = { id: 'board', name: 'Board', roles: [{ id: 'owner', name: 'Owner' }] };
     const mutate = async (id: string, name: string, enabled: boolean) => { calls.push([id, name, enabled]); };
@@ -272,7 +274,7 @@ for (const [label, Component] of [['MCP', SessionMcp], ['Skills', SessionSkills]
     await waitFor(() => assert.ok(view.container.querySelector('[data-resource-name="board"]')));
     const moduleRow = row(view.container, 'board');
     assert.equal(within(moduleRow).queryByRole('switch'), null);
-    assert.ok(within(moduleRow).getByText('随角色启用'));
+    assert.doesNotMatch(moduleRow.textContent!, /随角色启用|只读|由模块管理/);
     if (label === 'MCP') {
       assert.match(moduleRow.textContent!, /失败|failed/i);
       assert.match(moduleRow.textContent!, /Connection refused/);

@@ -10,7 +10,7 @@ import { ManagementShell, type ManageSection } from './ManagementShell';
 import { ResourceStatus, StateNotice } from './StateNotice';
 import { MessageBody } from './MessageBody';
 import { PaneBody } from './PaneHeader';
-import { ResourceError, ResourceList, ResourceProgress, ResourceRow, ResourceText, RoleEnabled } from './ResourceRow';
+import { ResourceError, ResourceList, ResourceProgress, ResourceRow, ResourceText } from './ResourceRow';
 import { ModuleSourceBadge } from './ModuleLabel';
 import { SectionHeading, Toggle } from './UI';
 import { useGlobalResourceMutations } from '../features/session-settings/useGlobalResources';
@@ -79,18 +79,18 @@ function ModuleProvidedGroup({ section, catalog, native, selected, detailOpen = 
   const { data, status, failed, pending } = catalog;
   const rows = moduleProvidedRows(data ?? [], section, native);
   if (!rows.length && !failed) return null;
-  return <section className="manage-group manage-module-group" aria-labelledby={heading}>
+  return <section className="manage-group" aria-labelledby={heading}>
     <SectionHeading className="manage-group-heading"><span id={heading}>模块提供</span></SectionHeading>
     <ResourceStatus status={catalog.connected ? status : null} failed={failed} pending={pending} />
-    {rows.length > 0 && <ResourceList hint="只装配进选了对应角色的会话，不能全局关闭">
+    {rows.length > 0 && <ResourceList>
       {rows.map(row => <ResourceRow key={row.key} name={row.name} badge={<ModuleSourceBadge module={row.module} />}
         link={section === 'skills' && row.resourceId ? {
           to: `/skills/module/${encodeURIComponent(row.module.id)}/${encodeURIComponent(row.resourceId)}`,
           replace: detailOpen,
           selected: selected?.moduleId === row.module.id && selected.resourceId === row.resourceId,
         } : undefined}
-        summary={row.summary && <ResourceText key={row.summary} text={row.summary} label={`${row.name}摘要`} />}
-        control={<RoleEnabled />} />)}
+        summary={row.summary && <ResourceText key={row.summary} text={row.summary} label={`${row.name}摘要`}
+          disclosure={section !== 'skills' || !row.resourceId} />} />)}
     </ResourceList>}
   </section>;
 }

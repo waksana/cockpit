@@ -12,7 +12,7 @@ import { SessionResume } from './SessionResume';
 import { PaneBody, PaneHeader } from './PaneHeader';
 import { ModuleSourceBadge } from './ModuleLabel';
 import type { ModuleSource } from '@cockpit/protocol';
-import { ResourceError, ResourceProgress, ResourceRow, ResourceText, RoleEnabled } from './ResourceRow';
+import { ResourceError, ResourceProgress, ResourceRow, ResourceText } from './ResourceRow';
 import { Badge, Toggle } from './UI';
 import { ResourceStatus, StateNotice } from './StateNotice';
 import { useToggleRequests } from '../features/session-settings/useToggleRequests';
@@ -32,7 +32,7 @@ function SessionToggleRow({ identity, name, summary, module, status, enabled, di
     badge={module && <ModuleSourceBadge module={module}
       description={status ? '角色配置来源，不代表当前连接身份；无法核验后续同名配置替换' : undefined} />}
     summary={summary && <ResourceText key={summary} text={summary} label={`${name}摘要`} />}
-    control={module ? <RoleEnabled /> : <Toggle label={`本会话启用 ${name}`} disabled={disabled || action.busy} busy={action.busy} on={enabled}
+    control={!module && <Toggle label={`本会话启用 ${name}`} disabled={disabled || action.busy} busy={action.busy} on={enabled}
       onChange={next => {
         if (disabled || action.busy) return;
         setDesired(next);

@@ -526,10 +526,6 @@ button.activity-head {
   .chat-input-context { overflow: visible; }
   .chat-composer, .chat-composer-body { display: contents; }
   .chat-composer-editor { position: sticky; bottom: 0; z-index: var(--host-z-raised); background: var(--chat-input-surface); }
-  &[data-editor-sized] .chat-input-message { min-height: var(--control-editor-height); }
-  &[data-editor-fixed] .chat-input-message {
-    field-sizing: fixed; height: var(--control-editor-height); max-height: var(--control-editor-height);
-  }
 }
 // A folded card keeps the editor mounted, so the draft survives.
 .chat-input-card > .chat-input-card-body[hidden] { display: none; }
