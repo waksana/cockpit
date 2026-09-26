@@ -151,20 +151,49 @@ installs without old API aliases or automatic migration. Only maintainers releas
    a non-prerelease Latest Release.
 
 `v*` tags cannot be updated or deleted and the publisher never overwrites assets.
-Fix a failed release with the next version, not by moving a tag. Release assets do
-not expire with CI retention. A release does not deploy anything.
+Recover a complete draft as described below; an unrecoverable failed release
+requires the next version, not a moved tag. Release assets do not expire with CI
+retention. A release does not deploy anything.
 
 <a id="atomic-release-publication"></a>
 ### Publication failure and recovery
 
 The formal, non-draft Release is the readiness signal. The workflow keeps a new
 Release hidden as a draft until both assets are present and the downloaded archive
-passes the same identity checks. It refuses any existing Release for the tag.
+passes the same identity checks. New tag runs refuse any existing Release for the
+tag. Authenticated, fully paginated release listing discovers drafts by exact
+`tag_name`; a tag lookup returning 404 does not prove absence. Two complete scans
+must agree on release identities and order. Duplicate matches, unstable pagination
+and lookup failures stop the workflow. Every subsequent
+read, asset download and publication uses the verified release/asset IDs.
 
 If creation, upload, publication or the final readback fails or has an unknown
 result, inspect the remote tag, draft/Release state and assets before taking any
 further action. Preserve a partial draft for diagnosis. Do not rerun a mutation
 blindly, move the tag, delete or replace a published Release, or use clobber.
+
+After inspection, a maintainer may run **Release → Run workflow** on `main` to
+recover a unique, complete draft. Supply the original tag, full `source_sha`,
+`release_id`, `archive_sha256` and `checksum_sha256` (the digest of the checksum
+file itself). Obtain these identities from the original successful checks and
+staged assets, not a new build. This explicit recovery runs current publication
+code against a separate checkout of the original source. It does not rerun CI,
+rebuild, create a Release or upload any assets.
+
+Recovery requires exactly the two nonempty, fully uploaded assets. It downloads
+both by ID, verifies their original digests and sizes, then checks the checksum,
+archive manifest, source/version, Node/platform and original source release notes.
+The remote tag must still resolve to the original source commit on `main`;
+`target_commitish` is only a creation hint, not proof of the target of an existing
+tag. A missing or incomplete draft, an incorrect ID, a published/prerelease
+Release, conflicting bytes or a changed tag stops without publishing.
+
+Immediately before publication the workflow rechecks the tag, unique draft and
+asset identities. It publishes once by ID and reads back the formal Release,
+asset identities and Latest status. An ambiguous create, upload, publish or
+readback result fails the run without a mutation retry or fallback. If a failed
+publication actually succeeded, recovery refuses to edit the published Release:
+inspect its final state instead. Recovery does not repair partial uploads.
 
 <a id="release-after-acceptance"></a>
 ## Release after a joint deployment

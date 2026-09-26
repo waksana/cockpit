@@ -345,15 +345,16 @@ test('release only publishes the checked fixed-tag artifact and does not deploy 
   assert.match(workflow, /uses: \.\/\.github\/workflows\/build\.yml/);
   assert.match(workflow, /publish:\s+needs: checks/);
   assert.match(workflow, /cancel-in-progress: false/);
-  assert.match(workflow, /git merge-base --is-ancestor "\$GITHUB_SHA" origin\/main/);
-  assert.match(workflow, /node scripts\/check-release\.mjs "\$RELEASE_TAG" "\$GITHUB_SHA"/);
+  assert.match(workflow, /needs\.checks\.result == 'success'/);
+  assert.match(workflow, /node scripts\/publish-release\.mjs/);
   assert.match(workflow, /actions\/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093/);
-  assert.match(workflow, /--verify-tag --draft/);
+  assert.match(workflow, /workflow_dispatch:/);
+  assert.match(workflow, /github\.ref == 'refs\/heads\/main'/);
+  assert.match(workflow, /group: release-\$\{\{ inputs\.tag \|\| github\.ref_name \}\}/);
   assert.doesNotMatch(workflow, /pull_request_target|secrets\.|systemctl|\bssh\b|\bscp\b|release upload|--clobber/);
-  assert.ok(workflow.indexOf('check-release.mjs') < workflow.indexOf('gh release create'));
-  assert.ok(workflow.indexOf('--draft') < workflow.indexOf('gh release edit'));
-  assert.ok(workflow.indexOf('gh release download') < workflow.indexOf('gh release edit'));
-  assert.match(workflow, /gh release edit "\$RELEASE_TAG" --draft=false --prerelease=false --latest/);
+  assert.doesNotMatch(workflow, /gh release|releases\/tags\//);
+  assert.match(workflow, /actions\/download-artifact@[^\n]+\n\s+if: github\.event_name == 'push'/);
+  assert.match(workflow, /ref: \$\{\{ inputs\.source_sha \}\}\n\s+path: release-source/);
 });
 
 test('synthetic packaging inventories its complete closure and preserves dependency-owned native assets', async t => {
