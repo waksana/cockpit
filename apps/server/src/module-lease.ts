@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:net';
 
-export type ModuleLeaseKind = 'host' | 'writer';
+export type ModuleLeaseKind = 'host' | 'writer' | 'deployment';
 
 /**
  * Root-specific Linux abstract Unix socket lease. The kernel releases it when the
@@ -13,7 +13,7 @@ export async function acquireAbstractLease(root: string, kind: ModuleLeaseKind, 
   if (process.platform !== 'linux') throw new Error('Module storage fencing currently requires Linux abstract sockets');
   const digest = createHash('sha256').update(root).digest('hex');
   // The host lease keeps its original name so older hosts and migrations still exclude it.
-  const name = kind === 'host' ? `\0cockpit-module-${digest}` : `\0cockpit-module-writer-${digest}`;
+  const name = kind === 'host' ? `\0cockpit-module-${digest}` : `\0cockpit-module-${kind}-${digest}`;
   const server = createServer(socket => socket.destroy());
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);

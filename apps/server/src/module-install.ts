@@ -438,6 +438,24 @@ export async function selectModule(id: string, options: { enabled: boolean; vers
   });
 }
 
+export async function selectModuleSet(expected: ModuleSettings, next: ModuleSettings, hostRoot: string): Promise<void> {
+  const desired = settingsSchema.parse(next);
+  if (JSON.stringify(Object.keys(expected.selected).sort()) !== JSON.stringify(Object.keys(desired.selected).sort())) {
+    throw new Error('A deployment cannot add or remove selected modules');
+  }
+  await withStorageLock(hostRoot, async () => {
+    if (JSON.stringify(await readModuleSettings(hostRoot)) !== JSON.stringify(expected)) throw new Error('Module selection changed during deployment');
+    for (const [id, selected] of Object.entries(desired.selected)) {
+      if (selected.enabled !== expected.selected[id]!.enabled
+        || JSON.stringify(selected.config) !== JSON.stringify(expected.selected[id]!.config)) {
+        throw new Error('Deployment must preserve module enablement and configuration');
+      }
+      await readModuleInstallation(id, selected, hostRoot);
+    }
+    await writeSettings(desired, hostRoot);
+  });
+}
+
 export async function listInstalledModules(hostRoot = cockpitHome()): Promise<Array<{ id: string; version: string; digest: string }>> {
   const installed = modulePaths(hostRoot).installed;
   const result: Array<{ id: string; version: string; digest: string }> = [];

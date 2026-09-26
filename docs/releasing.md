@@ -118,7 +118,8 @@ Before each delivery:
 
 Development, merge, tagging/release and deployment are separate authorizations,
 except that a joint deployment includes its
-[release step](#release-after-acceptance).
+[release-first step](#release-before-deployment). Source-only development never
+authorizes publishing or deploying a package.
 
 <a id="release-notes"></a>
 ## Release notes
@@ -153,19 +154,25 @@ Fix a failed release with the next version, not by moving a tag. Release assets 
 not expire with CI retention. A release does not deploy anything.
 
 <a id="release-after-acceptance"></a>
-## Release after a joint deployment
+<a id="release-before-deployment"></a>
+## Release before deployment
 
-A joint deployment of the host and modules is complete only after every commit it
-installed and accepted is tagged and released:
+A joint deployment publishes the reviewed host/module combination **before**
+installing it. The older anchor above remains a link target for published module
+documentation; it does not retain the old deploy-first ordering.
 
-1. Tag each accepted `main` SHA with an annotated `vX.Y.Z` tag, following that
+1. Tag each reviewed `main` SHA with an annotated `vX.Y.Z` tag, following that
    repository's release procedure (the host's is [above](#versioned-releases)).
-   A repository without a Release workflow publishes the unchanged main CI
-   archive that was deployed.
-2. Compare each Release asset's sha256 with the installed digest recorded at
-   deployment. On a mismatch, stop: publish or replace nothing further and ask
-   the user. Never overwrite assets or move tags.
-3. Confirm each new Release is marked Latest.
+   A repository without a Release workflow publishes its unchanged, verified
+   main CI archive. Publication preflight must pass before deployment begins.
+2. Fix the published Release ID, tag commit, asset ID and sha256 for every
+   candidate. Deploy those original archives, not an unpublished commit or a
+   newly repacked copy. Later changes to Latest do not change that run's target.
+3. Verify the loaded host and module identities, preserved configuration/data
+   and required behavior after restart. Failed deployment is still a failed
+   deployment even when publication succeeded; do not overwrite assets or move
+   tags to conceal it.
 
 Authorizing a joint deployment includes this release step. The deployment itself
-still needs its own authorization; a release never implies one.
+still needs its own authorization; a release never triggers one. No background
+release listener or continuous upgrade permission is implied.

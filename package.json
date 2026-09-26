@@ -17,6 +17,7 @@
     "start": "node --import ./apps/server/node_modules/tsx/dist/loader.mjs apps/server/src/index.ts",
     "start:mcp": "node --import ./apps/mcp/node_modules/tsx/dist/loader.mjs apps/mcp/dist/index.js",
     "module": "node --import ./apps/server/node_modules/tsx/dist/loader.mjs apps/server/src/module-cli.ts",
+    "deployment": "pnpm --filter @cockpit/server exec node --import tsx src/deployment-cli.ts",
     "package:runtime": "node scripts/package-runtime.mjs",
     "test": "pnpm -r --if-present test && node --test scripts/*.test.mjs && pnpm typecheck:test",
     "lint": "eslint . && pnpm --filter @cockpit/web lint",

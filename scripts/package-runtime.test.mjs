@@ -8,7 +8,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
-  command, firstPartyRuntimePath, inventoryTree, MCP_START_COMMAND, MODULE_COMMAND, packageRuntime, REQUIRED_FILES, safeRelativePath, sha256, START_COMMAND,
+  command, DEPLOYMENT_COMMAND, firstPartyRuntimePath, inventoryTree, MCP_START_COMMAND, MODULE_COMMAND, packageRuntime, REQUIRED_FILES, safeRelativePath, sha256, START_COMMAND,
 } from './package-runtime.mjs';
 
 const repository = fileURLToPath(new URL('../', import.meta.url)).replace(/\/$/, '');
@@ -125,6 +125,10 @@ console.log(JSON.stringify({ pid: process.pid, marker, protocolMarker, fastify: 
 `);
   put(source, 'apps/server/dist/index.js.map', { version: 3, file: 'index.js', sources: ['../src/index.ts'], mappings: '' });
   put(source, 'apps/server/dist/module-cli.js', 'console.log("Synthetic local module CLI");');
+  track('apps/server/src/deployment-cli.ts', 'console.log("Synthetic deployment CLI");');
+  put(source, 'apps/server/dist/deployment-cli.js', 'console.log("Synthetic deployment CLI");');
+  track('apps/server/src/deployment/candidate.ts', 'console.log("Synthetic candidate inventory");');
+  put(source, 'apps/server/dist/deployment/candidate.js', 'console.log("Synthetic candidate inventory");');
   put(source, 'apps/server/dist/test-support/module-fixture.js', 'Must not ship compiled test support');
   put(source, 'packages/core/dist/index.js', `
 import { CopilotClient } from '@github/copilot-sdk';
@@ -239,6 +243,7 @@ test('packaged commands run compiled JavaScript directly; tsx stays a developmen
   assert.equal(START_COMMAND, 'node --enable-source-maps apps/server/dist/index.js');
   assert.equal(MCP_START_COMMAND, 'node --enable-source-maps apps/mcp/dist/index.js');
   assert.equal(MODULE_COMMAND, 'node --enable-source-maps apps/server/dist/module-cli.js');
+  assert.equal(DEPLOYMENT_COMMAND, 'node --enable-source-maps apps/server/dist/deployment-cli.js');
   // Source checkouts resolve workspace packages to TypeScript, so their root commands keep the loader.
   assert.equal(root.scripts.start, 'node --import ./apps/server/node_modules/tsx/dist/loader.mjs apps/server/src/index.ts');
   assert.equal(root.scripts['start:mcp'], 'node --import ./apps/mcp/node_modules/tsx/dist/loader.mjs apps/mcp/dist/index.js');
@@ -375,7 +380,7 @@ test('synthetic packaging inventories its complete closure and preserves depende
   assert.equal(paths.some(path => /^(?:apps\/server|packages\/core)\/src\//.test(path) || path.endsWith('app.js.map')
     || path.includes('test-support') || /node_modules\/(?:\.pnpm\/)?tsx/.test(path)), false);
   const runtimeRoot = JSON.parse(await readFile(join(f.root, 'unpacked/package.json'), 'utf8'));
-  assert.deepEqual(runtimeRoot.scripts, { start: START_COMMAND, 'start:mcp': MCP_START_COMMAND, module: MODULE_COMMAND });
+  assert.deepEqual(runtimeRoot.scripts, { start: START_COMMAND, 'start:mcp': MCP_START_COMMAND, module: MODULE_COMMAND, deployment: DEPLOYMENT_COMMAND });
   const protocol = JSON.parse(await readFile(join(f.root, 'unpacked/packages/protocol/package.json'), 'utf8'));
   assert.equal(protocol.main, './dist/index.js');
   assert.equal(protocol.types, undefined);
