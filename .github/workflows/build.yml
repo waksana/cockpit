@@ -5,12 +5,19 @@ on:
   push:
     branches: [main]
   workflow_call:
+    inputs:
+      source_sha:
+        type: string
+        default: ''
+      rolling_sequence:
+        type: string
+        default: ''
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -21,7 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.source_sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
@@ -60,16 +67,30 @@ jobs:
         run: pnpm --filter @cockpit/mcp exec node --import tsx --test src/fork-native.test.ts
       - name: Package the checked-out commit
         env:
-          SOURCE_SHA: ${{ github.sha }}
-        run: node scripts/package-runtime.mjs --source-sha "$SOURCE_SHA" --output runtime-output
+          SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+          ROLLING_SEQUENCE: ${{ inputs.rolling_sequence }}
+        run: |
+          if [ -n "$ROLLING_SEQUENCE" ]; then
+            node scripts/package-runtime.mjs --source-sha "$SOURCE_SHA" --output runtime-output --rolling-sequence "$ROLLING_SEQUENCE"
+          else
+            node scripts/package-runtime.mjs --source-sha "$SOURCE_SHA" --output runtime-output
+          fi
       - name: Verify runtime archive
         run: COCKPIT_RUNTIME_ARCHIVE="$PWD/runtime-output/runtime.tar.gz" node --test scripts/package-runtime.test.mjs
+      - name: Verify Rolling descriptor and exact four assets
+        if: inputs.rolling_sequence != ''
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          ROLLING_SEQUENCE: ${{ inputs.rolling_sequence }}
+        run: |
+          node --input-type=module -e "import {rollingIdentity, verifyRollingArtifacts} from './scripts/deployment-manifest.mjs'; verifyRollingArtifacts('runtime-output', rollingIdentity(process.env.GITHUB_REPOSITORY, process.env.SOURCE_SHA, Number(process.env.ROLLING_SEQUENCE)), process.cwd())"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: cockpit-runtime-${{ github.sha }}-linux-x64
+          name: ${{ inputs.rolling_sequence != '' && format('cockpit-rolling-{0}-{1}', inputs.rolling_sequence, inputs.source_sha) || format('cockpit-runtime-{0}-linux-x64', github.sha) }}
           path: |
             runtime-output/runtime.tar.gz
             runtime-output/runtime.tar.gz.sha256
+            runtime-output/cockpit-deployment.json*
           if-no-files-found: error
           retention-days: 7
 
@@ -77,6 +98,7 @@ jobs:
     # Browser smoke on synthetic Chat Lab fixtures only (docs/testing.md#chat-lab-smoke).
     # Runs in parallel with Required checks; screenshots are the visual baseline artifact.
     name: Chat Lab smoke
+    if: inputs.rolling_sequence == ''
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:

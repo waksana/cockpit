@@ -21,7 +21,7 @@ function checkExactTagTarget(tag, sourceSha, refs) {
 }
 
 export function checkTagTarget(tag, sourceSha, refs) {
-  assert.match(tag, /^v\d+\.\d+\.\d+$/);
+  assert.match(tag, /^v(?:\d+\.\d+\.\d+|0\.0\.0-rolling\.[1-9]\d*)$/);
   checkExactTagTarget(tag, sourceSha, refs);
 }
 
@@ -32,7 +32,7 @@ export function checkSdkTagTarget(tag, sourceSha, refs) {
 
 export function checkSourceVersion(repository = resolve(fileURLToPath(new URL('..', import.meta.url)))) {
   const { version } = JSON.parse(readFileSync(resolve(repository, 'package.json'), 'utf8'));
-  assert.match(version, /^\d+\.\d+\.\d+$/, 'Delivery versions use MAJOR.MINOR.PATCH');
+  assert.match(version, /^(?:\d+\.\d+\.\d+|0\.0\.0-dev)$/, 'Source versions use 0.0.0-dev (legacy releases use MAJOR.MINOR.PATCH)');
   for (const name of ['', 'apps/server', 'apps/mcp', 'apps/web', 'packages/core', 'packages/protocol']) {
     const metadata = JSON.parse(readFileSync(resolve(repository, name, 'package.json'), 'utf8'));
     assert.equal(metadata.version, version, `${name || 'root'} version does not match ${version}`);

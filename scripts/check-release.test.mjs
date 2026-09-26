@@ -50,7 +50,7 @@ function fixture(t) {
 }
 
 test('checked-in workspace, MCP and delivery notes use one version', () => {
-  checkSourceVersion(fileURLToPath(new URL('..', import.meta.url)));
+  assert.equal(checkSourceVersion(fileURLToPath(new URL('..', import.meta.url))), '0.0.0-dev');
 });
 
 test('checked-in SDK keeps its independent release version', () => {

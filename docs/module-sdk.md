@@ -149,6 +149,6 @@ standalone closure. It publishes with the repository `GITHUB_TOKEN` and only
 `packages: write`; it does not persist the token. GitHub Packages does not
 document npm provenance for restricted packages, so this workflow deliberately
 does not request unsupported `--provenance`/OIDC behavior. The tag is separate
-from host `vX.Y.Z` tags and does not create a host GitHub Release, deploy Cockpit,
+from host Rolling tags and does not create a host GitHub Release, deploy Cockpit,
 change package visibility, or grant package access. Never move or reuse a
 published tag/version; fix a failed or incorrect release with a new SDK version.

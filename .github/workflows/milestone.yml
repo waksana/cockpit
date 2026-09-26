@@ -1,0 +1,51 @@
+name: Milestone
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing successful Rolling tag to promote in place
+        required: true
+        type: string
+      confirm_tag:
+        description: Repeat the exact selected tag to confirm promotion to Latest
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 24.20.0
+      - name: Validate the explicit Rolling selection
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_CONFIRM_TAG: ${{ inputs.confirm_tag }}
+        run: |
+          node --input-type=module -e "import assert from 'node:assert/strict'; assert.match(process.env.RELEASE_TAG, /^v0\.0\.0-rolling\.[1-9]\d*$/); assert.equal(process.env.RELEASE_TAG, process.env.RELEASE_CONFIRM_TAG)"
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          path: release-source
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify original bytes and promote the same Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_MODE: promote
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_CONFIRM_TAG: ${{ inputs.confirm_tag }}
+          RELEASE_SOURCE_DIRECTORY: release-source
+        run: node scripts/rolling-release.mjs

@@ -176,8 +176,10 @@ module activity, sends and close receipts never block exit. The current native
 in-flight request protection stays.
 
 `/health` and `/version` share the process instance ID; `/version` reports the
-package version and manifest `sourceSha` (`null` without a manifest). These are
-provenance, not authentication or proof of deployment.
+package version and manifest `sourceSha`. Development checkouts instead report
+`dev+<shortSHA>` from their own Git root; unversioned source reports
+`dev+unknown` and a null SHA. The Web About dialog reads this backend identity.
+These are provenance, not authentication or proof of deployment.
 
 ## Web client
 

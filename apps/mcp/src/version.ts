@@ -1,11 +1,7 @@
-import { readFileSync } from 'node:fs';
+import { readRuntimeIdentity } from '@cockpit/protocol/runtime-identity';
 
-// The MCP handshake reports the package version; src/ (tsx) and dist/ both sit beside package.json.
-function packageVersion(): string {
-  const metadata: unknown = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
-  const version = metadata && typeof metadata === 'object' && 'version' in metadata ? metadata.version : undefined;
-  if (typeof version !== 'string' || !/^\d+\.\d+\.\d+$/.test(version)) throw new Error('apps/mcp/package.json has no delivery version');
-  return version;
-}
-
-export const MCP_SERVER_VERSION = packageVersion();
+// src/ (tsx) and dist/ both sit beside package.json in source and packaged layouts.
+export const MCP_SERVER_VERSION = readRuntimeIdentity(
+  new URL('../package.json', import.meta.url),
+  new URL('../../../runtime-manifest.json', import.meta.url),
+).version;

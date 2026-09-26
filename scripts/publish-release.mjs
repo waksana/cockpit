@@ -14,7 +14,7 @@ const validId = id => Number.isSafeInteger(id) && id > 0;
 
 export function githubClient(token) {
   assert.ok(token, 'GH_TOKEN is required for authenticated draft discovery');
-  async function request(path, { method = 'GET', body, upload } = {}) {
+  async function request(path, { method = 'GET', body, upload, allowNotFound = false } = {}) {
     const url = upload
       ? `https://uploads.github.com/${path}`
       : `https://api.github.com/${path}`;
@@ -30,6 +30,7 @@ export function githubClient(token) {
       body: upload ? readFileSync(upload) : body ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(120_000),
     });
+    if (response.status === 404 && method === 'GET' && allowNotFound) return null;
     assert.ok(response.ok, `${method} ${path}: HTTP ${response.status}; no retry was attempted`);
     return response.json();
   }
@@ -46,7 +47,7 @@ export function githubClient(token) {
   };
 }
 
-async function list(client, path) {
+export async function list(client, path) {
   const entries = [];
   for (let page = 1; ; page++) {
     const batch = await client.request(`${path}?per_page=100&page=${page}`);
@@ -93,11 +94,11 @@ async function assets(client, base) {
   return result.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function assetIdentity(entries) {
+export function assetIdentity(entries) {
   return entries.map(({ id, name, size, state, digest }) => ({ id, name, size, state, digest }));
 }
 
-async function mutate(client, path, options) {
+export async function mutate(client, path, options) {
   try {
     return await client.request(path, options);
   } catch (cause) {

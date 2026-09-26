@@ -7,6 +7,12 @@ pairing**; package format, install commands and APIs are in the
 
 ## Versions and compatibility
 
+The table below is a historical accepted-pairing checkpoint, not an automatic
+deployment catalog. New [Rolling releases](releasing.md) carry source-derived
+compatibility and explicit database/migration declarations in
+`cockpit-deployment.json`; each merge does not require editing this table.
+Rolling prereleases are not Latest unless explicitly promoted as a Milestone.
+
 Checked 2026-09-25 against the published Release assets and the accepted joint
 deployment.
 
@@ -21,7 +27,7 @@ deployment.
 ### Accepted pairing and upgrade boundary
 
 These four module versions were accepted together on Cockpit 0.5.0. All five
-Releases are marked Latest, and each downloaded archive's SHA256 matches the
+Releases were published as Latest at that checkpoint, and each downloaded archive's SHA256 matched the
 original CI package used by the accepted deployment. Publication does not itself
 install or restart another instance.
 

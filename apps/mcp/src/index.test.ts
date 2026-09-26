@@ -2,7 +2,7 @@ import { after, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { MOCK_ORIGIN, mockHttp } from '../test-support/mock-http.ts';
 import { mkdir, rm, symlink } from 'node:fs/promises';
-import { readFileSync } from 'node:fs';
+import { MCP_SERVER_VERSION } from './version.ts';
 import { randomUUID } from 'node:crypto';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -205,9 +205,8 @@ beforeEach(() => {
   largeContent = initialLargeContent;
 });
 
-test('the MCP handshake reports the apps/mcp package version', () => {
-  const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
-  assert.equal(client.getServerVersion()?.version, version);
+test('the MCP handshake reports the shared runtime display identity', () => {
+  assert.equal(client.getServerVersion()?.version, MCP_SERVER_VERSION);
   assert.equal(client.getServerVersion()?.name, 'cockpit-mcp-server');
 });
 
