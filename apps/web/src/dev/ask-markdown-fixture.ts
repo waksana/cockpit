@@ -20,9 +20,12 @@ const value = "${'long_argument_'.repeat(18)}";
 > 普通文字与中文换行都应自然显示。`;
 
 export const askMarkdownChoices = [
-  '**保留现有实现**，使用 `pnpm test`（推荐）。',
+  '**保留现有实现**，*继续复用* `pnpm test`，~~不用另造控件~~（推荐）。',
   '**查看细节**\n\n阅读 [参考说明](/synthetic/ask-guide) 后选择。\n\n'
-    + '```sh\npnpm --filter @cockpit/web test\n```\n\n'
-    + '| 项目 | 条件 |\n| --- | --- |\n| 字符串 | 原样提交 |\n| 长标识 | ' + 'unbroken_choice_'.repeat(20) + ' |',
+    + '```sh\npnpm --filter @cockpit/web test\n' + 'long_option_argument_'.repeat(12) + '\n```\n\n'
+    + '| 项目 | 条件 |\n| --- | --- |\n| 字符串 | 原样提交 |\n| 长标识 | ' + 'unbroken_choice_'.repeat(20) + ' |\n\n'
+    + '- [x] 已读条件\n- [ ] 保留草稿\n\n'
+    + '![示意图](https://example.invalid/choice.png)\n\n'
+    + '[![链接图片](https://example.invalid/linked.png)](https://example.invalid/guide)',
   '普通选项，不含 Markdown。',
 ];

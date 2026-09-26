@@ -669,14 +669,6 @@ button.activity-head {
   flex: none; display: flex; flex-wrap: wrap; gap: var(--chat-gap-control);
   &[data-layout='column'] { flex-direction: column; }
 }
-.chat-ask-option {
-  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start;
-  gap: var(--chat-gap-control); min-width: 0;
-}
-.chat-ask-option-body {
-  min-width: 0; padding-block: var(--chat-gap-control);
-  .message-body { font-size: var(--chat-text-secondary); line-height: var(--chat-leading-decision); }
-}
 .chat-ask-choice {
   justify-content: flex-start;
   min-width: 0; max-width: 100%;

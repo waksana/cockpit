@@ -189,7 +189,7 @@ test('composer accepts real typing without sending anything', async ({ page }) =
   await expectHealthy(page, guard);
 });
 
-test('ask_user Markdown keeps links and code actions independent from exact-value selection', async ({ page }, testInfo) => {
+test('ask_user keeps full question Markdown and whole-button noninteractive choice labels', async ({ page }, testInfo) => {
   await page.addInitScript(() => {
     const copied: string[] = [];
     Object.assign(window, { askMarkdownCopies: copied });
@@ -221,26 +221,45 @@ test('ask_user Markdown keeps links and code actions independent from exact-valu
   expect(codeSize.scrollWidth).toBeGreaterThan(codeSize.width);
   await question.getByRole('heading').scrollIntoViewIfNeeded();
   await snapshot(page, testInfo, 'ask-markdown-question');
-  const option = card.locator('.chat-ask-option').nth(1);
-  await expect(option.locator('strong').first()).toHaveText('查看细节');
-  await option.getByRole('button', { name: '复制代码', exact: true }).click();
+  const code = await question.locator('pre code').textContent();
+  await question.getByRole('button', { name: '复制代码', exact: true }).click();
   expect(await page.evaluate(() => (window as typeof window & { askMarkdownCopies: string[] }).askMarkdownCopies))
-    .toEqual(['pnpm --filter @cockpit/web test\n']);
+    .toEqual([code]);
   await expect(card).toBeVisible();
 
   await page.context().route('**/synthetic/ask-guide', route => route.fulfill({ status: 200, contentType: 'text/plain', body: 'Synthetic guide' }));
   const opened = page.waitForEvent('popup');
-  await option.getByRole('link', { name: '参考说明' }).click();
+  await question.getByRole('link', { name: '说明', exact: true }).click();
   const guide = await opened;
   await expect(guide.locator('body')).toHaveText('Synthetic guide');
   await guide.close();
-  await expect(option.getByRole('link', { name: '参考说明' })).toBeFocused();
+  await expect(question.getByRole('link', { name: '说明', exact: true })).toBeFocused();
   await expect(card).toBeVisible();
-  await expect(card.locator('button a, button button, button input, button [tabindex], p div')).toHaveCount(0);
+
+  const choices = card.locator('.chat-ask-choices');
+  const buttons = choices.getByRole('button');
+  await expect(buttons).toHaveCount(askMarkdownChoices.length);
+  await expect(choices.locator(':scope > button.chat-ask-choice')).toHaveCount(askMarkdownChoices.length);
+  await expect(choices.getByRole('button', { name: '选择', exact: true })).toHaveCount(0);
+  await expect(choices.locator('button a, button button, button input, button [tabindex], button [role], img, video, audio, iframe, pre, table')).toHaveCount(0);
+  const profiles = await buttons.evaluateAll(elements => elements.map(element => {
+    const style = getComputedStyle(element);
+    const rect = element.getBoundingClientRect();
+    return { font: style.font, padding: style.padding, border: style.border, radius: style.borderRadius,
+      align: style.textAlign, width: rect.width, parentWidth: element.parentElement!.getBoundingClientRect().width };
+  }));
+  for (const profile of profiles) {
+    expect(profile, 'formatted choices use the same full-row button style as the ordinary label').toEqual(profiles[2]);
+    expect(profile.width).toBeCloseTo(profile.parentWidth, 0);
+  }
+  const select = choices.getByRole('button', { name: /^查看细节/ });
+  await expect(select).toContainText('参考说明');
+  await expect(select).toContainText('[x]');
+  await expect(select).toContainText('[ ]');
+  await expect(select).toContainText('示意图');
+  await choices.evaluate(element => element.scrollIntoView({ block: 'start' }));
   await snapshot(page, testInfo, 'ask-markdown-choice');
-  const select = option.getByRole('button', { name: /^选择 查看细节/ });
-  await select.focus();
-  await page.keyboard.press('Enter');
+  await select.locator('strong').first().click();
   await expect(card).toHaveCount(0);
   const answered = page.getByRole('group', { name: '已回答的问题', exact: true });
   await expect(answered.getByRole('heading', { name: '选择实现方案' })).toBeVisible();
@@ -249,6 +268,39 @@ test('ask_user Markdown keeps links and code actions independent from exact-valu
   await expect(page.locator('.lab-receipt')).toContainText('freeform=false');
   await expectHealthy(page, guard);
 });
+
+for (const activation of ['text', 'padding', 'Enter', 'Space'] as const) {
+  test(`ask_user whole choice submits its original value through ${activation}`, async ({ page }) => {
+    const guard = await open(page, 'scene=ask-markdown&compact=1');
+    const card = page.locator('.chat-decision-card[data-state="pending"]');
+    const select = card.getByRole('button', { name: /^保留现有实现/ });
+    await expect(select).toBeVisible();
+    await select.scrollIntoViewIfNeeded();
+    if (activation === 'text') {
+      await select.locator('em').click();
+    } else if (activation === 'padding') {
+      const hit = await select.evaluate(button => {
+        const rect = button.getBoundingClientRect();
+        const x = rect.width - 4;
+        const y = 4;
+        return { x, y, onButton: document.elementFromPoint(rect.left + x, rect.top + y) === button };
+      });
+      expect(hit.onButton, 'the blank padded area belongs to the option button itself').toBe(true);
+      await select.click({ position: { x: hit.x, y: hit.y } });
+    } else {
+      await card.getByRole('button', { name: /^查看细节/ }).focus();
+      await page.keyboard.press('Shift+Tab');
+      await expect(select).toBeFocused();
+      await page.keyboard.press(activation);
+    }
+    await expect(card).toHaveCount(0);
+    await expect(page.locator('.lab-receipt')).toContainText(askMarkdownChoices[0]);
+    await expect(page.locator('.lab-receipt')).toContainText('freeform=false');
+    await expect(page.getByRole('group', { name: '已回答的问题' }).locator('.chat-decision-answer strong'))
+      .toHaveText('保留现有实现');
+    await expectHealthy(page, guard);
+  });
+}
 
 test('restored ask_user Markdown history remains formatted after reload', async ({ page }, testInfo) => {
   const guard = await open(page, 'scene=ask-markdown-history&compact=1');
