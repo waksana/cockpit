@@ -104,9 +104,12 @@ async function unpack(archive: string): Promise<Map<string, Entry>> {
   return entries;
 }
 
-export async function verifyRuntime(root: string, expected?: PinnedRelease): Promise<RuntimeManifest> {
+export async function verifyRuntime(root: string, expected?: PinnedRelease, trustedManifest?: RuntimeManifest): Promise<RuntimeManifest> {
   await directory(root, false);
   const manifest = RuntimeManifest.parse(JSON.parse(await readFile(join(root, 'runtime-manifest.json'), 'utf8')));
+  if (trustedManifest && JSON.stringify(manifest) !== JSON.stringify(trustedManifest)) {
+    throw new Error('Installed runtime manifest differs from the pinned archive manifest');
+  }
   const report = z.object({ header: z.object({ glibcVersionRuntime: z.string() }) }).safeParse(process.report.getReport());
   if (manifest.node !== process.versions.node || process.platform !== 'linux' || process.arch !== 'x64'
     || !report.success) throw new Error('Runtime requires the exact Node version and Linux x64 glibc platform');
@@ -144,6 +147,7 @@ export async function verifyRuntime(root: string, expected?: PinnedRelease): Pro
 }
 
 export async function installRuntime(archive: string, pin: PinnedRelease, installRoot: string): Promise<string> {
+  if (await fileHash(archive) !== pin.sha256) throw new Error('Runtime archive differs from the pinned SHA256');
   await directory(installRoot, true);
   const root = join(installRoot, `${pin.version}-${pin.sha256}`);
   const versions = (await readdir(installRoot)).filter(name => name.startsWith(`${pin.version}-`));
@@ -151,7 +155,6 @@ export async function installRuntime(archive: string, pin: PinnedRelease, instal
   let existing = true;
   try { await lstat(root); }
   catch (error) { if (!missing(error)) throw error; existing = false; }
-  if (existing) { await verifyRuntime(root, pin); return root; }
   const entries = await unpack(archive);
   const raw = entries.get('runtime-manifest.json');
   if (raw?.type !== 'file' || raw.bytes.length > 16 * 1024 ** 2) throw new Error('Missing or oversized runtime manifest');
@@ -169,6 +172,7 @@ export async function installRuntime(archive: string, pin: PinnedRelease, instal
     }
     if (entry.type === 'symlink' && file.type === 'symlink' && entry.target !== file.target) throw new Error('Runtime archive link differs from its manifest');
   }
+  if (existing) { await verifyRuntime(root, pin, manifest); return root; }
   const staging = join(installRoot, `.deployment-${pin.sha256}`);
   await mkdir(staging, { mode: 0o700 });
   // Interrupted staging is preserved; a later request never overwrites or silently repairs it.
@@ -181,7 +185,7 @@ export async function installRuntime(archive: string, pin: PinnedRelease, instal
     await chmod(path, Number.parseInt(entry.mode, 8));
   }
   for (const [name, entry] of entries) if (entry.type === 'symlink') await symlink(entry.target, join(staging, name));
-  await verifyRuntime(staging, pin);
+  await verifyRuntime(staging, pin, manifest);
   const seal = async (path: string): Promise<void> => {
     for (const entry of await readdir(path, { withFileTypes: true })) if (entry.isDirectory()) await seal(join(path, entry.name));
     await syncModuleDirectory(path);

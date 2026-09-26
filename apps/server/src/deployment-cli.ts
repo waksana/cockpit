@@ -7,7 +7,7 @@ import { DeploymentStore } from './deployment/store.ts';
 
 async function cli(args: string[]): Promise<void> {
   const [action, file, ...rest] = args;
-  if (!file) throw new Error('Usage: deployment-cli <serve|submit|get|cancel|read-receipt> <config-or-state-root> [arguments]');
+  if (!file) throw new Error('Usage: deployment-cli <serve|submit|get|list|recovery|cancel|acknowledge|acknowledge-claim|read-receipt> <config-or-state-root> [arguments]');
   if (action === 'read-receipt' && rest.length === 1) {
     process.stdout.write(`${JSON.stringify(await new DeploymentStore(resolve(file)).read(id.parse(rest[0])), null, 2)}\n`);
     return;
@@ -26,7 +26,13 @@ async function cli(args: string[]): Promise<void> {
   const base = `http://127.0.0.1:${config.port}`;
   let url: string;
   let payload: unknown;
-  if (action === 'submit' && rest.length === 3) {
+  if ((action === 'acknowledge' || action === 'acknowledge-claim') && rest.length === 4) {
+    url = `${base}/${action === 'acknowledge' ? 'runs' : 'claims'}/${id.parse(rest[0])}/acknowledge`;
+    payload = { confirmation: 'effects-reviewed', instanceId: rest[2], reason: rest[3],
+      ...(action === 'acknowledge' ? { sequence: Number(rest[1]) } : { fingerprint: rest[1] }) };
+  } else if ((action === 'list' || action === 'recovery') && !rest.length) {
+    url = `${base}/${action === 'list' ? 'runs' : 'recovery'}`;
+  } else if (action === 'submit' && rest.length === 3) {
     url = `${base}/runs`;
     payload = { requestId: rest[0], planId: rest[1], planSha256: rest[2] };
   } else if ((action === 'get' || action === 'cancel') && rest.length === 1) {

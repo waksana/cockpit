@@ -12,10 +12,12 @@ import { fileURLToPath } from 'node:url';
 export const START_COMMAND = 'node --enable-source-maps apps/server/dist/index.js';
 export const MCP_START_COMMAND = 'node --enable-source-maps apps/mcp/dist/index.js';
 export const MODULE_COMMAND = 'node --enable-source-maps apps/server/dist/module-cli.js';
+export const DEPLOYMENT_COMMAND = 'node --enable-source-maps apps/server/dist/deployment-cli.js';
 export const REQUIRED_FILES = [
   'LICENSE', 'NOTICE.md', 'package.json',
   'apps/server/package.json', 'apps/server/dist/index.js', 'apps/server/dist/index.js.map',
   'apps/server/dist/module-cli.js',
+  'apps/server/dist/deployment-cli.js', 'apps/server/dist/deployment/candidate.js',
   'apps/web/dist/index.html',
   'apps/web/dist/licenses/lucide.txt', 'apps/web/dist/licenses/frontend.txt',
   'apps/mcp/package.json', 'apps/mcp/dist/index.js',
@@ -350,7 +352,7 @@ export async function packageRuntime({ repository, sourceSha, output = 'runtime-
     await writeFile(join(runtime, 'package.json'), `${JSON.stringify({
       name: 'cockpit', private: true, version: serverPackage.version, type: 'module',
       license: rootPackage.license, engines: rootPackage.engines,
-      scripts: { start: START_COMMAND, 'start:mcp': MCP_START_COMMAND, module: MODULE_COMMAND },
+      scripts: { start: START_COMMAND, 'start:mcp': MCP_START_COMMAND, module: MODULE_COMMAND, deployment: DEPLOYMENT_COMMAND },
     }, null, 2)}\n`);
     const sdk = await validateRuntime(runtime, sdkVersion);
     const files = await inventoryTree(runtime, { normalizeModes: true });

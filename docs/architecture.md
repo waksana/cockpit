@@ -175,6 +175,11 @@ Per [R7](product-requirements.md#r7), only native session idleness is waited for
 module activity, sends and close receipts never block exit. The current native
 in-flight request protection stays.
 
+The optional [deployment service](deployment.md) is a separate user-managed
+process with its own authenticated HTTP/CLI and durable deployment records.
+It invokes this same graceful-exit behavior; host startup does not start it,
+and it does not add a session-continuation or Task automation dependency.
+
 `/health` and `/version` share the process instance ID; `/version` reports the
 package version and manifest `sourceSha` (`null` without a manifest). These are
 provenance, not authentication or proof of deployment.

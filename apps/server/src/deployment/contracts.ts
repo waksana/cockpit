@@ -21,11 +21,12 @@ export const DeploymentConfig = z.object({
   plansRoot: absolute,
   tokenFile: absolute,
   port: z.number().int().min(0).max(65535),
+  controllerUnit: z.string().regex(/^[a-zA-Z0-9_-]+\.service$/).default('cockpit-deployment.service'),
   host: z.object({
     origin: loopback, home: absolute, installRoot: absolute, currentLink: absolute,
     node: absolute,
     service: z.object({
-      scope: z.enum(['user', 'system']), unit: z.string().regex(/^[a-zA-Z0-9_-]+\.service$/),
+      scope: z.literal('user'), unit: z.string().regex(/^[a-zA-Z0-9_-]+\.service$/),
       systemctl: absolute,
     }).strict(),
   }).strict(),
@@ -35,7 +36,7 @@ export const DeploymentConfig = z.object({
     hookMs: z.number().int().min(100).max(600000).default(120000),
     backupBytes: z.number().int().min(1024).max(100 * 1024 ** 3).default(10 * 1024 ** 3),
   }).strict().default({}),
-}).strict();
+}).strict().refine(config => config.controllerUnit !== config.host.service.unit, 'Deployment and host must use distinct user units');
 export type DeploymentConfig = z.infer<typeof DeploymentConfig>;
 
 export const ReleaseTarget = z.object({
@@ -66,6 +67,7 @@ const migration = z.object({
   database: relative, from: z.number().int().nonnegative(), to: z.number().int().nonnegative(),
   nondestructive: z.literal(true),
   preflight: hook, apply: hook,
+  files: z.array(z.object({ path: relative, fromSha256: digest, toSha256: digest }).strict()).max(128).default([]),
   plan: z.object({ file: relative, sha256: digest }).strict().optional(),
 }).strict().refine(value => value.to > value.from, 'Only explicit forward migrations are supported');
 
@@ -89,13 +91,25 @@ export const DeploymentPlan = z.object({
     });
     const paths = new Set(module.databases.map(db => db.path));
     if (paths.size !== module.databases.length) context.addIssue({ code: 'custom', message: 'Duplicate database path' });
+    for (const database of module.databases) {
+      if (new Set(database.preserve.map(item => item.table)).size !== database.preserve.length) context.addIssue({
+        code: 'custom', message: 'Combine preserved columns into one declaration per table',
+      });
+    }
     const migrated = new Set<string>();
+    const changedFiles = new Set<string>();
     for (const migration of module.migrations) {
       if (!paths.has(migration.database) || migrated.has(migration.database)
         || module.databases.find(db => db.path === migration.database)?.schema !== migration.to) {
         context.addIssue({ code: 'custom', message: 'Each migration must target one declared database and its final schema' });
       }
       migrated.add(migration.database);
+      for (const file of migration.files) {
+        if (paths.has(file.path) || changedFiles.has(file.path)) context.addIssue({
+          code: 'custom', message: 'A reviewed ordinary-file migration must name a distinct non-database file',
+        });
+        changedFiles.add(file.path);
+      }
     }
   }
 });
@@ -115,7 +129,8 @@ export type State = 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrup
 const phase = z.enum(['accepted', 'preparing', 'prepared', 'stopping', 'backing-up', 'migrating', 'switching', 'starting', 'verifying', 'finished']);
 const instance = z.object({ instanceId: z.string(), version: z.string(), sourceSha: z.string().nullable(), pid: z.number().int().positive() }).strict();
 export const DeploymentReceipt = z.object({
-  format: z.literal(1), id, planId: id, planSha256: digest, sequence: z.number().int().nonnegative(),
+  format: z.literal(1), id, planId: id, planSha256: digest, planSnapshotSha256: digest, sequence: z.number().int().nonnegative(),
+  executor: instance.extend({ node: z.string() }),
   state: z.enum(['running', 'succeeded', 'failed', 'cancelled', 'interrupted']), phase,
   createdAt: z.string(), updatedAt: z.string(),
   events: z.array(z.object({ phase, at: z.string() }).strict()).max(1000),
@@ -125,5 +140,6 @@ export const DeploymentReceipt = z.object({
     name: z.string(), status: z.enum(['passed', 'failed', 'not-covered']), detail: z.string(),
   }).strict()).max(1000),
   error: z.string().nullable(), attentionRequired: z.boolean(), recovery: z.string(),
+  recoveryAcknowledgement: z.object({ at: z.string(), reason: z.string(), instanceId: z.string() }).strict().optional(),
 }).strict();
 export type DeploymentReceipt = z.infer<typeof DeploymentReceipt>;

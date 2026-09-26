@@ -10,6 +10,7 @@ const runner = new DeploymentRunner(config, store, {
   inspect: async () => ({ pid: 0, active: 'inactive', sub: 'dead' }),
   stop: async () => { throw new Error('This interruption fixture never operates a host'); },
   start: async () => { throw new Error('This interruption fixture never operates a host'); },
+  complete: async () => {},
 });
 runner.execute = async receipt => {
   await store.save(receipt, 'prepared');

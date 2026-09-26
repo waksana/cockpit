@@ -1,20 +1,22 @@
-import { constants } from 'node:fs';
-import { copyFile, lstat, mkdir, readFile, realpath, rename, symlink } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { lstat, readFile, realpath, rename, symlink } from 'node:fs/promises';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { z } from 'zod';
 import {
   inspectModuleArchive, installLocalModule, isDeclaredAsset, listInstalledModules, readModuleInstallation,
-  readModuleSettings, regularBytes, selectModuleSet, syncModuleDirectory,
+  modulePaths, readModuleSettings, regularBytes, selectModuleSet, syncModuleDirectory,
   type ModuleInstallation,
 } from '../module-install.ts';
 import { acquireModuleHostLease } from '../module-lifetime.ts';
 import type { DeploymentConfig, DeploymentPlan, DeploymentReceipt, Instance, Migration, Phase } from './contracts.ts';
-import { captureHostFiles, databaseFacts, migrationPlan, requiredMigrations, runMigration, snapshotData, validateSitePaths, type DatabaseFacts } from './data.ts';
-import { hash, privateDirectory, writeJson } from './files.ts';
+import {
+  captureHostFiles, databaseFacts, migrationPlan, requiredMigrations, runMigration, snapshotData,
+  snapshotHostFiles, validateSitePaths, verifyModuleData, type DataSnapshot,
+} from './data.ts';
+import { hash, missing, privateDirectory, responseBytes, writeJson } from './files.ts';
 import { GithubReleases } from './releases.ts';
-import { inInstallation, installRuntime, verifyRuntime } from './runtime-package.ts';
+import { inInstallation, installRuntime, verifyRuntime, type RuntimeManifest } from './runtime-package.ts';
 import { DeploymentStore } from './store.ts';
 import { command, type HostManager } from './systemd.ts';
 
@@ -44,15 +46,49 @@ export class DeploymentRunner {
   }
 
   private async instance(signal: AbortSignal): Promise<Instance> {
-    const identity = version.parse(await (await this.response('/version', signal)).json());
+    const identity = version.parse(await this.json('/version', signal));
     const service = await this.manager.inspect();
     if (service.active !== 'active' || !service.pid) throw new Error('Managed host is not active');
     return { ...identity, pid: service.pid };
   }
 
+  private async json(path: string, signal: AbortSignal): Promise<unknown> {
+    return JSON.parse((await responseBytes(await this.response(path, signal), 4 * 1024 ** 2)).toString('utf8'));
+  }
+
   private async phase(receipt: DeploymentReceipt, phase: Phase, signal: AbortSignal): Promise<void> {
     signal.throwIfAborted();
     await this.store.save(receipt, phase);
+  }
+
+  async observeRecovery(expectedInstance: string): Promise<Instance> {
+    const signal = AbortSignal.timeout(this.config.limits.requestMs);
+    const actual = await this.instance(signal);
+    if (actual.instanceId !== expectedInstance) throw new Error('Host instance changed after the operator inspected it');
+    const health = z.object({ ok: z.literal(true), instanceId: z.string() }).parse(await this.json('/health', signal));
+    z.object({ shutdown: z.object({ phase: z.literal('running') }) }).parse(await this.json('/status', signal));
+    const installed = await verifyRuntime(await realpath(this.config.host.currentLink));
+    if (health.instanceId !== actual.instanceId || installed.version !== actual.version || installed.sourceSha !== actual.sourceSha) {
+      throw new Error('Recovery host and current package do not match');
+    }
+    return actual;
+  }
+
+  async acknowledgeRecovery(run: string, sequence: number, expectedInstance: string, reason: string): Promise<DeploymentReceipt> {
+    const receipt = await this.store.read(run);
+    if (receipt.sequence !== sequence || receipt.state === 'running' || !receipt.attentionRequired) {
+      throw new Error('Deployment changed or does not have a finished, unresolved result');
+    }
+    const actual = await this.observeRecovery(expectedInstance);
+    if (![receipt.oldInstance?.sourceSha, receipt.releases.host?.sourceSha].includes(actual.sourceSha)) {
+      throw new Error('Only the original or requested source can be acknowledged by this recovery operation');
+    }
+    if (await this.manager.recovery?.()) await this.manager.complete(run);
+    receipt.attentionRequired = false;
+    receipt.recoveryAcknowledgement = { at: new Date().toISOString(), reason, instanceId: actual.instanceId };
+    receipt.recovery = 'An operator acknowledged the effects and a safe running installation. The original failed/interrupted result is retained; it was not replayed or changed to success.';
+    await this.store.save(receipt);
+    return receipt;
   }
 
   async execute(receipt: DeploymentReceipt, plan: DeploymentPlan, signal: AbortSignal): Promise<void> {
@@ -104,7 +140,13 @@ export class DeploymentRunner {
         if (inspected.manifest.id !== name || inspected.manifest.version !== definition.release.version || inspected.digest !== definition.release.sha256) {
           throw new Error(`Module package identity differs from its reviewed release: ${name}`);
         }
+        let exists = true;
+        try { await lstat(join(modulePaths(home).installed, name, inspected.manifest.version, inspected.digest)); }
+        catch (error) { if (!missing(error)) throw error; exists = false; }
+        if (exists) await readModuleInstallation(name, { version: inspected.manifest.version, digest: inspected.digest }, home);
         const module = await installLocalModule(archive, { hostRoot: home, trustLocalCode: true });
+        const files = Object.fromEntries([...inspected.files].map(([path, bytes]) => [path, { bytes: bytes.length, sha256: hash(bytes) }]));
+        if (JSON.stringify(module.files) !== JSON.stringify(files)) throw new Error(`Installed module differs from the pinned archive: ${name}`);
         modules.set(name, module);
         next.selected[name] = { ...selected.selected[name]!, version: module.manifest.version, digest: module.digest };
       }
@@ -125,7 +167,7 @@ export class DeploymentRunner {
       receipt.changed = !sameHost || JSON.stringify(selected) !== JSON.stringify(next);
       receipt.checks.push({ name: 'release-and-package-preflight', status: 'passed', detail: 'All releases, source commits, inventories, platform and declared module pairing verified' });
       if (!receipt.changed) {
-        await this.accept(receipt, plan, oldRoot, modules, selected, hostFiles, {}, signal);
+        await this.accept(receipt, plan, oldRoot, target, modules, selected, hostFiles, {}, signal);
         receipt.state = 'succeeded';
         receipt.recovery = 'The verified target is already loaded; no shutdown, migration or switch was performed.';
         await this.store.save(receipt, 'finished');
@@ -138,10 +180,13 @@ export class DeploymentRunner {
       }
       await this.phase(receipt, 'prepared', signal);
       await this.phase(receipt, 'stopping', signal);
+      // Cancel can be accepted while the durable phase write is awaiting I/O.
+      signal.throwIfAborted();
       receipt.attentionRequired = true;
       receipt.recovery = 'Shutdown may have been requested. Inspect the managed service before acting; no automatic restart or data rollback is attempted on failure.';
       await this.store.save(receipt);
-      await this.manager.stop();
+      signal.throwIfAborted();
+      await this.manager.stop(receipt.id);
       // No timeout forces a busy host to exit. Only this run's independent service keeps waiting.
       while (true) {
         signal.throwIfAborted();
@@ -157,12 +202,8 @@ export class DeploymentRunner {
       const backups = join(root, 'backup');
       await privateDirectory(backups);
       await writeJson(join(backups, 'module-settings.json'), selected);
-      for (const path of Object.keys(hostFiles)) {
-        const destination = join(backups, 'host', path);
-        await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
-        await copyFile(join(home, path), destination, constants.COPYFILE_EXCL);
-      }
-      const before: Record<string, Record<string, DatabaseFacts>> = {};
+      const stoppedHostFiles = await snapshotHostFiles(home, join(backups, 'host'), this.config.limits.backupBytes);
+      const before: Record<string, DataSnapshot> = {};
       const migrations: MigrationWork[] = [];
       for (const name of names) {
         const definition = plan.modules[name]!;
@@ -180,17 +221,18 @@ export class DeploymentRunner {
           migrations.push({ id: name, migration, plan: file });
         }
       }
-      await writeJson(join(backups, 'manifest.json'), { hostFiles, databases: before });
+      await writeJson(join(backups, 'manifest.json'), { hostFiles: stoppedHostFiles, modules: before });
       await this.store.save(receipt);
       await this.phase(receipt, 'migrating', signal);
       for (const work of migrations) {
         await runMigration(this.config, modules.get(work.id)!.root, work.migration, 'apply',
           join(home, 'modules', 'data', work.id), work.plan, signal);
         const spec = plan.modules[work.id]!.databases.find(db => db.path === work.migration.database)!;
-        if (databaseFacts(join(home, 'modules', 'data', work.id, spec.path), spec).schema !== spec.schema) {
+        if ((await databaseFacts(join(home, 'modules', 'data', work.id, spec.path), spec)).schema !== spec.schema) {
           throw new Error('Migration confirmation does not match the actual database schema');
         }
       }
+      for (const name of names) await verifyModuleData(join(home, 'modules', 'data', name), plan.modules[name]!, before[name]);
       receipt.checks.push({ name: 'backup-and-migrations', status: 'passed', detail: `${names.length} module snapshots; ${migrations.length} explicit forward migrations` });
       await this.phase(receipt, 'switching', signal);
       await selectModuleSet(selected, next, home);
@@ -201,7 +243,7 @@ export class DeploymentRunner {
       await syncModuleDirectory(installRoot);
       await releaseHost(); releaseHost = undefined;
       await this.phase(receipt, 'starting', signal);
-      await this.manager.start();
+      await this.manager.start(receipt.id);
       const deadline = Date.now() + this.config.limits.startMs;
       let lastError: unknown;
       while (Date.now() < deadline) {
@@ -214,7 +256,8 @@ export class DeploymentRunner {
         throw new Error('The old host was not replaced by a new instance');
       }
       await this.phase(receipt, 'verifying', signal);
-      await this.accept(receipt, plan, targetRoot, modules, next, hostFiles, before, signal);
+      await this.accept(receipt, plan, targetRoot, target, modules, next, stoppedHostFiles, before, signal);
+      await this.manager.complete(receipt.id);
       receipt.state = 'succeeded'; receipt.attentionRequired = false;
       receipt.recovery = 'Deployment accepted. Old installations and backups are retained; restoring a backup is a separate, potentially destructive decision.';
       await this.store.save(receipt, 'finished');
@@ -230,20 +273,21 @@ export class DeploymentRunner {
   }
 
   private async accept(
-    receipt: DeploymentReceipt, plan: DeploymentPlan, targetRoot: string, modules: Map<string, ModuleInstallation>,
+    receipt: DeploymentReceipt, plan: DeploymentPlan, targetRoot: string, trustedManifest: RuntimeManifest, modules: Map<string, ModuleInstallation>,
     selection: Awaited<ReturnType<typeof readModuleSettings>>, hostFiles: Record<string, string>,
-    before: Record<string, Record<string, DatabaseFacts>>, signal: AbortSignal,
+    before: Record<string, DataSnapshot>, signal: AbortSignal,
   ): Promise<void> {
     const identity = await this.instance(signal);
     if (identity.version !== plan.host.version || identity.sourceSha !== plan.host.sourceSha) throw new Error('Loaded host does not match the pinned release');
-    const health = z.object({ ok: z.literal(true), instanceId: z.string() }).parse(await (await this.response('/health', signal)).json());
+    const health = z.object({ ok: z.literal(true), instanceId: z.string() }).parse(await this.json('/health', signal));
+    z.object({ shutdown: z.object({ phase: z.literal('running') }) }).parse(await this.json('/status', signal));
     if (health.instanceId !== identity.instanceId) throw new Error('Health and version describe different host instances');
-    const runtime = await verifyRuntime(targetRoot, receipt.releases.host);
+    const runtime = await verifyRuntime(targetRoot, receipt.releases.host, trustedManifest);
     if (await realpath(this.config.host.currentLink) !== targetRoot
       && JSON.stringify(await verifyRuntime(await realpath(this.config.host.currentLink))) !== JSON.stringify(runtime)) {
       throw new Error('Current package changed during acceptance');
     }
-    const active = bootstrap.parse(await (await this.response('/_modules', signal)).json());
+    const active = bootstrap.parse(await this.json('/_modules', signal));
     const expected = Object.entries(selection.selected).filter(([, value]) => value.enabled)
       .map(([id, value]) => ({ id, version: value.version, digest: value.digest })).sort((a, b) => a.id.localeCompare(b.id));
     if (active.errors.length || JSON.stringify(active.active.sort((a, b) => a.id.localeCompare(b.id))) !== JSON.stringify(expected)) {
@@ -252,25 +296,35 @@ export class DeploymentRunner {
     for (const entry of runtime.files) {
       if (entry.type !== 'file' || !entry.path.startsWith('apps/web/dist/')) continue;
       const path = entry.path.slice('apps/web/dist/'.length);
-      const bytes = Buffer.from(await (await this.response(path === 'index.html' ? '/' : `/${path}`, signal)).arrayBuffer());
+      const bytes = await responseBytes(await this.response(path === 'index.html' ? '/' : `/${path.split('/').map(encodeURIComponent).join('/')}`, signal), entry.size);
       if (bytes.length !== entry.size || hash(bytes) !== entry.sha256) throw new Error(`Served Web asset differs from the package: ${path}`);
     }
     for (const [name, module] of modules) {
-      await readModuleInstallation(name, { version: module.manifest.version, digest: module.digest }, this.config.host.home);
+      const current = await readModuleInstallation(name, { version: module.manifest.version, digest: module.digest }, this.config.host.home);
+      if (JSON.stringify(current.files) !== JSON.stringify(module.files) || JSON.stringify(current.manifest) !== JSON.stringify(module.manifest)) {
+        throw new Error(`Module inventory changed after archive verification: ${name}`);
+      }
       if (selection.selected[name]!.enabled) {
         for (const [path, expected] of Object.entries(module.files)) {
           if (!isDeclaredAsset(module.manifest, path)) continue;
-          const bytes = Buffer.from(await (await this.response(`/_modules/assets/${name}/${module.digest}/${path}`, signal)).arrayBuffer());
+          const bytes = await responseBytes(await this.response(`/_modules/assets/${name}/${module.digest}/${path.split('/').map(encodeURIComponent).join('/')}`, signal), expected.bytes);
           if (bytes.length !== expected.bytes || hash(bytes) !== expected.sha256) throw new Error(`Served module asset differs: ${name}/${path}`);
         }
-      }
-      for (const spec of plan.modules[name]!.databases) {
-        const actual = databaseFacts(join(this.config.host.home, 'modules', 'data', name, spec.path), spec);
-        if (actual.schema !== spec.schema
-          || (before[name]?.[spec.path] && JSON.stringify(actual.preserved) !== JSON.stringify(before[name]![spec.path]!.preserved))) {
-          throw new Error(`Database schema or preserved records differ: ${name}/${spec.path}`);
+        const worker = module.manifest.frontend?.worker;
+        if (worker) {
+          const prefix = Buffer.from(`self.__cockpitModuleWorker=${JSON.stringify({
+            moduleId: name, digest: module.digest, apiBase: `../../${name}/${module.digest}/api`,
+          })};\n`);
+          const expected = module.files[worker]!;
+          const response = await this.response(`/_modules/workers/${name}/worker.js`, signal);
+          const bytes = await responseBytes(response, prefix.length + expected.bytes);
+          if (response.headers.get('service-worker-allowed') !== './' || !bytes.subarray(0, prefix.length).equals(prefix)
+            || bytes.length !== prefix.length + expected.bytes || hash(bytes.subarray(prefix.length)) !== expected.sha256) {
+            throw new Error(`Served worker wrapper or payload differs from its verified module: ${name}`);
+          }
         }
       }
+      await verifyModuleData(join(this.config.host.home, 'modules', 'data', name), plan.modules[name]!, before[name]);
     }
     if (JSON.stringify(await readModuleSettings(this.config.host.home)) !== JSON.stringify(selection)
       || JSON.stringify(await captureHostFiles(this.config.host.home, this.config.limits.backupBytes)) !== JSON.stringify(hostFiles)) {

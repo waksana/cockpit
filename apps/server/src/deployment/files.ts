@@ -38,6 +38,17 @@ export async function fileHash(path: string): Promise<string> {
   return sum.digest('hex');
 }
 
+export async function responseBytes(response: Response, maximum: number): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  if (response.body) for await (const bytes of response.body) {
+    size += bytes.byteLength;
+    if (size > maximum) throw new Error('HTTP response exceeds its expected size limit');
+    chunks.push(Buffer.from(bytes));
+  }
+  return Buffer.concat(chunks);
+}
+
 export async function deploymentLease(root: string, hostRoot: string): Promise<() => Promise<void>> {
   await privateDirectory(root);
   await directory(hostRoot, false);

@@ -1,7 +1,7 @@
 import { open } from 'node:fs/promises';
 import { z } from 'zod';
 import type { PinnedRelease, ReleaseTarget } from './contracts.ts';
-import { fileHash } from './files.ts';
+import { fileHash, responseBytes } from './files.ts';
 
 const asset = z.object({ id: z.number().int().positive(), name: z.string(), size: z.number().int().positive() });
 const release = z.object({
@@ -27,9 +27,7 @@ export class GithubReleases {
       headers: this.headers(), redirect: 'error', signal: AbortSignal.timeout(this.timeout),
     });
     if (!response.ok) throw new Error(`GitHub release lookup failed: HTTP ${response.status}`);
-    const text = await response.text();
-    if (text.length > 4 * 1024 * 1024) throw new Error('GitHub release metadata exceeds its size limit');
-    return JSON.parse(text);
+    return JSON.parse((await responseBytes(response, 4 * 1024 * 1024)).toString('utf8'));
   }
 
   async pin(target: ReleaseTarget): Promise<PinnedRelease> {

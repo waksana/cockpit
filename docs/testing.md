@@ -259,6 +259,33 @@ packager and manifest checks. Only tests against the actual tar prove that packa
 keep exact bytes and executable modes and run from the package's own dependencies,
 never the development tree. Commands are in [releasing](releasing.md).
 
+<a id="deployment-service"></a>
+### Independent deployment service
+
+The [deployment guide](deployment.md) owns installation, inputs and recovery.
+Run the existing server runner for `src/deployment/deployment.test.ts`.
+Default cases use generated archives, an injected GitHub response source and
+separately spawned synthetic hosts with the real module loader/graceful-exit
+owner. They cover HTTP/CLI, actual PID/instance replacement, SQLite/WAL backups,
+data/file preservation, declared migration, cancellation races, partial claims,
+durable failures and interrupted-process recovery. They are not production
+deployment or arbitrary real-module migration evidence.
+
+With the current user's working systemd manager, explicitly opt into:
+
+```sh
+COCKPIT_DEPLOYMENT_SYSTEMD_TEST=1 pnpm --filter @cockpit/server exec \
+  node --import tsx --test src/deployment/deployment.test.ts
+```
+
+Apply the [bounded user scope](#bounded-user-scopes) around it. These cases create
+uniquely named, test-only user unit files, use isolated homes/data/ports, exercise
+startup/restart guards, and kill only their own controller while an actual
+migration child is running. Cleanup stops/removes those exact units. They never
+operate the real `cockpit.service`; absence of a user manager is a limitation,
+not permission to switch to system units. An unset opt-in is a skip, not proof
+of user-unit behavior.
+
 <a id="diagnostics"></a>
 ## Optional diagnostics
 

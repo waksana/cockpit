@@ -9,6 +9,7 @@ modules with the [module contract](module-contract.md).
 | --- | --- |
 | [Project overview](../README.md) | What the host does, how extensions work, screenshots. |
 | [Install and run](install.md) | Release or source install, Copilot sign-in, first chat, remote access, WSL2, troubleshooting. |
+| [Independent deployment service](deployment.md) | Explicit HTTP/CLI-triggered formal-package deployment, user-unit setup, backups, guards, durable results and manual recovery. |
 | [Module catalog](modules.md) | Available modules and the **only** host/module version table. |
 | [MCP client](../apps/mcp/README.md) | Register the stdio MCP client so other agents use the same backend; API discovery; fork. |
 | [Release notes](release-notes.md) | Current source version only; earlier versions are in [GitHub Releases](https://github.com/waksana/cockpit/releases). |

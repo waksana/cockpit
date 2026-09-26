@@ -27,7 +27,7 @@ export async function startFixture(root: string) {
   });
   app.get('/version', async () => ({ instanceId: identity.instanceId, version: identity.version, sourceSha: identity.sourceSha }));
   app.get('/health', async () => ({ ok: true, instanceId: identity.instanceId }));
-  app.get('/status', async () => shutdown.snapshot());
+  app.get('/status', async () => ({ shutdown: shutdown.snapshot() }));
   app.get('/', async (_req, reply) => reply.type('text/html').send(readFileSync(join(root, 'apps/web/dist/index.html'))));
   app.get('/assets/app.js', async (_req, reply) => reply.type('text/javascript').send(readFileSync(join(root, 'apps/web/dist/assets/app.js'))));
   const timer = setInterval(() => shutdown.notify(), 20);

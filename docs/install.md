@@ -170,6 +170,11 @@ Cockpit installs no service unit. If you run it under a process manager, pass th
 same user, home and environment you used for sign-in. Do not run two hosts
 against the same native home.
 
+The optional [independent deployment service](deployment.md) manages an explicitly
+configured **user-level** host unit. Installing it or handing over an existing
+system unit requires separate authorization; ordinary host startup enables no
+deployment service.
+
 <a id="remote-access"></a>
 ## Remote access
 

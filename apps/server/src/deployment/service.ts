@@ -6,12 +6,16 @@ import { DeploymentPlan, id, digest, type DeploymentConfig, type DeploymentRecei
 import { deploymentLease, hash, missing, privateBytes } from './files.ts';
 import { DeploymentRunner } from './runner.ts';
 import { DeploymentStore } from './store.ts';
-import { SystemdHost } from './systemd.ts';
+import { assertControllerUnit, SystemdHost } from './systemd.ts';
 
 const request = z.object({ requestId: id, planId: id, planSha256: digest }).strict();
+const acknowledgement = z.object({
+  confirmation: z.literal('effects-reviewed'), instanceId: z.string().min(1), reason: z.string().trim().min(10).max(2000),
+});
 const conflict = (message: string) => Object.assign(new Error(message), { statusCode: 409 });
 
 export async function createDeploymentService(config: DeploymentConfig, runner?: DeploymentRunner) {
+  if (!runner) await assertControllerUnit(config);
   const release = await deploymentLease(config.stateRoot, config.host.home);
   const store = runner?.store ?? new DeploymentStore(config.stateRoot);
   const worker = runner ?? new DeploymentRunner(config, store, new SystemdHost(config));
@@ -39,9 +43,26 @@ export async function createDeploymentService(config: DeploymentConfig, runner?:
   app.setErrorHandler((error, _request, reply) => {
     const status = error instanceof z.ZodError ? 400 : missing(error) ? 404
       : error && typeof error === 'object' && 'statusCode' in error && typeof error.statusCode === 'number' ? error.statusCode : 500;
-    reply.code(status).send({ error: error instanceof Error ? error.message : String(error) });
+    reply.code(status).send({
+      error: error instanceof Error ? error.message : String(error),
+      ...(error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? { code: error.code } : {}),
+      ...(error && typeof error === 'object' && 'requestId' in error ? { requestId: error.requestId } : {}),
+    });
   });
-  app.get('/health', async () => ({ ok: !fatal && !closing, active: active?.receipt.id ?? null }));
+  app.get('/health', async () => ({
+    ok: !fatal && !closing && !(await store.inventory()).recovery.some(issue => !issue.acknowledged),
+    active: active?.receipt.id ?? null,
+  }));
+  app.get('/runs', async () => (await store.inventory()).receipts.map(({ id, planId, state, phase, attentionRequired, updatedAt }) =>
+    ({ id, planId, state, phase, attentionRequired, updatedAt })));
+  app.get('/recovery', async () => {
+    const inventory = await store.inventory();
+    return {
+      issues: inventory.recovery,
+      runs: inventory.receipts.filter(receipt => receipt.attentionRequired).map(receipt => receipt.id),
+      serviceGuard: await worker.manager.recovery?.() ?? null,
+    };
+  });
   app.get('/runs/:id', async req => store.read(id.parse((req.params as { id: string }).id)));
   app.post('/runs', async (req, reply) => {
     if (closing || fatal) throw conflict('Deployment service is stopping or has an unresolved persistence failure');
@@ -49,7 +70,9 @@ export async function createDeploymentService(config: DeploymentConfig, runner?:
     admission = true;
     try {
       const input = request.parse(req.body);
-      const receipts = await store.list();
+      const { receipts, recovery } = await store.inventory();
+      if (recovery.some(issue => !issue.acknowledged)) throw conflict('An incomplete deployment claim needs inspection; existing valid receipts remain readable through GET /runs/:id');
+      if (recovery.some(issue => issue.requestId === input.requestId)) throw conflict('This unpublished request ID is permanently reserved and cannot execute');
       const existing = receipts.find(item => item.id === input.requestId);
       if (existing) {
         if (existing.planId !== input.planId || existing.planSha256 !== input.planSha256) throw conflict('Request ID is already bound to different input');
@@ -58,6 +81,7 @@ export async function createDeploymentService(config: DeploymentConfig, runner?:
       if (active || receipts.some(item => item.attentionRequired || item.state === 'running')) {
         throw conflict('A deployment is active or has unresolved effects; inspect its receipt before another request');
       }
+      if (await worker.manager.recovery?.()) throw conflict('A service-policy guard is unresolved; inspect GET /recovery before another deployment');
       const prior = receipts.find(item => item.planSha256 === input.planSha256 && item.state === 'succeeded');
       if (prior) throw conflict(`This exact target was already accepted by run ${prior.id}; it will not execute twice`);
       const bytes = await privateBytes(join(config.plansRoot, `${input.planId}.json`));
@@ -83,6 +107,26 @@ export async function createDeploymentService(config: DeploymentConfig, runner?:
     }
     active.controller.abort(Object.assign(new Error('Deployment cancelled before shutdown'), { name: 'DeploymentCancelled' }));
     return reply.code(202).send({ requestId: run, cancellationRequested: true });
+  });
+  app.post('/runs/:id/acknowledge', async req => {
+    if (active || admission || closing || fatal) throw conflict('Wait for independent deployment activity to finish before acknowledging recovery');
+    admission = true;
+    try {
+      const input = acknowledgement.extend({ sequence: z.number().int().nonnegative() }).strict().parse(req.body);
+      return await worker.acknowledgeRecovery(id.parse((req.params as { id: string }).id), input.sequence, input.instanceId, input.reason);
+    } finally { admission = false; }
+  });
+  app.post('/claims/:id/acknowledge', async req => {
+    if (active || admission || closing || fatal) throw conflict('Wait for independent deployment activity to finish before acknowledging a claim');
+    admission = true;
+    try {
+      const input = acknowledgement.extend({ fingerprint: digest }).strict().parse(req.body);
+      const run = id.parse((req.params as { id: string }).id);
+      await worker.observeRecovery(input.instanceId);
+      if (await worker.manager.recovery?.()) throw conflict('A service-policy guard must be resolved before an unpublished claim can be acknowledged');
+      await store.acknowledgeClaim(run, input.fingerprint, input.reason, input.instanceId);
+      return { requestId: run, acknowledged: true, replayAllowed: false };
+    } finally { admission = false; }
   });
   app.addHook('onClose', async () => {
     closing = true;
