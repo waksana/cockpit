@@ -119,8 +119,9 @@ rollback.
 [`release-notes.md`](release-notes.md) describes only the current development
 workspace. Published Rolling notes instead preserve the triggering PR's complete
 title and body, followed by deterministic PR/build/source/sequence and all four
-asset digests. The final machine-readable provenance record binds the original
-identity for reruns and promotion. Editing that record, title/body or assets
+asset digests. The final machine-readable provenance record also seals the
+original four GitHub asset IDs, names, sizes and digests for reruns and promotion.
+Editing that record, title/body or assets
 invalidates later verification.
 
 <a id="versioned-releases"></a>
@@ -141,8 +142,10 @@ merges are not caught up and old manual `vX.Y.Z` tags no longer trigger it.
 3. The publisher creates the immutable tag, creates a prerelease draft, uploads
    each asset once, downloads all four, checks source/version/inventory/checksums
    and embedded descriptor, and guards tag/Release/asset identities again.
-4. It publishes the same Release as non-draft **prerelease**, with
-   `make_latest=false`, then downloads and verifies again. Ordinary Rolling does
+4. It seals the verified original asset identities and publishes the same Release
+   in one atomic PATCH as non-draft **prerelease**, with `make_latest=false`, then
+   downloads and verifies again. There is no separate body-only draft PATCH.
+   Ordinary Rolling does
    not claim Latest or deploy anything.
 
 No global release concurrency group cancels or replaces older pending runs.
@@ -171,7 +174,10 @@ source/tag, provenance and all four original assets. It then changes **only**
 `prerelease=false` and `make_latest=true` on the existing Release and verifies
 again. It does not rebuild, renumber, retag, upload, alter title/body or create a
 replacement. Missing, non-Rolling, draft, failed-run or changed assets are refused.
-An uncertain promotion write is not retried.
+An uncertain promotion write is not retried. Rolling releases created before the
+asset-ID seal was introduced remain unchanged and are not eligible for this
+stronger promotion/rerun entry point; never add a seal retroactively or replace
+their assets to bypass that guard.
 
 <a id="release-after-acceptance"></a>
 ## Deployment boundary

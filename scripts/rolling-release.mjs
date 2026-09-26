@@ -31,13 +31,14 @@ function provenance(release) {
   return JSON.parse(Buffer.from(last.slice(marker.length, -4), 'base64').toString('utf8'));
 }
 
-function releaseText(pr, identity, runId, digests) {
+function releaseText(pr, identity, runId, digests, assetSeal) {
   const notes = `# ${pr.title}\n\n${pr.body}\n\n---\n\n`
     + `PR: https://github.com/${identity.repository}/pull/${pr.number}\n\n`
     + `Source: ${identity.sourceSha}\n\nRolling sequence: ${identity.sequence}\n\n`
     + `Build: https://github.com/${identity.repository}/actions/runs/${runId}\n\n`
     + RELEASE_ASSETS.map(name => `- \`${name}\`: \`sha256:${digests[name]}\``).join('\n') + '\n\n';
-  const record = { ...identity, runId, pullRequest: pr.number, digests, notesSha256: hash(notes) };
+  const record = { ...identity, runId, pullRequest: pr.number, digests, notesSha256: hash(notes),
+    ...(assetSeal ? { assetSeal } : {}) };
   return { name: `Cockpit ${identity.tag}`,
     body: `${notes}${marker}${Buffer.from(JSON.stringify(record)).toString('base64')} -->` };
 }
@@ -90,13 +91,17 @@ async function verifyRemote(client, identity, release, sourceDirectory) {
   const base = `repos/${identity.repository}/releases/${release.id}`;
   const staged = await releaseAssets(client, base);
   const record = provenance(release);
-  const { runId, pullRequest, digests, notesSha256, ...recordIdentity } = record;
+  const { runId, pullRequest, digests, notesSha256, assetSeal, ...recordIdentity } = record;
   assert.deepEqual(recordIdentity, identity, 'Release provenance differs from Rolling identity');
   assert.ok(positive(runId) && positive(pullRequest));
   assert.equal(release.name, `Cockpit ${identity.tag}`, 'Release title changed from publication');
   assert.equal(hash(release.body.slice(0, release.body.lastIndexOf('\n') + 1)), notesSha256,
     'Release notes changed from publication');
   assert.deepEqual(Object.keys(digests).sort(), [...RELEASE_ASSETS].sort());
+  if (!release.draft || assetSeal !== undefined) {
+    assert.ok(Array.isArray(assetSeal), 'Published Rolling Release lacks its original asset-ID seal; no automatic repair');
+    assert.deepEqual(assetIdentity(staged), assetSeal, 'Assets differ from the original published asset-ID seal');
+  }
   const directory = mkdtempSync(join(tmpdir(), 'cockpit-rolling-'));
   try {
     for (const asset of staged) {
@@ -138,9 +143,10 @@ export async function publishRolling({ repository, event, sequence, runId, sourc
   if (release) {
     // A rerun may only read an already published identity. Draft/uncertain writes need explicit investigation.
     assert.equal(release.draft, false, 'Existing draft: stop and inspect the original attempt; rerun never repairs or republishes it');
-    assert.equal(release.name, text.name);
-    assert.equal(release.body, text.body, 'Rerun changed original PR, source, run or artifact identity');
     const result = await verifyRemote(client, identity, release, sourceDirectory);
+    const originalText = releaseText(pr, identity, runId, checked.digests, assetIdentity(result.assets));
+    assert.equal(release.name, originalText.name);
+    assert.equal(release.body, originalText.body, 'Rerun changed original PR, source, run or artifact identity');
     return { ...identity, releaseId: release.id, reused: true, assets: result.assets };
   }
   const target = await tagTarget(client, repository, identity.tag);
@@ -168,14 +174,16 @@ export async function publishRolling({ repository, event, sequence, runId, sourc
   const staged = await verifyRemote(client, identity, release, sourceDirectory);
   await verifySource(identity.sourceSha);
   await finalGuard(client, identity, release, staged.assets);
+  const sealedText = releaseText(pr, identity, runId, checked.digests, assetIdentity(staged.assets));
   const published = await mutate(client, base, {
-    method: 'PATCH', body: { draft: false, prerelease: true, make_latest: 'false' },
+    method: 'PATCH', body: { draft: false, prerelease: true, make_latest: 'false', body: sealedText.body },
   });
   assert.equal(published.draft, false);
   assert.equal(published.prerelease, true);
   const result = await verifyRemote(client, identity, published, sourceDirectory);
   assert.deepEqual(assetIdentity(result.assets), assetIdentity(staged.assets), 'Publication changed asset identities');
-  assert.deepEqual({ ...releaseIdentity(published), published_at: null }, releaseIdentity(release));
+  assert.deepEqual({ ...releaseIdentity(published), published_at: null },
+    { ...releaseIdentity(release), body: sealedText.body });
   return { ...identity, releaseId: release.id, reused: false, assets: result.assets };
 }
 
