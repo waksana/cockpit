@@ -7,7 +7,7 @@ import { pendingDecisionKey, PLAN_ACTION_LABEL } from '../lib/pendingDecisions';
 import { Icon, type IconName } from './Icon';
 import { Button } from './Button';
 import { DisclosureSection } from './Disclosure';
-import { MessageBody } from './MessageBody';
+import { MarkdownLabel, MessageBody } from './MessageBody';
 import { MessagePresentation } from './ModuleComponents';
 
 const ELICITATION_ACTION_LABEL = { accept: '同意', decline: '拒绝', cancel: '取消' } as const;
@@ -107,8 +107,10 @@ function PendingBody({ decision, sessionId, pending, disabled, onChoice, onPlan,
         <MessageBody body={request.question} />
       </MessagePresentation>
       {!!request.choices?.length && <div className="chat-ask-choices" data-layout="column">
-        {request.choices.map(choice => <AskChoice key={choice} choice={choice}
-          disabled={pending || disabled.ask} onSelect={() => onChoice(request.requestId, choice)} />)}
+        {request.choices.map(choice => <Button key={choice} className="chat-ask-choice"
+          disabled={pending || disabled.ask} onClick={() => onChoice(request.requestId, choice)}>
+          <MarkdownLabel body={choice} />
+        </Button>)}
       </div>}
     </>;
   }
@@ -141,16 +143,6 @@ function PendingBody({ decision, sessionId, pending, disabled, onChoice, onPlan,
       </Button>)}
     </div>
   </>;
-}
-
-function AskChoice({ choice, disabled, onSelect }: { choice: string; disabled: boolean; onSelect: () => void }) {
-  const id = useId();
-  // Markdown may contain links and copy controls, so it must not be inside the answer button.
-  return <div className="chat-ask-option">
-    <div id={`${id}-text`} className="chat-ask-option-body"><MessageBody body={choice} /></div>
-    <Button id={`${id}-select`} className="chat-ask-choice" aria-labelledby={`${id}-select ${id}-text`}
-      disabled={disabled} onClick={onSelect}>选择</Button>
-  </div>;
 }
 
 function Answer({ label, children }: { label: string; children: ReactNode }) {
