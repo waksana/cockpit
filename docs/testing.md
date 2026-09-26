@@ -27,6 +27,7 @@ Pick the smallest scope that covers the change:
 | Web types / lint | `pnpm --filter @cockpit/web typecheck` / `pnpm --filter @cockpit/web lint` |
 | Backend test types | `pnpm typecheck:test` (per package: `pnpm --filter <pkg> typecheck:test`) |
 | Backend / scripts lint | `pnpm exec eslint .` |
+| Documentation links and anchors | `node --test scripts/check-docs.test.mjs` |
 | Release and package checks | `node --test scripts/*.test.mjs` ([releasing](releasing.md)) |
 
 To target files, use each package's existing Node test/tsx runner; do not add another
@@ -47,6 +48,46 @@ Rules:
   probes are not part of ordinary pass counts.
 - server/core/MCP builds exclude their tests; protocol and Web tsconfigs include
   tests under `src`, so their typechecks cover them. Check the actual scripts.
+
+### Bounded user scopes
+
+Agent/service shells may not inherit the user manager's bus environment. If
+`systemd-run --user` reports "No medium found", use the existing manager for the
+current UID, not a hard-coded user or an authenticated system scope:
+
+```sh
+(
+  export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+  export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+  test -S "$XDG_RUNTIME_DIR/bus" || {
+    echo "No user-manager bus at $XDG_RUNTIME_DIR/bus; bounded tests were not started." >&2
+    exit 1
+  }
+  systemd-run --user --scope -p MemoryMax=4G -p MemorySwapMax=0 \
+    timeout --kill-after=30s 15m pnpm --filter @cockpit/web test
+)
+```
+
+The values are an example budget; choose bounds for the selected suite. These
+variables do not create a missing user manager or grant access to its bus. If the
+manager or resource controls are unavailable, resolve that explicitly rather than
+running the same workload unbounded. Native tests still need their isolated homes.
+
+### Documentation checks
+
+`node scripts/check-docs.mjs` checks tracked Markdown's local links and heading or
+explicit HTML anchors, ignoring examples in code and external URLs. Its regression
+tests and repository scan are part of `pnpm test`, so failures block required CI.
+Generated/ignored files are not valid link targets. This does not check remote
+sites or validate the claims in a document.
+
+The separate **Module catalog freshness** workflow runs daily and on manual
+dispatch. It compares only the catalog's **Latest release** column with GitHub's
+Latest releases (`gh api`); it is not a required PR check. A mismatch or API failure
+is reported, never silently accepted or used to update the catalog. New releases
+do not establish an accepted host pairing. `node scripts/check-module-versions.mjs`
+performs the same networked check when explicitly requested; its unit tests use
+injected responses without network access.
 
 <a id="web-interaction-tests"></a>
 ## Web interaction tests
