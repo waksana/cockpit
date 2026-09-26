@@ -144,7 +144,10 @@ test('Rolling uploads four assets once, verifies before and after publication, a
   assert.ok(f.state.releases[0].body.includes(f.options.event.pull_request.body));
   assert.equal(writes(f.state).filter(item => item.upload).length, 4);
   assert.equal(f.state.calls.filter(item => item.method === 'DOWNLOAD').length, 8);
-  assert.deepEqual(writes(f.state).at(-1).body, { draft: false, prerelease: true, make_latest: 'false' });
+  const publication = writes(f.state).at(-1).body;
+  assert.deepEqual({ ...publication, body: undefined },
+    { draft: false, prerelease: true, make_latest: 'false', body: undefined });
+  assert.equal(publication.body, f.state.releases[0].body);
 });
 
 test('rerun reuses original PR/source/version/assets and never writes or demotes a milestone', async t => {
@@ -205,6 +208,7 @@ test('missing, additional, replaced and changed assets prevent promotion', async
     f => f.state.assets.set(999, { ...f.state.assets.get(100), asset: { ...f.state.assets.get(100).asset, id: 999, name: 'extra' } }),
     f => { f.state.assets.get(100).bytes = Buffer.from('corrupt'); },
     f => { f.state.assets.get(100).asset.digest = `sha256:${'0'.repeat(64)}`; },
+    f => { f.state.assets.get(100).asset.id = 999; },
     f => { f.state.onDownload = entry => { entry.asset.id++; }; },
   ]) {
     const f = fixture(t);
@@ -214,6 +218,25 @@ test('missing, additional, replaced and changed assets prevent promotion', async
     await assert.rejects(f.promote());
     assert.equal(writes(f.state).length, count);
   }
+});
+
+test('the original asset-ID seal is published atomically and required by promotion and reruns', async t => {
+  const f = fixture(t);
+  await f.run();
+  assert.equal(writes(f.state).filter(item => item.method === 'PATCH').length, 1);
+  assert.equal(writes(f.state).find(item => item.path === releaseBase).body.draft, true);
+  const release = f.state.releases[0];
+  const lines = release.body.split('\n');
+  const record = JSON.parse(Buffer.from(lines.at(-1).slice('<!-- cockpit-rolling:'.length, -4), 'base64'));
+  assert.equal(record.assetSeal.length, 4);
+  assert.deepEqual(record.assetSeal.map(asset => asset.id).sort(), [100, 101, 102, 103]);
+  delete record.assetSeal;
+  lines[lines.length - 1] = `<!-- cockpit-rolling:${Buffer.from(JSON.stringify(record)).toString('base64')} -->`;
+  release.body = lines.join('\n');
+  const count = writes(f.state).length;
+  await assert.rejects(f.promote(), /lacks its original asset-ID seal/);
+  await assert.rejects(f.run(), /lacks its original asset-ID seal/);
+  assert.equal(writes(f.state).length, count);
 });
 
 test('unknown publication is not retried and an existing draft is never repaired by rerun', async t => {
