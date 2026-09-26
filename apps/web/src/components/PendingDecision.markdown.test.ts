@@ -7,12 +7,13 @@ import type { ActivateFrontend, MessageIdentity } from '@cockpit/module-api/fron
 import { askMarkdownChoices, askMarkdownQuestion } from '../dev/ask-markdown-fixture';
 import { fixtureSession } from '../dev/chat-fixtures';
 import { getDraftSession, retireDraftSession } from '../lib/draftSelection';
-import { ModuleRuntime } from '../lib/moduleRuntime';
+import { ModuleRuntime, moduleRuntime } from '../lib/moduleRuntime';
 import { NativeWindow } from '../net/nativeWindow';
 import { useCockpit } from '../net/store';
 import { ModuleRuntimeProvider } from './ModuleComponents';
 import { AnsweredAskCard, PendingDecisionCard, type PendingDecisionHandlers } from './PendingDecision';
 import { Thread } from './Thread';
+import { MarkdownLabel } from './MessageBody';
 
 const ask = { requestId: 'markdown-question', question: askMarkdownQuestion, choices: askMarkdownChoices, allowFreeform: true };
 const decision = { kind: 'ask' as const, request: ask };
@@ -23,6 +24,19 @@ const handlers: PendingDecisionHandlers = {
 const pending = (props: Partial<PendingDecisionHandlers> = {}) => createElement(PendingDecisionCard, {
   ...handlers, ...props, decisions: [decision], selected: decision, onSelect() {},
 });
+
+function assertButtonLabel(button: HTMLElement) {
+  const phrasing = new Set(['SPAN', 'STRONG', 'EM', 'DEL', 'CODE', 'BR', 'SUP']);
+  for (const element of Array.from(button.querySelectorAll('*'))) {
+    assert.ok(phrasing.has(element.tagName), `button contains only noninteractive phrasing, not ${element.tagName}`);
+    assert.equal(element.hasAttribute('tabindex'), false);
+    assert.equal(element.hasAttribute('role'), false);
+    assert.equal(element.hasAttribute('href'), false);
+    assert.equal(element.hasAttribute('src'), false);
+  }
+  assert.equal(button.getAttribute('aria-label'), null, 'the visible choice itself supplies the accessible name');
+  assert.equal(button.getAttribute('aria-labelledby'), null);
+}
 
 function assertMarkdownQuestion(element: HTMLElement) {
   assert.ok(within(element).getByRole('heading', { name: '选择实现方案', level: 2 }));
@@ -72,12 +86,50 @@ test('pending ask uses full chat Markdown and preserves the exact ask message bo
     'message adornments remain siblings of the original question boundary');
 });
 
-test('Markdown choice links and code copying are separate from raw-value choice submission', async t => {
+test('each Markdown choice is one complete button with readable noninteractive content', () => {
+  const view = render(pending());
+  const options = view.container.querySelector<HTMLElement>('.chat-ask-choices')!;
+  const buttons = within(options).getAllByRole('button');
+  assert.equal(buttons.length, askMarkdownChoices.length);
+  assert.ok(buttons.every(button => button.parentElement === options), 'no sibling label or separate Choose action');
+  assert.equal(view.container.querySelector('.chat-ask-option, .chat-ask-option-body'), null);
+  assert.equal(within(options).queryByRole('button', { name: '选择' }), null);
+  const first = within(options).getByRole('button', { name: /^保留现有实现/ });
+  assert.equal(first.querySelector('strong')?.textContent, '保留现有实现');
+  assert.equal(first.querySelector('em')?.textContent, '继续复用');
+  assert.equal(first.querySelector('del')?.textContent, '不用另造控件');
+  assert.equal(first.querySelector('code')?.textContent, 'pnpm test');
+  const complex = within(options).getByRole('button', { name: /^查看细节/ });
+  for (const text of ['参考说明', 'pnpm --filter @cockpit/web test', 'long_option_argument_', '项目', '条件',
+    '字符串', '原样提交', 'unbroken_choice_', '[x]', '[ ]', '已读条件', '保留草稿', '示意图', '链接图片']) {
+    assert.ok(complex.textContent?.includes(text), `complex syntax keeps readable content: ${text}`);
+  }
+  assert.equal(buttons[2].textContent, askMarkdownChoices[2]);
+  for (const button of buttons) assertButtonLabel(button);
+});
+
+test('block syntax, references and media become readable phrasing without consulting module renderers', t => {
+  t.mock.method(moduleRuntime, 'renderer', () => assert.fail('Button labels must not request module replacements'));
+  const body = '# Heading\n\nParagraph *one*.\nSoft break.\n\nParagraph **two**.\n\n'
+    + '- Bullet one\n- Bullet two\n\n3. Ordered three\n4. Ordered four\n\n> Quote\n\n'
+    + '[reference][target]\n\n[target]: https://example.invalid/guide\n\n'
+    + '![Alt label](https://example.invalid/image.png)\n\n---\n\n'
+    + 'Footnote[^note]\n\n[^note]: Footnote content.\n\n'
+    + '<video src="https://example.invalid/movie.mp4" controls>Literal media</video>';
+  const view = render(createElement('button', { type: 'button' }, createElement(MarkdownLabel, { body })));
+  const button = screen.getByRole('button');
+  assertButtonLabel(button);
+  for (const value of ['Heading', 'Paragraph one.', 'Soft break.', 'Paragraph two.', 'Bullet one', 'Bullet two',
+    'Ordered three', 'Ordered four', 'Quote', 'reference', 'Alt label', 'Footnote content.', 'Literal media']) {
+    assert.ok(button.textContent?.includes(value), `retained content: ${value}`);
+  }
+  assert.equal(view.container.querySelector('video, a, img, input, section, div, p, ul, ol, li, h1'), null);
+});
+
+test('formatted descendants, the button surface and keyboard submit the exact raw Markdown choice', async t => {
   connect(t);
   const calls: Array<[string, string, boolean]> = [];
-  const copied: string[] = [];
   const user = userEvent.setup();
-  t.mock.method(navigator.clipboard, 'writeText', async (text: string) => { copied.push(text); });
   const session = { ...fixtureSession('empty'), sessionId: 'markdown-choice', ask };
   const draft = getDraftSession(session.sessionId).candidate({ kind: 'ask', requestId: ask.requestId });
   draft.edit('Keep this freeform draft');
@@ -91,20 +143,9 @@ test('Markdown choice links and code copying are separate from raw-value choice 
     },
   }));
   t.after(() => { view.unmount(); retireDraftSession(session.sessionId); });
-  const option = view.container.querySelectorAll<HTMLElement>('.chat-ask-option')[1];
-  assert.ok(option);
-  assert.equal(option.querySelector('strong')?.textContent, '查看细节');
-  const select = within(option).getByRole('button', { name: /^选择 查看细节/ });
-  const link = within(option).getByRole('link', { name: '参考说明' });
-  assert.equal(link.getAttribute('target'), '_blank');
-  link.addEventListener('click', event => event.preventDefault());
-  await user.click(link);
-  assert.equal(document.activeElement, link);
-  await user.click(within(option).getByRole('button', { name: '复制代码' }));
-  await waitFor(() => assert.deepEqual(copied, ['pnpm --filter @cockpit/web test\n']));
-  assert.deepEqual(calls, [], 'reading/copying choice content never selects an answer');
-  assert.equal(view.container.querySelector('button a, button button, button input, button [tabindex], p div'), null);
-  await user.click(select);
+  const select = screen.getByRole('button', { name: /^查看细节/ });
+  assertButtonLabel(select);
+  await user.click(within(select).getByText('查看细节'));
   assert.deepEqual(calls, [[ask.requestId, askMarkdownChoices[1], false]]);
   await act(() => { fireEvent.click(select); fireEvent.click(select); });
   assert.equal(calls.length, 1, 'pending choice submission is guarded against duplicate clicks');
@@ -112,11 +153,24 @@ test('Markdown choice links and code copying are separate from raw-value choice 
   await act(async () => finish(false));
   await waitFor(() => assert.equal(select.hasAttribute('disabled'), false));
   assert.equal((screen.getByRole('textbox', { name: '消息输入' }) as HTMLTextAreaElement).value, 'Keep this freeform draft');
+  await user.click(select.querySelector('code')!);
+  await waitFor(() => assert.equal(select.hasAttribute('disabled'), false));
+  await user.click(select);
+  await waitFor(() => assert.equal(select.hasAttribute('disabled'), false));
   select.focus();
   await user.keyboard('{Enter}');
-  assert.deepEqual(calls, [
-    [ask.requestId, askMarkdownChoices[1], false], [ask.requestId, askMarkdownChoices[1], false],
-  ], 'keyboard selection also submits the exact original Markdown, not rendered text');
+  await waitFor(() => assert.equal(select.hasAttribute('disabled'), false));
+  select.focus();
+  await user.keyboard(' ');
+  await waitFor(() => assert.equal(select.hasAttribute('disabled'), false));
+  assert.deepEqual(calls, Array.from({ length: 5 }, () => [ask.requestId, askMarkdownChoices[1], false]),
+    'clicking formatted content, button area, Enter or Space keeps the original string and wasFreeform=false');
+  const first = screen.getByRole('button', { name: /^保留现有实现/ });
+  first.focus();
+  await user.tab();
+  assert.equal(document.activeElement, select, 'no label link, checkbox or code action enters the tab order');
+  await user.tab();
+  assert.equal(document.activeElement, screen.getByRole('button', { name: askMarkdownChoices[2] }));
 });
 
 test('disabled ask selection keeps Markdown readable without enabling submission', async () => {
@@ -124,7 +178,9 @@ test('disabled ask selection keeps Markdown readable without enabling submission
   const view = render(pending({ disabled: { ask: true, plan: false, elicitation: false }, onChoice: () => { calls++; } }));
   for (const button of Array.from(view.container.querySelectorAll<HTMLButtonElement>('button.chat-ask-choice'))) {
     assert.equal(button.disabled, true);
+    assertButtonLabel(button);
     await userEvent.setup().click(button);
+    await userEvent.setup().click(button.querySelector('strong, span')!);
   }
   assert.equal(calls, 0);
   assertMarkdownQuestion(view.container.querySelector<HTMLElement>('.chat-ask-q')!);

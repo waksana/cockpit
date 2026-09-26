@@ -61,3 +61,9 @@
   pre:focus-visible { outline-offset: -3px; }
   pre code { font-size: var(--chat-text-label, var(--font-size-13)); }
 }
+
+.markdown-label {
+  min-width: 0; font-size: inherit; line-height: inherit;
+  .markdown-label-block { display: block; white-space: pre-wrap; }
+  .markdown-label-row { display: block; }
+}

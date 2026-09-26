@@ -65,10 +65,34 @@ const MarkdownTable: Components['table'] = ({ node: _node, ...props }) => {
 const components: Components = {
   a: MarkdownLink, img: MarkdownMedia, p: MarkdownParagraph, pre: MarkdownCodeBlock, table: MarkdownTable,
 };
+const markdownPlugins = [remarkGfm, remarkOriginalMarkdownTargets];
+
+const LabelBlock = ({ children }: { children?: ReactNode }) => <span className="markdown-label-block">{children}</span>;
+const LabelHeading = ({ children }: { children?: ReactNode }) => <strong className="markdown-label-block">{children}</strong>;
+const LabelCell = ({ children }: { children?: ReactNode }) => <span>{children}{' '}</span>;
+const labelComponents: Components = {
+  p: LabelBlock, pre: LabelBlock, blockquote: LabelBlock, li: LabelBlock,
+  h1: LabelHeading, h2: LabelHeading, h3: LabelHeading, h4: LabelHeading, h5: LabelHeading, h6: LabelHeading,
+  tr: ({ children }) => <span className="markdown-label-row">{children}</span>,
+  th: LabelCell, td: LabelCell,
+  img: ({ src, alt }) => <span>{`![${alt ?? ''}](${typeof src === 'string' ? src : ''})`}</span>,
+  input: ({ checked }) => <span>{checked ? '[x]' : '[ ]'}</span>,
+  hr: () => <LabelBlock>---</LabelBlock>,
+};
+const labelElements = [...Object.keys(labelComponents), 'strong', 'em', 'del', 'code', 'br', 'sup'];
+
+// Button labels retain phrasing only, without links, module replacements or focusable block controls.
+export const MarkdownLabel = memo(function MarkdownLabel({ body }: { body: string }) {
+  return <span className="message-body markdown-label">
+    <ReactMarkdown remarkPlugins={markdownPlugins} components={labelComponents}
+      allowedElements={labelElements} unwrapDisallowed>{body}</ReactMarkdown>
+  </span>;
+});
+
 export const MessageBody = memo(function MessageBody({ body, origin, elementRef, identity, complete = true }: {
   body: string; origin?: MessageOrigin; elementRef?: Ref<HTMLDivElement>; identity?: MessageIdentity; complete?: boolean;
 }) {
-  const children = <ReactMarkdown remarkPlugins={[remarkGfm, remarkOriginalMarkdownTargets]} components={components} urlTransform={url => url}>{body}</ReactMarkdown>;
+  const children = <ReactMarkdown remarkPlugins={markdownPlugins} components={components} urlTransform={url => url}>{body}</ReactMarkdown>;
   return <OriginContext.Provider value={origin}>
     {identity ? <MessagePresentation className="message-body" identity={identity} complete={complete} bodyRef={elementRef}>{children}</MessagePresentation>
       : <div className="message-body" ref={elementRef}>{children}</div>}

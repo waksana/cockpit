@@ -194,9 +194,13 @@ native history (`ask-reply`, `plan-reply`); elicitation answers are not in nativ
 so the browser tab keeps a local "handled" marker whose chosen action is lost on refresh.
 
 Ask questions and their recorded originals use the existing chat Markdown renderer,
-including lists, links, code and tables. Choice content uses that same renderer beside
-a separate **Choose** button: links and code-copy controls never submit an answer.
-Selection sends the complete original choice string, not rendered text or HTML.
+including lists, links, code and tables. Each choice remains one full clickable button,
+with a noninteractive label produced by the same Markdown parser. Emphasis, strikeout
+and code stay formatted; links retain their text, media references and task-list states
+remain text, and block content is flattened into readable lines. Labels contain no
+navigation, copy controls, media, module replacements or nested tab stops.
+Clicking any part of the choice or pressing Enter/Space on its button sends the complete
+original choice string, not rendered text or HTML.
 The pending question keeps its ask message identity for module presentation; Markdown
 does not invent a native message origin for callbacks or historical question text.
 Missing original questions retain the explicit unavailable notice.
