@@ -1,40 +1,29 @@
-# Cockpit 0.6.0
+# Cockpit 0.6.1
 
-Delivery candidate for the merged default-model and presentation fixes (#235)
-and `ask_user` Markdown support (#237). This source preparation is not a
-deployment or publication record. The minor version marks the new user-facing
-Markdown capability rather than treating the delivery as patch-only.
+Includes the final `ask_user` Markdown choice presentation (#242), the original
+question/history support (#237), and the default-model and composer fixes (#235).
+This patch assigns a new immutable identity to the final rendering correction.
 
-- Render pending questions, choices and the original question in answered or
-  restored records with the shared Markdown renderer. Existing links, code,
-  lists, quotes and tables retain the same safety rules.
-- Keep each choice's Markdown content separate from its selection button.
-  Opening a link or copying code does not answer the question; selecting an
-  option submits its complete original string, including Markdown and newlines.
-- Read default-model preferences from the versioned host configuration without
-  treating `schemaVersion`, `revision` or `values` as model settings. Explicit
-  saves preserve unrelated values and use the host writer lease. Existing flat
-  preferences remain readable and upgrade only on an explicit save.
-- Let the answer composer return to its natural height after an accepted answer,
-  clearing or question changes, while preserving failed or unaccepted drafts.
-- Align global module MCP/Skill rows with the native resource list and remove
-  redundant role-enabled slogans without removing provenance, connection/error
-  state or existing detail interactions.
+- Each choice is one full-width native button. Non-interactive Markdown text
+  is its label; there is no separate selection action, nested link, copy control
+  or resource loading. Clicking the label or padding, or using Enter/Space,
+  submits the complete original choice string, including Markdown and newlines.
+- Pending questions and original questions in answered/restored records retain
+  the full shared Markdown renderer, including links, code and tables.
+- Default-model preferences use the versioned host configuration correctly.
+  Existing sessions keep their native model behavior; explicit saves preserve
+  unrelated values and unavailable defaults remain explicit errors.
+- Accepted answers, clearing and question changes restore the composer's natural
+  height without discarding failed or unaccepted drafts.
+- Global module MCP/Skill rows use the native resource presentation, retaining
+  provenance and connection/error details without redundant role slogans.
 
-The host, Web, MCP, core and internal protocol report 0.6.0. The independently
+The host, Web, MCP, core and internal protocol report 0.6.1. The independently
 versioned [module SDK](module-sdk.md) is unchanged and is not republished.
-Default-model changes still apply only to newly created sessions; existing
-sessions, resume/reload and fork retain their native model behavior. An
-unavailable default or creation-time model mismatch remains an explicit error.
+No host or Task data migration is introduced by this host release. Existing
+schema v10 data must not be passed through the earlier v9 upgrade again.
 
-This candidate does not change module packages or introduce a Task database
-migration. The [module catalog](modules.md#accepted-pairing-and-upgrade-boundary)
-retains the last accepted pairing until this candidate is deployed and accepted.
-Existing schema v10 data must not be passed through the earlier v9 upgrade again;
-restoring a database backup discards later writes and requires separate
-authorization.
-
-Deployment acceptance, immutable tags and publication remain separate from
-source preparation under the [release procedure](releasing.md#release-after-acceptance).
-Synthetic component/browser and isolated native coverage do not establish
-real-device, microphone/Azure recognition or push-delivery acceptance.
+Publication does not install or restart a service. The
+[module catalog](modules.md#accepted-pairing-and-upgrade-boundary) records the
+last accepted pairing, not an unverified deployment candidate. Synthetic coverage
+does not establish real-device, microphone/Azure or push-delivery acceptance.
