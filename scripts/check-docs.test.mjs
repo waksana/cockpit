@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -88,4 +88,34 @@ test('reports missing targets, fragments, invalid encoding and escapes without r
 test('tracked repository Markdown has valid relative links and anchors', () => {
   const root = fileURLToPath(new URL('..', import.meta.url));
   assert.deepEqual(checkDocs(root), []);
+});
+
+test('rejects tracked Markdown symlinks to external or ignored content before parsing', t => {
+  const f = fixture(t, {
+    'outside/doc.md': '[Must not be parsed](nonexistent.md)',
+    'repo/generated.md': '[Must not be parsed](nonexistent.md)',
+    'repo/README.md': '[External](external.md#anything) [Generated](alias.md#anything)',
+  });
+  const root = join(f.root, 'repo');
+  symlinkSync('../outside/doc.md', join(root, 'external.md'));
+  symlinkSync('generated.md', join(root, 'alias.md'));
+  assert.deepEqual(checkDocs(root, ['README.md', 'external.md', 'alias.md']), [
+    'external.md: expected a tracked regular file with no symlink components',
+    'alias.md: expected a tracked regular file with no symlink components',
+  ]);
+});
+
+test('rejects symlinked parents and non-Markdown symlink targets', t => {
+  const f = fixture(t, {
+    'outside/doc.md': '[Must not be parsed](nonexistent.md)',
+    'repo/README.md': '[Asset](image.svg)',
+    'repo/generated.svg': '<svg></svg>',
+  });
+  const root = join(f.root, 'repo');
+  symlinkSync('../outside', join(root, 'linked'), 'dir');
+  symlinkSync('generated.svg', join(root, 'image.svg'));
+  assert.deepEqual(checkDocs(root, ['README.md', 'linked/doc.md', 'image.svg']), [
+    'image.svg: expected a tracked regular file with no symlink components',
+    'linked/doc.md: expected a tracked regular file with no symlink components',
+  ]);
 });

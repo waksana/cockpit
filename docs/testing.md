@@ -78,8 +78,10 @@ running the same workload unbounded. Native tests still need their isolated home
 `node scripts/check-docs.mjs` checks tracked Markdown's local links and heading or
 explicit HTML anchors, ignoring examples in code and external URLs. Its regression
 tests and repository scan are part of `pnpm test`, so failures block required CI.
-Generated/ignored files are not valid link targets. This does not check remote
-sites or validate the claims in a document.
+Generated/ignored files are not valid link targets, and symlink paths are rejected
+before reading Markdown (including symlinked parent directories). Reference
+definitions are checked even when unused, so they cannot retain broken targets.
+This does not check remote sites or validate the claims in a document.
 
 The separate **Module catalog freshness** workflow runs daily and on manual
 dispatch. It compares only the catalog's **Latest release** column with GitHub's
