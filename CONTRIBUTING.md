@@ -73,18 +73,22 @@ Host workspace packages are internal parts of Cockpit. The public
 [module SDK](docs/module-sdk.md) is the exception: it has its own version and
 npm release, independent of host releases.
 
-Commits do not each need a version bump. Before publishing or deploying changed
-package contents, allocate a new version and follow the
+Host product versions on `main` stay `0.0.0-dev`. Every actual PR merge into
+`main`, including fixes, docs and chores, automatically attempts an immutable
+Rolling release for that exact merge SHA. No version bump, preparation PR, tag
+or release label is required. Actions injects the generated version only into
+an isolated package snapshot; see the
 [immutable delivery version rules](docs/releasing.md#delivery-versions).
-This also applies to installation from a fixed source commit, not only tags.
 Module installers reject a different archive digest for an already installed
 module ID/version; a source SHA or new digest is not a substitute for a new
 version. Never delete an installed version or bypass this guard to replace it.
 
-The [release procedure](docs/releasing.md#versioned-releases) owns version changes,
-tags and publication: green main → `vX.Y.Z` → full checks/native smoke/build/package
-→ publish the exact checked archive and checksum. It does **not** deploy to a
-production host. Only maintainers publish releases.
+The [release procedure](docs/releasing.md#versioned-releases) owns Rolling
+identity, verification and publication. A merge therefore has an automatic
+prerelease side effect; PR-only or no-publication work must stop before merge.
+Milestone promotion selects an existing successful Rolling release in place and
+requires separate explicit authorization. Neither operation deploys to a
+production host; the independent module SDK keeps its own release policy.
 
 Contributions are distributed under [GPL-3.0-only](LICENSE), the project's existing
 license. Preserve relevant third-party licenses and [attribution](NOTICE.md).

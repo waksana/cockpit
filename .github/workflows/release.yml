@@ -1,84 +1,45 @@
-name: Release
+name: Rolling
+# This workflow path and run_number are the permanent per-repository sequence.
+# Do not rename/delete/recreate it. Each merged PR gets its own uncancelled run.
 on:
-  push:
-    tags: ['v*']
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: Existing release tag (vX.Y.Z)
-        required: true
-        type: string
-      source_sha:
-        description: Original full source commit SHA
-        required: true
-        type: string
-      release_id:
-        description: Exact complete draft Release ID
-        required: true
-        type: string
-      archive_sha256:
-        description: Original runtime.tar.gz SHA-256
-        required: true
-        type: string
-      checksum_sha256:
-        description: Original runtime.tar.gz.sha256 asset SHA-256
-        required: true
-        type: string
+  pull_request_target:
+    branches: [main]
+    types: [closed]
 
 permissions:
   contents: read
 
-concurrency:
-  group: release-${{ inputs.tag || github.ref_name }}
-  cancel-in-progress: false
-
 jobs:
   checks:
-    if: github.event_name == 'push'
+    if: github.event.pull_request.merged == true
     uses: ./.github/workflows/build.yml
+    with:
+      source_sha: ${{ github.event.pull_request.merge_commit_sha }}
+      rolling_sequence: ${{ github.run_number }}
     permissions:
       contents: read
 
   publish:
     needs: checks
-    if: >-
-      always() && !cancelled() &&
-      ((github.event_name == 'push' && needs.checks.result == 'success') ||
-       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: write
-      actions: read
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: 24.20.0
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        if: github.event_name == 'workflow_dispatch'
-        with:
-          ref: ${{ inputs.source_sha }}
-          path: release-source
-          fetch-depth: 0
-          persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        if: github.event_name == 'push'
         with:
-          name: cockpit-runtime-${{ github.sha }}-linux-x64
+          name: cockpit-rolling-${{ github.run_number }}-${{ github.event.pull_request.merge_commit_sha }}
           path: release-artifact
-      - name: Verify and publish the exact draft by ID
+      - name: Publish the verified merge as an immutable prerelease
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_MODE: ${{ github.event_name == 'workflow_dispatch' && 'recover' || 'create' }}
-          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-          RELEASE_SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
-          RELEASE_SOURCE_DIRECTORY: ${{ github.event_name == 'workflow_dispatch' && 'release-source' || '.' }}
-          RELEASE_ID: ${{ inputs.release_id }}
-          RELEASE_ARCHIVE_SHA256: ${{ inputs.archive_sha256 }}
-          RELEASE_CHECKSUM_SHA256: ${{ inputs.checksum_sha256 }}
-        run: node scripts/publish-release.mjs
+          RELEASE_MODE: rolling
+        run: node scripts/rolling-release.mjs

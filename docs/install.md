@@ -25,19 +25,26 @@ verify it with `node --version`. Do not pipe install scripts from the web into a
 
 ## Install a release package
 
-Set `TAG` to the chosen release (for example the one marked *Latest*), then
-download both assets from the same tag into a new directory:
+Choose a successful [Rolling release or promoted Milestone](releasing.md).
+Latest is a deliberate Milestone selection, not the newest Rolling build.
+For a Rolling tag, download all four assets from that same tag into a new directory:
 
 ```sh
-TAG=vX.Y.Z   # replace with the release tag
+TAG=v0.0.0-rolling.123   # replace with the explicitly chosen tag
 mkdir cockpit-download && cd cockpit-download &&
 curl --fail --location --remote-name "https://github.com/waksana/cockpit/releases/download/$TAG/runtime.tar.gz" &&
 curl --fail --location --remote-name "https://github.com/waksana/cockpit/releases/download/$TAG/runtime.tar.gz.sha256" &&
+curl --fail --location --remote-name "https://github.com/waksana/cockpit/releases/download/$TAG/cockpit-deployment.json" &&
+curl --fail --location --remote-name "https://github.com/waksana/cockpit/releases/download/$TAG/cockpit-deployment.json.sha256" &&
 sha256sum -c runtime.tar.gz.sha256 &&
+sha256sum -c cockpit-deployment.json.sha256 &&
+tar -xOzf runtime.tar.gz ./cockpit-deployment.json | cmp - cockpit-deployment.json &&
 tar -xOzf runtime.tar.gz ./runtime-manifest.json | grep -E '"(version|node|platform|arch)"' &&
 mkdir cockpit && tar -xzf runtime.tar.gz -C cockpit && cd cockpit
 ```
 
+Legacy non-Rolling releases have only the archive/checksum pair; use their
+recorded release instructions rather than expecting the new descriptor.
 Stop on any failure. The checksum detects corruption; it is not a publisher
 signature. GitHub's auto-generated *Source code* archives have no dependencies
 and cannot replace `runtime.tar.gz`. The package contains no Node binary,
@@ -64,6 +71,11 @@ pnpm install --frozen-lockfile &&
 pnpm build &&
 pnpm start
 ```
+
+Rolling tags still contain development source manifests, so source execution
+reports `dev+<shortSHA>`, not the generated Rolling package version. Use the
+published archive when an immutable release identity is required; never inject
+or commit a replacement version into the tagged source.
 
 Use the Node version pinned in [`.github/workflows/build.yml`](../.github/workflows/build.yml)
 (`engines` in `package.json` is only a minimum). Do not update the lockfile to get

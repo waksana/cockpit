@@ -15,6 +15,7 @@ import { Engine } from '../../../packages/core/src/engine.ts';
 import { CockpitError } from '../../../packages/core/src/errors.ts';
 import { sessionMetaBusy } from '../../../packages/core/test-support/lifecycle.ts';
 import { GracefulShutdown } from './shutdown.ts';
+import { serviceIdentity } from './identity.ts';
 
 process.env.COCKPIT_NO_BOOT = '1';
 process.env.LOG_LEVEL = 'silent';
@@ -1180,7 +1181,8 @@ test('health/status and shutdown use only injected state and retain every native
   assert.equal(health.headers['cache-control'], 'no-store');
   const version = await app.inject({ method: 'GET', url: '/version' });
   assert.equal(version.statusCode, 200);
-  assert.equal(version.json().sourceSha, null, 'Source mode must not invent a source SHA');
+  assert.equal(version.json().sourceSha, serviceIdentity.sourceSha);
+  assert.equal(version.json().version, serviceIdentity.version);
   assert.equal(version.json().instanceId, health.json().instanceId);
   for (const state of [
     { status: 'running' }, { status: 'idle', activeSubagents: 1 },

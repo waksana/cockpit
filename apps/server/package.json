@@ -1,6 +1,6 @@
 {
   "name": "@cockpit/server",
-  "version": "0.6.1",
+  "version": "0.0.0-dev",
   "type": "module",
   "files": [
     "dist",

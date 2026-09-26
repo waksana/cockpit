@@ -1,6 +1,6 @@
 {
   "name": "@cockpit/protocol",
-  "version": "0.6.1",
+  "version": "0.0.0-dev",
   "type": "module",
   "files": [
     "dist",
@@ -19,7 +19,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./chat": "./src/chat.ts",
-    "./validation": "./src/validation.ts"
+    "./validation": "./src/validation.ts",
+    "./runtime-identity": "./src/runtime-identity.ts"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

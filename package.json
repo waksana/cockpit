@@ -1,7 +1,7 @@
 {
   "name": "cockpit",
   "private": true,
-  "version": "0.6.1",
+  "version": "0.0.0-dev",
   "license": "GPL-3.0-only",
   "type": "module",
   "packageManager": "pnpm@10.34.5",

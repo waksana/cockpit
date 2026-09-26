@@ -1,11 +1,12 @@
 # Building and releasing
 
-This page owns the runtime package, its identity, the delivery version rules and
-the release procedure. Users install packages with the [install guide](install.md).
+This page owns host runtime packaging, immutable Rolling releases and in-place
+Milestone promotion. Installation is covered by the [install guide](install.md).
+The independently versioned [module SDK](module-sdk.md) has a separate workflow.
 
 ## Build a package
 
-Build and package from one clean, committed checkout (Git, the locked pnpm and GNU tar required):
+From one clean committed checkout, with Git, the pinned pnpm and GNU tar:
 
 ```sh
 pnpm install --frozen-lockfile
@@ -13,202 +14,172 @@ pnpm build
 node scripts/package-runtime.mjs --source-sha "$(git rev-parse HEAD)" --output runtime-output
 ```
 
-The output must be a new, plain direct child of the repository root (default
-`runtime-output`). Existing or linked outputs, a dirty tree and a mismatched HEAD
-are refused, and failures leave no partial archive. The result is
-`runtime.tar.gz` plus `runtime.tar.gz.sha256`. The packager does not rebuild or
-vouch for an arbitrary existing `dist`. `pnpm deploy` inside it is only pnpm's
-portable dependency export, performed offline from the shared lockfile; the
-workspace injection/deduplication settings and the lockfile must stay together
-for that to work.
+The output must be a new, plain direct child of the repository root. Existing or
+linked outputs, dirty tracked sources and a mismatched HEAD are refused. Failures
+remove partial output. Development packaging produces `runtime.tar.gz` and its
+checksum; it is not a Rolling Release. The packager does not rebuild or vouch for
+arbitrary existing `dist`. Its offline `pnpm deploy` exports portable dependencies
+from the locked workspace, not a running service.
 
-`pnpm build` compiles the server, core, protocol and MCP client to `dist/` with
-source maps (shared settings in [`tsconfig.runtime.json`](../tsconfig.runtime.json));
-the packager requires those outputs and the built Web. Entry points from an
-extracted package root (no pnpm, checkout or TypeScript loader needed):
+`pnpm build` compiles server, core, protocol and MCP to `dist/` with source maps;
+Web ships without source maps. Extracted packages need Node, but not pnpm, Git or
+a TypeScript loader:
 
 ```sh
-node --enable-source-maps apps/server/dist/index.js   # service
-node --enable-source-maps apps/mcp/dist/index.js      # stdio MCP client
+node --enable-source-maps apps/server/dist/index.js
+node --enable-source-maps apps/mcp/dist/index.js
+node --enable-source-maps apps/server/dist/module-cli.js
 ```
 
 <a id="entry-point-upgrade"></a>
-Packages built before this change started with
-`node --import …/tsx/dist/loader.mjs apps/server/src/index.ts` (and the same loader
-for `apps/mcp/dist/index.js`). Those loaders are no longer shipped: when deploying a
-newer package, update every existing launch command — the service unit and each
-Copilot MCP registration — to the commands above. The root `package.json` of a
-package lists them as `start`, `start:mcp` and `module`.
-
-The package also contains the local module CLI (`apps/server/dist/module-cli.js`).
-The public [module SDK](module-sdk.md) is released separately to npm; its compiled
-contract is also a host runtime dependency. Modules are released separately and
-are never bundled with the host.
+Older installations launched source via `node --import .../tsx/...`. When
+installing a compiled runtime, change the service and MCP launch commands to the
+entries above. Root package scripts also expose `start`, `start:mcp` and `module`.
 
 <a id="package-contents"></a>
 ## Package contents and identity
 
-The archive keeps the workspace layout: compiled server, core, protocol and MCP
-client JavaScript with source maps (workspace manifests are rewritten to resolve
-`dist`), built Web without source maps, production dependencies including the
-native Copilot SDK's platform assets, and LICENSE/NOTICE. It contains no
-TypeScript loader (`tsx`/`esbuild`); the packager refuses a closure that does.
-It excludes Node, user modules, `.cockpit` data, credentials, tests, fixtures,
-development diagnostics, docs (except license files) and Git. It must run without
-symlinks into a development tree.
+The archive keeps workspace layout: compiled host JavaScript/source maps, built
+Web, production dependencies including native Copilot platform assets, LICENSE
+and NOTICE. Workspace exports resolve compiled files. Modules are not bundled.
+No Node binary, `tsx`/`esbuild` loader, user data, configuration, credentials,
+tests, development diagnostics or Git is included. Dependencies cannot point
+outside the package.
 
-The root `runtime-manifest.json` records `format: 1`, `product: "cockpit"`, the
-version, the source SHA, Node version, platform, architecture and the file list.
-The server refuses to start if the version, Node, platform or architecture differ.
-`/version` reports the manifest `sourceSha` with the process instance ID; a source
-checkout without a manifest reports `null` and never guesses from Git.
+`runtime-manifest.json` records format 1, product `cockpit`, version, source SHA,
+Node/platform/architecture, SDK identity and a hashed inventory. The server
+refuses mismatched package versions or platforms. `/version` reports the package
+source and process instance; development checkouts display `dev+<shortSHA>`.
+
+Every Rolling Release has **exactly four assets**:
+
+| Asset | Contract |
+| --- | --- |
+| `runtime.tar.gz` | Checked runtime for the exact merged source SHA |
+| `runtime.tar.gz.sha256` | SHA-256 of that archive |
+| `cockpit-deployment.json` | Format 2, channel `rolling`, repository/tag/source/version/sequence, archive name and host API/capabilities |
+| `cockpit-deployment.json.sha256` | SHA-256 of the deployment sidecar |
+
+The descriptor is also at the archive root, byte-identical to the sidecar, and
+included in the runtime inventory. It does **not** contain the archive checksum:
+that would introduce self-reference. API and capability declarations are derived
+from actual module activation contexts in host source, not a per-version local
+catalog. Unknown or changed declarations fail closed. Modules own their own
+database, preservation and explicit migration declarations.
 
 Package checks:
 
 ```sh
-node --test scripts/package-runtime.test.mjs                                   # synthetic closure
-COCKPIT_PACKAGE_PNPM_SMOKE=1 node --test scripts/package-runtime.test.mjs      # real offline dependency export
+node --test scripts/package-runtime.test.mjs scripts/rolling-release.test.mjs
+COCKPIT_PACKAGE_PNPM_SMOKE=1 node --test scripts/package-runtime.test.mjs
 COCKPIT_RUNTIME_ARCHIVE="$PWD/runtime-output/runtime.tar.gz" \
-  node --test scripts/package-runtime.test.mjs                                 # a specific archive
+  node --test scripts/package-runtime.test.mjs
 ```
 
-Cases whose variable is unset are skipped; a skip is not evidence about a real package.
+Unset opt-in cases skip; skips are not evidence about a real package. See
+[test isolation](testing.md).
 
 ## CI
 
-`CI / Required checks` ([build.yml](../.github/workflows/build.yml)) runs on pull
-requests, `main` pushes and release tags: frozen install, `pnpm lint`, `pnpm test`,
-isolated native smoke tests, `pnpm build`, MCP fork smoke, packaging and archive
-verification. It uploads a development artifact kept for 7 days — not a stable
-download. Fork PRs get read-only permissions and no credentials.
+[`build.yml`](../.github/workflows/build.yml) runs `CI / Required checks` for PRs,
+main pushes and reusable Rolling calls: frozen install, lint, tests, isolated
+native smoke, build, MCP fork smoke, packaging and archive verification.
+PR runs may supersede earlier runs of the same PR. Main/merged-PR builds use
+unique run identities, never a shared pending-run slot. CI artifacts last 7 days;
+GitHub Release assets do not expire with that retention.
 
 <a id="delivery-versions"></a>
 ## Delivery versions
 
-Ordinary commits do not bump versions. Before publishing or deploying a package
-whose code, dependencies, assets or bundled docs changed since the last delivered
-version, allocate a new version — also for installs from a fixed commit.
-Docs outside the package do not require a new package.
+Host product manifests on `main` stay **`0.0.0-dev`**. Ordinary feature, fix, docs
+and chore PRs do not bump versions or require a release label/preparation PR.
+The SDK remains independently versioned. Do not commit a generated Rolling
+version back to source.
 
-The module installer binds a module ID/version to one archive digest: the same
-digest may be reinstalled, a different digest requires a new version. Never
-replace a version by changing the SHA, repacking, deleting the installed
-directory, editing the manifest or bypassing verification. If an unintended digest
-change appears, investigate reproducibility and recover the verified artifact, or
-bump the version. Keep old installations for explicit rollback.
+After a real main merge, Actions packages an isolated Git snapshot and injects
+`0.0.0-rolling.<sequence>` into host manifests there. Compiled server/MCP identity
+reads those packaged manifests; Web receives the backend identity. The tag is
+`v0.0.0-rolling.<sequence>`.
 
-Choose versions by each repository's compatibility rules; not every change is a
-patch. During 0.x, record incompatible changes and required host capabilities
-explicitly. Modules and the public module SDK version independently; the host's
-Web/backend/MCP, core and internal protocol package versions stay identical.
-Published tags never move. See the [module SDK version rules](module-sdk.md#versions-and-compatibility).
+The sequence is **`github.run_number` of `.github/workflows/release.yml`**.
+Its existing counter continues at the switch from legacy releases; it need not
+start at 1 and gaps are valid. Never rename, delete/recreate or reset this workflow.
+A rerun retains the original number, PR event, source and run ID. Lower-sequence
+builds can finish late; consumers must select by sequence, not completion time,
+publication time, API list order or Latest.
 
-Before each delivery:
-
-1. Check the target's installed versions/digests and selection; the candidate
-   version must be unused and built from a verified commit.
-2. Update the host workspace versions (the MCP self-reported version is read from
-   `apps/mcp/package.json`), the lockfile if needed and `docs/release-notes.md`.
-   Do not change the independently versioned module SDK merely to match the host.
-   `pnpm test` (via `scripts/check-release.test.mjs`) checks that they agree.
-3. Build from one clean commit, run relevant checks and consumer pairing checks,
-   and use CI on the latest head.
-4. Verify digest and identity before installing; after restart confirm the loaded
-   identity at `/version`. Do not disable integrity checks or delete data to succeed.
-
-Development, merge, tagging/release and deployment are separate authorizations,
-except that a joint deployment includes its
-[release step](#release-after-acceptance).
+Installed versions bind to one archive digest. Never replace bytes under an
+existing version, move tags, delete an installation to evade integrity checks,
+or repack and upload a replacement. Retain previous installations for explicit
+rollback.
 
 <a id="release-notes"></a>
 ## Release notes
 
-[`release-notes.md`](release-notes.md) holds **only the current workspace version**:
-one `# Cockpit X.Y.Z` heading matching `package.json`, with no other version or
-"Unreleased" sections. When the version changes, replace its content. Earlier notes
-live in [GitHub Releases](https://github.com/waksana/cockpit/releases), which
-publishes this file plus generated notes. `scripts/check-release.mjs` enforces the rule.
+[`release-notes.md`](release-notes.md) describes only the current development
+workspace. Published Rolling notes instead preserve the triggering PR's complete
+title and body, followed by deterministic PR/build/source/sequence and all four
+asset digests. The final machine-readable provenance record binds the original
+identity for reruns and promotion. Editing that record, title/body or assets
+invalidates later verification.
 
 <a id="versioned-releases"></a>
-## Release procedure
+## Rolling release procedure
 
-During 0.x only Web/backend/MCP from the same release are supported, as fresh
-installs without old API aliases or automatic migration. Only maintainers release:
+[`Rolling`](../.github/workflows/release.yml) handles `pull_request_target:
+closed` on `main`, gated on `merged == true`. This permits merged fork PRs while
+only checking out the trusted **merge commit**, never the unmerged head. The
+untrusted PR text is read as data from the event JSON, not interpolated into shell.
+No paths, labels or PR types are filtered. Closing without merging publishes
+nothing. The change introducing this workflow is the switch point; historical
+merges are not caught up and old manual `vX.Y.Z` tags no longer trigger it.
 
-1. Merge a PR that updates versions and release notes as above.
-2. Confirm `CI / Required checks` passed for that exact `main` SHA.
-3. Tag it and push the tag:
-   ```sh
-   git fetch origin
-   git tag -a vX.Y.Z VERIFIED_MAIN_SHA -m "Cockpit vX.Y.Z"
-   git push origin vX.Y.Z
-   ```
-4. The `Release` workflow reruns CI on the tag SHA, requires the SHA to be on
-   `main`, verifies tag/workspace version, source SHA, Node/platform and checksum
-   of that run's artifact, rechecks that the remote tag still points there, and
-   stages exactly that archive and checksum in a draft. It downloads the staged
-   assets and repeats the identity checks before publishing the complete draft as
-   a non-prerelease Latest Release.
+1. Merge a reviewed, green PR through normal branch protection.
+2. The merge's independent Rolling run repeats required checks at its exact SHA,
+   packages the isolated snapshot, verifies the four-asset contract, and passes
+   that run's artifact to the publisher.
+3. The publisher creates the immutable tag, creates a prerelease draft, uploads
+   each asset once, downloads all four, checks source/version/inventory/checksums
+   and embedded descriptor, and guards tag/Release/asset identities again.
+4. It publishes the same Release as non-draft **prerelease**, with
+   `make_latest=false`, then downloads and verifies again. Ordinary Rolling does
+   not claim Latest or deploy anything.
 
-`v*` tags cannot be updated or deleted and the publisher never overwrites assets.
-Recover a complete draft as described below; an unrecoverable failed release
-requires the next version, not a moved tag. Release assets do not expire with CI
-retention. A release does not deploy anything.
+No global release concurrency group cancels or replaces older pending runs.
+A failed build/publication is one failed attempt; it does not block later PRs.
+Each HTTPS write has one attempt. A timeout/lost response is **unknown**, not a
+reason to retry creation, upload or publication. Inspect the run and remote state.
+An explicit rerun can retry a failed pre-publication build, or verify an already
+published identical release without writes (including a promoted milestone).
+It rejects changed identities and existing drafts; it never silently repairs,
+replaces, reuploads or republishes them. Resolve uncertain/incomplete legacy
+attempts only with separate explicit authorization, not automatic recovery.
 
-<a id="atomic-release-publication"></a>
-### Publication failure and recovery
+## Milestone promotion
 
-The formal, non-draft Release is the readiness signal. The workflow keeps a new
-Release hidden as a draft until both assets are present and the downloaded archive
-passes the same identity checks. New tag runs refuse any existing Release for the
-tag. Authenticated, fully paginated release listing discovers drafts by exact
-`tag_name`; a tag lookup returning 404 does not prove absence. Two complete scans
-must agree on release identities and order. Duplicate matches, unstable pagination
-and lookup failures stop the workflow. Every subsequent
-read, asset download and publication uses the verified release/asset IDs.
+Run [`Milestone`](../.github/workflows/milestone.yml) on `main`, entering one
+existing successful Rolling `tag` and the identical `confirm_tag`. For example:
 
-If creation, upload, publication or the final readback fails or has an unknown
-result, inspect the remote tag, draft/Release state and assets before taking any
-further action. Preserve a partial draft for diagnosis. Do not rerun a mutation
-blindly, move the tag, delete or replace a published Release, or use clobber.
+```sh
+gh workflow run milestone.yml --ref main \
+  -f tag=v0.0.0-rolling.123 -f confirm_tag=v0.0.0-rolling.123
+```
 
-After inspection, a maintainer may run **Release → Run workflow** on `main` to
-recover a unique, complete draft. Supply the original tag, full `source_sha`,
-`release_id`, `archive_sha256` and `checksum_sha256` (the digest of the checksum
-file itself). Obtain these identities from the original successful checks and
-staged assets, not a new build. This explicit recovery runs current publication
-code against a separate checkout of the original source. It does not rerun CI,
-rebuild, create a Release or upload any assets.
-
-Recovery requires exactly the two nonempty, fully uploaded assets. It downloads
-both by ID, verifies their original digests and sizes, then checks the checksum,
-archive manifest, source/version, Node/platform and original source release notes.
-The remote tag must still resolve to the original source commit on `main`;
-`target_commitish` is only a creation hint, not proof of the target of an existing
-tag. A missing or incomplete draft, an incorrect ID, a published/prerelease
-Release, conflicting bytes or a changed tag stops without publishing.
-
-Immediately before publication the workflow rechecks the tag, unique draft and
-asset identities. It publishes once by ID and reads back the formal Release,
-asset identities and Latest status. An ambiguous create, upload, publish or
-readback result fails the run without a mutation retry or fallback. If a failed
-publication actually succeeded, recovery refuses to edit the published Release:
-inspect its final state instead. Recovery does not repair partial uploads.
+The example is not a selection recommendation. Promotion requires an explicit
+user-selected tag. The workflow verifies the original successful Rolling run,
+source/tag, provenance and all four original assets. It then changes **only**
+`prerelease=false` and `make_latest=true` on the existing Release and verifies
+again. It does not rebuild, renumber, retag, upload, alter title/body or create a
+replacement. Missing, non-Rolling, draft, failed-run or changed assets are refused.
+An uncertain promotion write is not retried.
 
 <a id="release-after-acceptance"></a>
-## Release after a joint deployment
+## Deployment boundary
 
-A joint deployment of the host and modules is complete only after every commit it
-installed and accepted is tagged and released:
-
-1. Tag each accepted `main` SHA with an annotated `vX.Y.Z` tag, following that
-   repository's release procedure (the host's is [above](#versioned-releases)).
-   A repository without a Release workflow publishes the unchanged main CI
-   archive that was deployed.
-2. Compare each Release asset's sha256 with the installed digest recorded at
-   deployment. On a mismatch, stop: publish or replace nothing further and ask
-   the user. Never overwrite assets or move tags.
-3. Confirm each new Release is marked Latest.
-
-Authorizing a joint deployment includes this release step. The deployment itself
-still needs its own authorization; a release never implies one.
+Merge, Rolling publication, Milestone promotion and deployment are distinct.
+A separately authorized external deployment service consumes compatible
+verified releases, rejects sequence regressions and owns installation, backups,
+explicit migration, restart and acceptance. It does not need a hand-edited catalog
+for each merge. Release automation never contacts that service or modifies
+production data. Deployment does not retroactively authorize tagging, replacing
+assets or choosing a milestone.

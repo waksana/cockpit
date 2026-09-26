@@ -1,11 +1,11 @@
 // Control SSE and view-owned chat SSE are separate. Native cursors and message
 // projections remain in the browser; typed POSTs also serve older event pages.
 
-import { ServerEvent, Intents, NativeChatStreamRequest, classifyNativeModelSwitchResult,
+import { ServerEvent, ServiceIdentity, Intents, NativeChatStreamRequest, classifyNativeModelSwitchResult,
   classifyNativeModeSetResult, classifyNativeRewindResult, MODULE_SKILL_NOT_FOUND, SKILL_NOT_FOUND,
   ErrorCodes, isErrorCode } from '@cockpit/protocol';
 import type { NativeAttachment, IntentName, IntentBody, IntentResult, ExitPlanModeAction, NativeChatPage } from '@cockpit/protocol';
-import { EVENTS_URL, CHAT_STREAM_URL, intentUrl } from '../lib/config';
+import { BASE_URL, EVENTS_URL, CHAT_STREAM_URL, intentUrl } from '../lib/config';
 import { reportUxError, describeReason } from '../lib/errorReporter';
 import { recordOperationFailure } from '../lib/operationErrors';
 import { copy } from '../lib/copy';
@@ -272,6 +272,11 @@ export class NetClient {
 
   // --- typed intent helpers --------------------------------------------------
   // Every helper takes the same trailing options; see `intent` for ownership.
+  async identity(signal?: AbortSignal): Promise<ServiceIdentity> {
+    const response = await fetch(`${BASE_URL}/version`, { signal, credentials: 'include', cache: 'no-store' });
+    if (!response.ok) throw new IntentHttpError(`版本信息请求失败 (${response.status})`, response.status);
+    return ServiceIdentity.parse(await response.json());
+  }
   newSession(cwd: string, roles?: IntentBody<'session/new'>['roles'], options?: IntentOptions) {
     return this.intent('session/new', { cwd, ...(roles ? { roles } : {}) }, options);
   }

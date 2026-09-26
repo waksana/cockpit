@@ -43,6 +43,13 @@ export type SessionStatus = z.infer<typeof SessionStatus>;
 export const AgentStatus = z.enum(['starting', 'up', 'stopping', 'failed']);
 export type AgentStatus = z.infer<typeof AgentStatus>;
 
+export const ServiceIdentity = z.object({
+  instanceId: z.string().uuid(),
+  version: z.string().min(1),
+  sourceSha: z.string().regex(/^[a-f0-9]{40}$/).nullable(),
+});
+export type ServiceIdentity = z.infer<typeof ServiceIdentity>;
+
 export const ContextTier = z.enum(['default', 'long_context']);
 export type ContextTier = z.infer<typeof ContextTier>;
 

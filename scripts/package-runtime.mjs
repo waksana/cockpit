@@ -7,6 +7,7 @@ import {
 import { createRequire } from 'node:module';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { deploymentManifest, HOST_PACKAGES } from './deployment-manifest.mjs';
 
 // Packaged entry points run precompiled JavaScript directly; no TypeScript loader ships.
 export const START_COMMAND = 'node --enable-source-maps apps/server/dist/index.js';
@@ -21,6 +22,7 @@ export const REQUIRED_FILES = [
   'apps/mcp/package.json', 'apps/mcp/dist/index.js',
   'packages/core/package.json', 'packages/core/dist/index.js',
   'packages/protocol/package.json', 'packages/protocol/dist/index.js',
+  'packages/protocol/dist/runtime-identity.js',
   'packages/protocol/src/index.ts',
   'packages/module-api/package.json', 'packages/module-api/dist/index.js',
   'packages/module-api/dist/index.d.ts', 'packages/module-api/runtime.js',
@@ -281,7 +283,7 @@ export async function validateRuntime(root, sdkVersion) {
   return { version: sdkVersion, nativePackage, nativePlatform };
 }
 
-export async function packageRuntime({ repository, sourceSha, output = 'runtime-output' }, run = command) {
+export async function packageRuntime({ repository, sourceSha, output = 'runtime-output', rollingSequence }, run = command) {
   if (!/^[a-f0-9]{40}$/.test(sourceSha ?? '')) throw new Error('--source-sha must be a full lowercase Git commit SHA');
   repository = await realpath(repository);
   if (await realpath(run('git', ['rev-parse', '--show-toplevel'], repository).trim()) !== repository) {
@@ -308,6 +310,17 @@ export async function packageRuntime({ repository, sourceSha, output = 'runtime-
   try {
     await mkdir(work);
     await snapshotSource(repository, source, sourceSha, run);
+    let deployment;
+    if (rollingSequence !== undefined) {
+      deployment = deploymentManifest('waksana/cockpit', sourceSha, rollingSequence, repository);
+      for (const path of HOST_PACKAGES) {
+        const file = join(source, path, 'package.json');
+        const manifest = await json(file);
+        if (manifest.version !== '0.0.0-dev') throw new Error('Rolling source versions must remain 0.0.0-dev');
+        manifest.version = deployment.version;
+        await writeFile(file, `${JSON.stringify(manifest, null, 2)}\n`);
+      }
+    }
     const rootPackage = await json(join(source, 'package.json'));
     const serverPackage = await json(join(source, 'apps/server/package.json'));
     const mcpPackage = await json(join(source, 'apps/mcp/package.json'));
@@ -353,6 +366,13 @@ export async function packageRuntime({ repository, sourceSha, output = 'runtime-
       scripts: { start: START_COMMAND, 'start:mcp': MCP_START_COMMAND, module: MODULE_COMMAND },
     }, null, 2)}\n`);
     const sdk = await validateRuntime(runtime, sdkVersion);
+    if (deployment) {
+      const bytes = `${JSON.stringify(deployment, null, 2)}\n`;
+      await writeFile(join(runtime, 'cockpit-deployment.json'), bytes, { flag: 'wx' });
+      await writeFile(join(outputPath, 'cockpit-deployment.json'), bytes, { flag: 'wx' });
+      await writeFile(join(outputPath, 'cockpit-deployment.json.sha256'),
+        `${await sha256(join(outputPath, 'cockpit-deployment.json'))}  cockpit-deployment.json\n`, { flag: 'wx' });
+    }
     const files = await inventoryTree(runtime, { normalizeModes: true });
     const loader = files.find(file => forbiddenRuntimeDependency.test(file.path));
     if (loader) throw new Error(`Development loader in the runtime closure: ${loader.path}`);
@@ -385,12 +405,16 @@ function parseArgs(args) {
   const values = {};
   for (let index = 0; index < args.length; index += 2) {
     const option = args[index], value = args[index + 1];
-    if (!['--source-sha', '--output'].includes(option) || !value || value.startsWith('--') || option in values) {
-      throw new Error('Usage: node scripts/package-runtime.mjs --source-sha <full-HEAD-SHA> [--output runtime-output]');
+    if (!['--source-sha', '--output', '--rolling-sequence'].includes(option) || !value || value.startsWith('--') || option in values) {
+      throw new Error('Usage: node scripts/package-runtime.mjs --source-sha <full-HEAD-SHA> [--output runtime-output] [--rolling-sequence N]');
     }
     values[option] = value;
   }
-  return { sourceSha: values['--source-sha'], output: values['--output'] };
+  if (values['--rolling-sequence'] !== undefined && !/^[1-9]\d*$/.test(values['--rolling-sequence'])) {
+    throw new Error('Rolling sequence must be a positive integer');
+  }
+  return { sourceSha: values['--source-sha'], output: values['--output'],
+    rollingSequence: values['--rolling-sequence'] === undefined ? undefined : Number(values['--rolling-sequence']) };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

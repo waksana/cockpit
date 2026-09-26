@@ -10,6 +10,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   command, firstPartyRuntimePath, inventoryTree, MCP_START_COMMAND, MODULE_COMMAND, packageRuntime, REQUIRED_FILES, safeRelativePath, sha256, START_COMMAND,
 } from './package-runtime.mjs';
+import { rollingIdentity, verifyRollingArtifacts } from './deployment-manifest.mjs';
 
 const repository = fileURLToPath(new URL('../', import.meta.url)).replace(/\/$/, '');
 const fixtureParent = join(repository, '.runtime-package-tests');
@@ -133,7 +134,7 @@ const Fixture = { READY: 7 };
 export const marker = [Fixture.READY, typeof CopilotClient, protocolMarker];
 `);
   put(source, 'packages/core/dist/index.js.map', { version: 3, file: 'index.js', sources: ['../src/index.ts'], mappings: '' });
-  for (const name of ['index', 'chat', 'validation']) {
+  for (const name of ['index', 'chat', 'validation', 'runtime-identity']) {
     put(source, `packages/protocol/dist/${name}.js`, 'export const protocolMarker = "synthetic";');
   }
   for (const path of ['apps/server/src/example.test.ts', 'apps/server/src/example.test.mjs',
@@ -339,22 +340,19 @@ test('CI runs the same read-only checks for pull requests, main and release call
   assert.match(workflow, /name: chat-lab-screenshots-\$\{\{ github\.sha \}\}/);
 });
 
-test('release only publishes the checked fixed-tag artifact and does not deploy a service', () => {
+test('Rolling only publishes the checked merge artifact and does not deploy a service', () => {
   const workflow = readFileSync(join(repository, '.github/workflows/release.yml'), 'utf8');
-  assert.match(workflow, /push:\s+tags: \['v\*'\]/);
+  assert.match(workflow, /pull_request_target:\s+branches: \[main\]\s+types: \[closed\]/);
   assert.match(workflow, /uses: \.\/\.github\/workflows\/build\.yml/);
   assert.match(workflow, /publish:\s+needs: checks/);
-  assert.match(workflow, /cancel-in-progress: false/);
-  assert.match(workflow, /needs\.checks\.result == 'success'/);
-  assert.match(workflow, /node scripts\/publish-release\.mjs/);
+  assert.doesNotMatch(workflow, /concurrency:/);
+  assert.match(workflow, /github\.event\.pull_request\.merged == true/);
+  assert.match(workflow, /node scripts\/rolling-release\.mjs/);
   assert.match(workflow, /actions\/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093/);
-  assert.match(workflow, /workflow_dispatch:/);
-  assert.match(workflow, /github\.ref == 'refs\/heads\/main'/);
-  assert.match(workflow, /group: release-\$\{\{ inputs\.tag \|\| github\.ref_name \}\}/);
-  assert.doesNotMatch(workflow, /pull_request_target|secrets\.|systemctl|\bssh\b|\bscp\b|release upload|--clobber/);
+  assert.doesNotMatch(workflow, /workflow_dispatch:|tags:/);
+  assert.doesNotMatch(workflow, /secrets\.|systemctl|\bssh\b|\bscp\b|release upload|--clobber/);
   assert.doesNotMatch(workflow, /gh release|releases\/tags\//);
-  assert.match(workflow, /actions\/download-artifact@[^\n]+\n\s+if: github\.event_name == 'push'/);
-  assert.match(workflow, /ref: \$\{\{ inputs\.source_sha \}\}\n\s+path: release-source/);
+  assert.match(workflow, /ref: \$\{\{ github\.event\.pull_request\.merge_commit_sha \}\}/);
 });
 
 test('synthetic packaging inventories its complete closure and preserves dependency-owned native assets', async t => {
@@ -383,7 +381,8 @@ test('synthetic packaging inventories its complete closure and preserves depende
   const protocol = JSON.parse(await readFile(join(f.root, 'unpacked/packages/protocol/package.json'), 'utf8'));
   assert.equal(protocol.main, './dist/index.js');
   assert.equal(protocol.types, undefined);
-  assert.deepEqual(protocol.exports, { '.': './dist/index.js', './chat': './dist/chat.js', './validation': './dist/validation.js' });
+  assert.deepEqual(protocol.exports, { '.': './dist/index.js', './chat': './dist/chat.js', './validation': './dist/validation.js',
+    './runtime-identity': './dist/runtime-identity.js' });
   assert.ok(paths.includes('packages/protocol/src/index.ts'), 'The type export needs protocol sources');
   const server = JSON.parse(await readFile(join(f.root, 'unpacked/apps/server/package.json'), 'utf8'));
   assert.equal(server.scripts, undefined);
@@ -478,6 +477,27 @@ test('the inventory rejects broken links and records hashes, sizes, and executab
   await assert.rejects(inventoryTree(tree), /manifest must be a regular file/);
 });
 
+test('Rolling injects only the isolated snapshot and inventories the byte-identical deployment sidecar', async t => {
+  const f = await fixture(t);
+  for (const path of ['', 'apps/server', 'apps/mcp', 'apps/web', 'packages/core', 'packages/protocol']) {
+    const name = join(path, 'package.json');
+    const manifest = JSON.parse(readFileSync(join(f.source, name)));
+    manifest.version = '0.0.0-dev';
+    f.track(name, manifest);
+  }
+  for (const path of ['apps/server/src/module-host.ts', 'apps/web/src/lib/moduleRuntime.ts']) {
+    f.track(path, readFileSync(join(repository, path), 'utf8'));
+  }
+  const sdkVersion = JSON.parse(readFileSync(join(f.source, 'packages/module-api/package.json'))).version;
+  const result = await f.package({ rollingSequence: 42 });
+  assert.equal(result.version, '0.0.0-rolling.42');
+  assert.equal(JSON.parse(readFileSync(join(f.source, 'package.json'))).version, '0.0.0-dev');
+  verifyRollingArtifacts(dirname(result.archive), rollingIdentity('waksana/cockpit', sourceSha, 42), f.source);
+  const root = join(f.root, 'rolling-unpacked');
+  await unpack(result.archive, root);
+  assert.equal(JSON.parse(readFileSync(join(root, 'packages/module-api/package.json'))).version, sdkVersion);
+});
+
 test('real offline pnpm closure needs no registry metadata cache and starts directly after relocation', {
   skip: process.env.COCKPIT_PACKAGE_PNPM_SMOKE !== '1',
 }, async t => {
@@ -507,6 +527,23 @@ test('real offline pnpm closure needs no registry metadata cache and starts dire
   assert.equal(mcp.status, 0, mcp.stderr);
   assert.equal(JSON.parse(mcp.stdout).pid, mcp.pid);
   assert.equal(JSON.parse(mcp.stdout).server, 'function');
+});
+
+test('real offline pnpm exports injected Rolling workspace versions without changing source or SDK', {
+  skip: process.env.COCKPIT_PACKAGE_PNPM_SMOKE !== '1',
+}, async t => {
+  const f = await fixture(t, { realDeploy: true });
+  for (const path of ['', 'apps/server', 'apps/mcp', 'apps/web', 'packages/core', 'packages/protocol']) {
+    const name = join(path, 'package.json');
+    f.track(name, { ...JSON.parse(readFileSync(join(f.source, name))), version: '0.0.0-dev' });
+  }
+  for (const path of ['apps/server/src/module-host.ts', 'apps/web/src/lib/moduleRuntime.ts']) {
+    f.track(path, readFileSync(join(repository, path), 'utf8'));
+  }
+  const result = await f.package({ rollingSequence: 43 });
+  verifyRollingArtifacts(dirname(result.archive), rollingIdentity('waksana/cockpit', sourceSha, 43), f.source);
+  assert.equal(JSON.parse(readFileSync(join(f.source, 'package.json'))).version, '0.0.0-dev');
+  await unpack(result.archive, join(f.root, 'portable-rolling'));
 });
 
 test('the real fixed-commit archive has the complete inventoried runtime and no extracted originals', {

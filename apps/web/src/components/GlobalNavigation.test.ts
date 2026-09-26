@@ -6,6 +6,8 @@ import { createElement } from 'react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { parentOf } from '../lib/nav';
 import { GlobalNavigation } from './GlobalNavigation';
+import { cockpitApi } from '../net/api';
+import { useCockpit } from '../net/store';
 
 test('global lists and item deep links have strict hierarchical parents', () => {
   for (const section of ['mcp', 'skills']) {
@@ -74,4 +76,24 @@ test('global menu exposes only global sections, does not steal focus on mount, a
 test('management workspace does not mount the global menu', () => {
   const management = readFileSync(new URL('./ManageWorkspace.tsx', import.meta.url), 'utf8');
   assert.doesNotMatch(management, /GlobalNavigation/);
+});
+
+test('global About action loads backend identity only when opened', async t => {
+  const previous = useCockpit.getState();
+  useCockpit.setState({ connState: 'open' });
+  t.after(() => useCockpit.setState(previous, true));
+  const read = t.mock.method(cockpitApi, 'identity', async () => ({
+    instanceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    version: '0.0.0-rolling.42', sourceSha: 'b'.repeat(40),
+  }));
+  mount(t);
+  assert.equal(read.mock.callCount(), 0);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole('button', { name: '全局导航' }));
+  await user.click(await screen.findByRole('menuitem', { name: '关于 Cockpit' }));
+  await screen.findByRole('dialog', { name: '关于 Cockpit' });
+  await screen.findByText('0.0.0-rolling.42');
+  assert.equal(read.mock.callCount(), 1);
+  await user.click(screen.getByRole('button', { name: '关闭' }));
+  await waitFor(() => assert.equal(screen.queryByRole('dialog'), null));
 });

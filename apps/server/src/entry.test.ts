@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { installLocalModule } from './module-install.ts';
 import { moduleEntries, moduleFixture } from './test-support/module-fixture.ts';
+import { serviceIdentity } from './identity.ts';
 
 const mockSdk = `data:text/javascript,${encodeURIComponent(`
 export const approveAll = () => ({kind:'approved'});
@@ -126,7 +127,8 @@ for (const method of ['api', 'signal', 'startup', 'listen-failure', 'runtime-fai
     };
     assert.match(await (await get('/')).text(), /Isolated direct entry/);
     const version = jsonObject(await (await get('/version')).json());
-    assert.equal(version.sourceSha, null);
+    assert.equal(version.sourceSha, serviceIdentity.sourceSha);
+    assert.equal(version.version, serviceIdentity.version);
     const health = jsonObject(await (await get('/health')).json());
     assert.equal(health.instanceId, version.instanceId);
     assert.equal(health.login, 'synthetic');
