@@ -19,6 +19,29 @@ pnpm test           # all workspace tests + scripts/*.test.mjs
 pnpm lint           # ESLint + Stylelint for apps/web
 ```
 
+### Worktree setup
+
+A new checkout or worktree does not inherit ignored local files. Follow the
+commands above in that worktree when its dependencies are needed and not already
+prepared; plain documentation edits do not require a dependency installation.
+Keep each worktree's `node_modules` and dependency graph independent and use its
+own frozen lockfile. Do not copy or symlink the whole directory from another
+worktree or a running installation.
+
+pnpm automatically reuses package files from its content-addressable store; it
+can hard-link or clone them on compatible filesystems without sharing the mutable
+dependency directory. `pnpm store path` shows the store used by this checkout.
+Missing packages may still need downloading, and crossing filesystems may require
+copies: reuse is not a promise of an offline or cost-free install. Keep the
+existing store configuration; no global virtual store or forced `--offline` mode
+is needed. See [pnpm's store explanation](https://pnpm.io/10.x/faq).
+
+The project sets `failIfNoMatch` so a mistyped `--filter` fails instead of returning
+success without selecting a package. Still check that the intended script ran;
+the flag is not a test-count or build-output assertion.
+
+### Isolated development server
+
 Run a development server against an **isolated** native home and data root, on a
 port other than any real service:
 
@@ -159,6 +182,15 @@ it saves screenshots but does not replace manual review.
 Use real mouse, touch and keyboard actions, both themes and narrow widths
 (`&pane=narrow` constrains the chat pane to 456px). The checks measure geometry and
 focus; they are not native, iOS or production evidence.
+
+For manual screenshots, wait for the intended UI state, fonts and rendering, as
+the `settle`/`snapshot` helpers in the [existing smoke](../apps/web/e2e/chat-lab.spec.ts)
+do. Two animation frames alone do not prove that asynchronous data or a lazy
+panel is ready. With chrome-devtools MCP emulation, include the complete viewport
+(dimensions, device pixel ratio and applicable mobile/touch flags) on each change:
+omitting it clears the viewport override and can reload the page. Recheck the
+target state afterward; do not routinely reload or treat two captures as proof
+of correctness.
 
 To include the unmodified File module's frontend (`&modules=1` in `dialog-focus`),
 set `COCKPIT_LAB_FILE_ROOT` to an extracted, receipt-verified File package (the

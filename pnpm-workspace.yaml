@@ -1,6 +1,7 @@
 packages:
   - 'packages/*'
   - 'apps/*'
+failIfNoMatch: true
 injectWorkspacePackages: true
 dedupeInjectedDeps: true
 syncInjectedDepsAfterScripts:

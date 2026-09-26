@@ -5,6 +5,7 @@ workspace; TypeScript; Linux only.
 
 ## Commands (repository root)
 
+- Setup and independent-worktree dependency reuse: `docs/development.md#worktree-setup`.
 - `pnpm install --frozen-lockfile`
 - `pnpm build` · `pnpm test` · `pnpm lint` — what CI's `Required checks` runs
   (plus native smoke and packaging; see `.github/workflows/build.yml`).
