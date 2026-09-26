@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { lstatSync, readFileSync, realpathSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { documentTargets } from './markdown.mjs';
@@ -13,36 +13,15 @@ const isMarkdown = path => /\.md$/i.test(path);
 const external = target => /^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith('//');
 
 export function checkDocs(root, files = trackedFiles(root)) {
-  root = realpathSync(root);
   const problems = [];
   const inventory = new Set(files);
   const documents = new Map();
-  const fileChecks = new Map();
-  const regularFile = file => {
-    if (fileChecks.has(file)) return fileChecks.get(file);
-    let path = root;
-    const parts = file.split('/');
-    for (let index = 0; index < parts.length; index++) {
-      path = resolve(path, parts[index]);
-      const entry = lstatSync(path);
-      if (entry.isSymbolicLink() || (index === parts.length - 1 ? !entry.isFile() : !entry.isDirectory())) {
-        problems.push(`${file}: expected a tracked regular file with no symlink components`);
-        fileChecks.set(file, false);
-        return false;
-      }
-    }
-    fileChecks.set(file, true);
-    return true;
-  };
   const document = file => {
-    if (!regularFile(file)) return null;
     if (!documents.has(file)) documents.set(file, documentTargets(readFileSync(resolve(root, file), 'utf8')));
     return documents.get(file);
   };
   for (const file of files.filter(isMarkdown)) {
-    const source = document(file);
-    if (!source) continue;
-    for (const { target, line } of source.links) {
+    for (const { target, line } of document(file).links) {
       if (external(target)) continue;
       const where = `${file}:${line}`;
       const hash = target.indexOf('#');
@@ -77,7 +56,6 @@ export function checkDocs(root, files = trackedFiles(root)) {
           continue;
         }
       }
-      if (inventory.has(destination) && !regularFile(destination)) continue;
       if (anchor && isMarkdown(destination) && !document(destination).anchors.has(anchor)) {
         problems.push(`${where}: missing anchor #${anchor} in ${destination}`);
       }
