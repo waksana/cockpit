@@ -336,8 +336,8 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       assert.equal(trigger.getAttribute('aria-expanded'), 'true');
       const items = Array.from(container.querySelectorAll<HTMLElement>('[role="menuitem"]'));
       assert.deepEqual(items.map(item => item.textContent), enhanced
-        ? ['默认新会话模型', '全局 MCP', '全局 Skills', 'Module navigation']
-        : ['默认新会话模型', '全局 MCP', '全局 Skills']);
+        ? ['默认新会话模型', '全局 MCP', '全局 Skills', '关于 Cockpit', 'Module navigation']
+        : ['默认新会话模型', '全局 MCP', '全局 Skills', '关于 Cockpit']);
       assert.equal(document.activeElement, items[0], 'opening focuses the first native menu command');
       await act(() => { fireEvent.keyDown(items[0], { key: 'End' }); });
       assert.equal(document.activeElement, items[items.length - 1]);
