@@ -348,9 +348,12 @@ test('release only publishes the checked fixed-tag artifact and does not deploy 
   assert.match(workflow, /git merge-base --is-ancestor "\$GITHUB_SHA" origin\/main/);
   assert.match(workflow, /node scripts\/check-release\.mjs "\$RELEASE_TAG" "\$GITHUB_SHA"/);
   assert.match(workflow, /actions\/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093/);
-  assert.match(workflow, /--verify-tag --latest/);
+  assert.match(workflow, /--verify-tag --draft/);
   assert.doesNotMatch(workflow, /pull_request_target|secrets\.|systemctl|\bssh\b|\bscp\b|release upload|--clobber/);
   assert.ok(workflow.indexOf('check-release.mjs') < workflow.indexOf('gh release create'));
+  assert.ok(workflow.indexOf('--draft') < workflow.indexOf('gh release edit'));
+  assert.ok(workflow.indexOf('gh release download') < workflow.indexOf('gh release edit'));
+  assert.match(workflow, /gh release edit "\$RELEASE_TAG" --draft=false --prerelease=false --latest/);
 });
 
 test('synthetic packaging inventories its complete closure and preserves dependency-owned native assets', async t => {

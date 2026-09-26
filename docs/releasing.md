@@ -146,11 +146,25 @@ installs without old API aliases or automatic migration. Only maintainers releas
 4. The `Release` workflow reruns CI on the tag SHA, requires the SHA to be on
    `main`, verifies tag/workspace version, source SHA, Node/platform and checksum
    of that run's artifact, rechecks that the remote tag still points there, and
-   publishes exactly that archive.
+   stages exactly that archive and checksum in a draft. It downloads the staged
+   assets and repeats the identity checks before publishing the complete draft as
+   a non-prerelease Latest Release.
 
 `v*` tags cannot be updated or deleted and the publisher never overwrites assets.
 Fix a failed release with the next version, not by moving a tag. Release assets do
 not expire with CI retention. A release does not deploy anything.
+
+<a id="atomic-release-publication"></a>
+### Publication failure and recovery
+
+The formal, non-draft Release is the readiness signal. The workflow keeps a new
+Release hidden as a draft until both assets are present and the downloaded archive
+passes the same identity checks. It refuses any existing Release for the tag.
+
+If creation, upload, publication or the final readback fails or has an unknown
+result, inspect the remote tag, draft/Release state and assets before taking any
+further action. Preserve a partial draft for diagnosis. Do not rerun a mutation
+blindly, move the tag, delete or replace a published Release, or use clobber.
 
 <a id="release-after-acceptance"></a>
 ## Release after a joint deployment
