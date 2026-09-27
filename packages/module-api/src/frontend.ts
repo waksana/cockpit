@@ -512,6 +512,17 @@ export interface AttachmentProps {
   readonly actions?: React.ReactNode;
 }
 
+/**
+ * The real native preference section inside the host's Settings dialog. Preserve
+ * Base, its DOM props and children; append module sections as siblings after Base,
+ * not inside its children, so each module retains its own error boundary.
+ * The host owns section spacing, the dialog, scrolling and About. No settings store,
+ * session identity, native action or page registration is exposed.
+ */
+export interface SettingsProps extends React.HTMLAttributes<HTMLElement> {
+  readonly children: React.ReactNode;
+}
+
 export interface ModuleComponentProps {
   message: MessageProps;
   sessionStatus: SessionStatusProps;
@@ -521,6 +532,7 @@ export interface ModuleComponentProps {
   attachment: AttachmentProps;
   managementHeader: ManagementHeaderProps;
   managementDetailHeader: ManagementDetailHeaderProps;
+  settings: SettingsProps;
 }
 
 export type ComponentMiddleware<Props> =
@@ -568,6 +580,8 @@ export interface ModuleFrontendContext {
   readonly apiVersion: 2;
   /** Declarative global/session menu capability; not a component boundary. */
   readonly menuVersion: 1;
+  /** Component middleware for the shared Settings preference content. */
+  readonly settingsVersion: 1;
   /** Read-only current-window text projection. Check independently of Web API v2. */
   readonly chatWindowVersion: 1;
   /** Middleware around the actual controlled textarea, independently of the input row. */

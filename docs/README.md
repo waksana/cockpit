@@ -32,7 +32,7 @@ work. Suggested path: [public TypeScript contract](module-contract.md#public-api
 
 | Page | Contents |
 | --- | --- |
-| [Architecture](architecture.md) | Repository map, thin-host/module boundaries, native authority, error codes, auth, shutdown, current fidelity/read-cost gaps and capability targets. |
+| [Architecture](architecture.md) | Repository map, thin-host/module boundaries, native authority, global settings, error codes, auth, shutdown, current fidelity/read-cost gaps and capability targets. |
 | [Product requirements R1–R8](product-requirements.md) | Confirmed positioning, boundaries and accepted costs; not a claim that every target is implemented. |
 | [Native chat](native-chat.md) | Native events, cursors, history/live/reconnect, the Web reading window, media. |
 | [Frontend guidelines](frontend-guidelines.md) | Native-first UI principles, minimal JS, truthful state, review checklist. |

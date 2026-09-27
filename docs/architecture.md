@@ -189,7 +189,7 @@ in-flight request protection stays.
 `/health` and `/version` share the process instance ID; `/version` reports the
 package version and manifest `sourceSha`. Development checkouts instead report
 `dev+<shortSHA>` from their own Git root; unversioned source reports
-`dev+unknown` and a null SHA. The Web About dialog reads this backend identity.
+`dev+unknown` and a null SHA. The About section of Web Settings reads this backend identity.
 These are provenance, not authentication or proof of deployment.
 
 ## Web client
@@ -222,10 +222,27 @@ Interaction rules:
   core does not interpret module data or use `localStorage`.
 - Chat text uses the browser's native context menu; code and tool details keep copy buttons.
 
+<a id="global-settings"></a>
+### Global settings
+
+**Global menu → 设置** opens one native dialog with the default model, module-owned
+preference sections and About. Global MCP and Skills remain separate navigation
+entries. Each section owns its reads, changes and feedback; there is no combined
+save that claims to commit module settings. The model requires an explicit save
+and stays open afterwards. About reads backend version/source on opening and
+explicit refresh, not a build-time constant.
+
+Modules join the real preference content through
+[settings middleware](module-contract.md#settings-content), not a host notification
+or configuration service. The host owns the dialog, focus and one scroll area;
+modules own their controls, storage and operations. Closing the dialog releases
+reads without cancelling already-submitted changes. Host model editing and save
+ownership survive module removal.
+
 <a id="session-default-model"></a>
 ### Default model for new sessions
 
-**Global menu → 默认新会话模型** selects the model used only for future new
+**Global menu → 设置 → 默认模型** selects the model used only for future new
 sessions. Cockpit owns this preference in `$COCKPIT_HOME/config.json`
 (`~/.cockpit/config.json` when unset), in `values.sessionDefaults`:
 

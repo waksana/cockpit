@@ -1,6 +1,6 @@
 import { createContext, createElement, useContext, useSyncExternalStore, type Attributes, type ComponentType, type ReactNode } from 'react';
 import type {
-  AttachmentProps, MarkdownNode, MessageProps, ModuleComponentProps, SessionStatusProps,
+  AttachmentProps, MarkdownNode, MessageProps, ModuleComponentProps, SessionStatusProps, SettingsProps,
 } from '@cockpit/module-api/frontend';
 import { ModuleErrorBoundary, moduleRuntime, type ModuleRuntime } from '../lib/moduleRuntime';
 import { sessionActivityIndicators } from '../lib/sessionActivity';
@@ -44,6 +44,13 @@ export function SessionStatus(props: SessionStatusProps) {
 function AttachmentBase({ children, actions }: AttachmentProps) { return <>{children}{actions}</>; }
 export function Attachment(props: AttachmentProps) {
   return useModuleElement('attachment', AttachmentBase, props);
+}
+
+function SettingsBase({ children, ...props }: SettingsProps) {
+  return <section {...props}>{children}</section>;
+}
+export function SettingsContent(props: SettingsProps) {
+  return useModuleElement('settings', SettingsBase, props);
 }
 
 export function MarkdownReplacement({ node, fallback }: { node: MarkdownNode; fallback: ReactNode }) {

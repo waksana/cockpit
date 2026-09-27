@@ -250,9 +250,13 @@ concurrent choices, storage and catalog errors, and MCP-to-host dispatch. Run
 for isolated real SDK/HTTP/module creation and model readback, durable settings,
 unchanged existing sessions/resume/reload/fork and later per-session switching.
 It uses synthetic homes and a loopback model stand-in, not production credentials.
-The Web DOM tests are `DefaultModelDialog.test.ts` and `GlobalNavigation.test.ts`;
-Chat Lab smoke covers the global entry, persistence across reopening, focus and
-desktop/narrow layout.
+The Web DOM tests are `DefaultModelSettings.test.ts`, `AboutSettings.test.ts`,
+`SettingsDialog.test.ts` and `GlobalNavigation.test.ts`. They cover independent
+section reads, confirmed saves versus failed readback, close/disconnect outcomes,
+and module removal/crashes without losing the host draft or mutation owner.
+Chat Lab smoke composes synthetic module preferences in the real Settings dialog,
+covering reopening, native focus, one scroll area, long values and desktop/narrow
+light/dark layouts without requesting notification permissions.
 
 **Packages.** A runtime package must come from a clean fixed commit via the existing
 packager and manifest checks. Only tests against the actual tar prove that package;

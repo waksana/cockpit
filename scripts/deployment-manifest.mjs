@@ -38,7 +38,7 @@ export function hostProduct(repository) {
     capabilities.push(`${field}.v${literalVersion(backend, `${field}Version`)}`);
   }
   capabilities.push(`frontend-api.v${literalVersion(frontend, 'apiVersion')}`);
-  for (const field of ['ui', 'uiSurface', 'menu', 'chatWindow', 'composerInput', 'draftLifecycle', 'draftSubmission']) {
+  for (const field of ['ui', 'uiSurface', 'menu', 'settings', 'chatWindow', 'composerInput', 'draftLifecycle', 'draftSubmission']) {
     capabilities.push(`${field}.v${literalVersion(frontend, `${field}Version`)}`);
   }
   return { kind: 'host', api, capabilities };

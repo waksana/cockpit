@@ -61,8 +61,8 @@ test('global menu exposes only global sections, does not steal focus on mount, a
   const menu = await screen.findByRole('menu');
   assert.ok(screen.getByRole('menuitem', { name: /全局 MCP/ }));
   assert.ok(screen.getByRole('menuitem', { name: /全局 Skills/ }));
-  assert.ok(screen.getByRole('menuitem', { name: /默认新会话模型/ }));
-  for (const removed of ['会话列表', '文件', '通知设置', 'SystemVersions', '垃圾桶', 'trash']) {
+  assert.ok(screen.getByRole('menuitem', { name: '设置' }));
+  for (const removed of ['默认新会话模型', '关于 Cockpit', '会话列表', '文件', '通知设置', 'SystemVersions', '垃圾桶', 'trash']) {
     assert.equal(menu.textContent?.includes(removed), false, removed);
   }
   await user.click(screen.getByRole('menuitem', { name: /全局 MCP/ }));
@@ -78,7 +78,7 @@ test('management workspace does not mount the global menu', () => {
   assert.doesNotMatch(management, /GlobalNavigation/);
 });
 
-test('global About action loads backend identity only when opened', async t => {
+test('global settings load model and About data only inside one opened dialog', async t => {
   const previous = useCockpit.getState();
   useCockpit.setState({ connState: 'open' });
   t.after(() => useCockpit.setState(previous, true));
@@ -86,14 +86,22 @@ test('global About action loads backend identity only when opened', async t => {
     instanceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
     version: '0.0.0-rolling.42', sourceSha: 'b'.repeat(40),
   }));
+  const defaults = t.mock.method(cockpitApi, 'sessionDefaults', async () => ({
+    modelId: 'gpt-6-astra', models: [{ modelId: 'gpt-6-astra', name: 'GPT-6 Astra' }], modelError: null,
+  }));
   mount(t);
   assert.equal(read.mock.callCount(), 0);
+  assert.equal(defaults.mock.callCount(), 0);
   const user = userEvent.setup();
   await user.click(screen.getByRole('button', { name: '全局导航' }));
-  await user.click(await screen.findByRole('menuitem', { name: '关于 Cockpit' }));
-  await screen.findByRole('dialog', { name: '关于 Cockpit' });
+  await user.click(await screen.findByRole('menuitem', { name: '设置' }));
+  await screen.findByRole('dialog', { name: '设置' });
   await screen.findByText('0.0.0-rolling.42');
   assert.equal(read.mock.callCount(), 1);
-  await user.click(screen.getByRole('button', { name: '关闭' }));
+  assert.equal(defaults.mock.callCount(), 1);
+  assert.equal(screen.getAllByRole('dialog').length, 1);
+  assert.ok(screen.getByRole('heading', { name: '默认模型' }));
+  assert.ok(screen.getByRole('heading', { name: '关于 Cockpit' }));
+  await user.click(screen.getByRole('button', { name: '关闭设置' }));
   await waitFor(() => assert.equal(screen.queryByRole('dialog'), null));
 });

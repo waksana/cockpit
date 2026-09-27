@@ -102,6 +102,7 @@ test('chat-window capability is read-only, scoped, and revoked with its module',
   const context = f.contexts[0];
   assert.equal(context.chatWindowVersion, 1);
   assert.equal(context.composerInputVersion, 1);
+  assert.equal(context.settingsVersion, 1);
   const state = context.state.chatWindow;
   assert.ok(Object.isFrozen(state));
   assert.equal(state.getSnapshot().status, 'unavailable');

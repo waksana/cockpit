@@ -29,13 +29,20 @@ const fixtures = [
   ` })),
   ...['frontend-18', 'frontend-19'].map(name => ({ name, types: ['react'], lib: ['ES2022', 'DOM'], source: `
     import type * as React from 'react';
-    import type { ModuleFrontendContext, ModuleAsset, ComposerProps } from '@waksana/cockpit-module-sdk/frontend';
+    import type { ModuleFrontendContext, ModuleAsset, ComposerProps, SettingsProps, ModuleComponentMiddleware } from '@waksana/cockpit-module-sdk/frontend';
     declare const frontend: ModuleFrontendContext;
     declare const asset: ModuleAsset;
     declare const props: ComposerProps;
     const children: React.ReactNode = props.children;
     const apiVersion: 2 = frontend.apiVersion;
-    void [children, apiVersion, asset.id];
+    const settingsVersion: 1 = frontend.settingsVersion;
+    declare const settings: SettingsProps;
+    const settingsChildren: React.ReactNode = settings.children;
+    const labelledBy: string | undefined = settings['aria-labelledby'];
+    const middleware: ModuleComponentMiddleware = { id: 'settings', boundary: 'settings', wrap: Base => Base };
+    // @ts-expect-error settings do not expose a native session or arbitrary settings store.
+    const sessionId = settings.sessionId;
+    void [children, apiVersion, settingsVersion, settingsChildren, labelledBy, middleware, sessionId, asset.id];
   ` })),
 ];
 
