@@ -1,7 +1,8 @@
 # Architecture
 
-Cockpit is a single Web/API service that drives native GitHub Copilot through the
-official SDK. This page describes the current source; requirements are in
+Cockpit is a thin Web/API access and interaction layer over native GitHub Copilot,
+with a generic module host. It uses the official SDK rather than owning native
+capabilities or state. This page describes the current source; requirements are in
 [R1–R8](product-requirements.md). A running instance's identity is its
 `/version`, `/health` and package.
 
@@ -28,8 +29,10 @@ MCP client ── same backend API ──────────┘            
 
 The SDK and native runtime versions are pinned in `packages/core/package.json` and
 checked at startup in [`runtime.ts`](../packages/core/src/runtime.ts); the runtime
-is out of process and may spawn MCP and tool subprocesses. Server and core run as
-TypeScript through an explicit loader; Web and MCP are built.
+is out of process and may spawn MCP and tool subprocesses. Source development runs
+server/core TypeScript through an explicit loader; Web and MCP are built.
+[Runtime packages](releasing.md#package-contents) ship compiled JavaScript for
+server, core, protocol and MCP, plus the built Web UI; no TypeScript loader is needed.
 
 Runtime calls share one connection. Only connect/stop are exclusive; the runtime
 orders create/resume/attach/close/delete per session, and Engine admits one
@@ -54,20 +57,28 @@ reserved for it. See the [module contract](module-contract.md).
 | Native operation adapters | Sessions, models, messages, queue, decisions, plans, schedules, MCP/skills — calling real SDK capabilities without a second authoritative state. |
 | Remote access and interaction | HTTP/schema, SSE, Web, reading window, text drafts, errors, and `fs/listDir` for choosing a cwd (a host filesystem adapter, not a file-transfer feature). |
 | Service resources | Package version, instance/health, activity queries, request protection and graceful exit. |
+| Generic module integration | Verified local packages, installation selections, registrations, role/resource assembly and public Web extension points; module business remains outside the host. |
 
-Snapshots, resource projections, cursors and response-size adaptation use
-request- or connection-scoped state only. Adapters never report a queued
-acceptance as applied, and a failed follow-up read never erases a confirmed effect.
+Backend snapshots, resource projections, cursors and response-size adaptation use
+request- or connection-scoped state, not a cross-request native-state mirror.
+Preserving accepted/applied/unknown distinctions and confirmed effects after later
+read failures is required by [R3](product-requirements.md#r3); the
+[implementation gaps](#implementation-gaps) below identify paths that do not yet
+meet it.
 
 <a id="native-authority"></a>
 ## Native authority
 
 Copilot alone owns sessions, history, model context, execution and queues. The
 backend keeps no chat window, resource snapshot, native switch copy or private
-database fallback. It retains only live SDK handles/subscriptions, call and
-shutdown promises, send/interaction identities, pending decision callbacks,
-version/instance info, bounded HTTP buffers and concurrency guards — all released
-with their request or connection.
+database fallback. Its in-memory control state is tied to the owning request,
+connection, loaded session or service lifetime: SDK handles/subscriptions,
+call/shutdown promises, send/interaction identities, pending decision callbacks,
+version/instance info, bounded HTTP buffers and concurrency guards.
+Host-owned settings such as the [new-session model](#session-default-model) and
+[module load metadata](module-contract.md#storage-config) are not copies of native
+state. Frontend display windows and drafts are interaction state allowed by
+[R2](product-requirements.md#r2), not a backend history cache.
 
 - Metadata is read on demand; resource events only invalidate consumers.
   `session/list`, snapshot, `session/resources`, single panels and details keep
@@ -203,10 +214,12 @@ Interaction rules:
 - Model controls edit a complete combination and apply it once; the current native
   value and the last submission result are shown separately, and late results do
   not overwrite newer edits.
-- Text drafts live only in memory and `sessionStorage`, one record per session
-  (text plus an unconfirmed-result flag). A draft is cleared only on explicit
-  acceptance with no newer edit; failures and unknown results keep the text and are
-  never resent automatically. No `localStorage` or legacy import.
+- Host text drafts live in memory and `sessionStorage`, keyed by session and
+  prompt/decision lifetime. Text is cleared only on explicit acceptance with no
+  newer edit; failures and unknown results retain input and are never resent
+  automatically. Module field persistence, legacy-data restoration and unclaimed
+  data protection follow the [draft contract](module-contract.md#61-state-and-draft-extension);
+  core does not interpret module data or use `localStorage`.
 - Chat text uses the browser's native context menu; code and tool details keep copy buttons.
 
 <a id="session-default-model"></a>
@@ -254,11 +267,34 @@ all-agent event window. History, reconnection and media are specified in
 [module contract](module-contract.md).
 
 <a id="target-gap"></a>
-## Gaps against confirmed requirements
+## Implementation status and gaps
+
+The thin-host and native-state boundaries are implemented, but they do not imply
+that every adapter or UI projection meets every requirement. The limitations below
+are current implementation gaps, not accepted exceptions or completed fixes.
+
+<a id="implementation-gaps"></a>
+### Fidelity and read-cost gaps
+
+| Requirement | Current limitation | Source |
+| --- | --- | --- |
+| R3: preserve confirmed effects | `cancel`, `session/interrupt`, `queue/remove` and `session/rename` can return an error when a follow-up read fails after a successful native operation, without returning the already-confirmed effect. This is distinct from the result-preserving model/mode/compaction adapters and per-step `session/control` results. | [Controls](../packages/core/src/session-controls.ts), [settings](../packages/core/src/session-settings.ts) |
+| R3: preserve explicit failures | The Web fold hides ordinary rows for `task`, `skill` and `exit_plan_mode`. A failure before a replacement card exists can be hidden with the row, including its error text. This loses displayed evidence, not the native event itself. | [Chat fold](../packages/protocol/src/chat.ts) |
+| R3: distinguish unknown values | Plan/todo projection maps missing or unrecognized native todo status to `pending`; it does not preserve that uncertainty. | [Resource reader](../packages/core/src/resource-reader.ts) |
+| R3/R5: distinguish stale windows | The module current-window observer uses connection-open state without the Web store's `snapshotReady` guard. On reconnect, a retained materialized window can change from `stale` to `ready` before the current session snapshot arrives. This is not proof of freshness or complete history. | [Module view](../apps/web/src/lib/moduleView.ts), [window projection](../apps/web/src/lib/moduleChatWindow.ts) |
+| R4: narrow read dependencies | Sending a prompt to an already-loaded session first reads all five control inputs: processing, activity, queue, native tasks and MCP. An unrelated MCP read failure can prevent `sdk.send`. These are adapter/RPC dependencies, not a measurement of total user-action cost or production latency. | [Prompt adapter](../packages/core/src/session-controls.ts), [control reads](../packages/core/src/kernel.ts) |
+| R4: reuse request-local work | A loaded-session readiness check with no explicit role subset assembles the same roles twice, repeating packaged-resource reads and verification within one request. This is local assembly work, not a native-state cache. | [Role service](../packages/core/src/role-service.ts), [assembly](../apps/server/src/module-roles.ts) |
+
+Reducing these costs means narrowing dependencies or reusing request-local work,
+not adding a native-state cache or removing lifecycle protection. An error from a
+mutation is not proof that nothing happened; inspect current native state before
+deciding on another action, never automatically replay it.
+
+### Confirmed capability targets
 
 | Capability | Current | Confirmed target |
 | --- | --- | --- |
-| Shutdown | Waits for native activity and protected in-flight calls. | Wait only for native sessions; module work and receipts excluded. |
-| Module delivery | Local trusted packages, main-process import, cold load; HTTP/static routes, data events, four frontend extension kinds, module-owned HTTP MCP via creation-time roles. | Remote signed installation, per-module MCP paths on one port, content packages. |
+| Shutdown | Implemented: waits for native activity and protected in-flight calls, not module work or close receipts. | Native-session-based exit ([R7](product-requirements.md#r7)). |
+| Module delivery | Implemented: local trusted packages, main-process import, cold load, HTTP/static routes, data events and four frontend extension kinds. Modules implement their own HTTP MCP on digest-bound paths under the host port; roles supply those endpoints to native sessions. | Cold module packages and per-module MCP paths ([R1](product-requirements.md#r1)); supported package forms are in the [module contract](module-contract.md#1-supported-scope). |
 | System page | Not implemented. | A full host page from the main menu showing versions and installed/loaded modules read-only, with safe exit ([R6](product-requirements.md#r6)). |
 | Next-start message | Not implemented. | An optional module saves a prompt for the next start and makes one send attempt. |

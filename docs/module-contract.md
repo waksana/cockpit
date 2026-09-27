@@ -484,13 +484,15 @@ No choices and empty choices are distinct. It is not persisted, restored, or a r
 `registerDraft` adds a module schema with `id`, applicable `purposes`, `create`, `validate`, `hasContent`, `project`, `acknowledge`, and optional `persistence`. `forDraft(reference)` returns a stable field scope or `undefined` if purpose does not apply. The scope exposes immutable snapshot, subscription, and validated
 updates only for that schema. Projection adds explicit fields to existing native routes; core fields such as `sessionId`, `text`, `mode`, `requestId`, `answer`, `message`, `wasFreeform`, and `action` are reserved. Unknown native route fields and cross-schema collisions are errors.
 
-Unregistered serialized namespaces and legacy records remain opaque. They do not count as current content, render fallback UI, block sends, or get cleared by core. Modules own restore, migration, tombstones after ACK, upload/file resources, and schema-specific persistence conflict checks.
+Unregistered serialized namespaces and legacy records remain opaque. They do not count as current content, render fallback UI, or get cleared by core. Unclaimed persisted data blocks native draft submission, including decision actions, with an explicit error rather than silently sending only the recognized fields.
+Matching loaded schemas own restoration and migration; namespace ownership is rechecked before dispatch. Core does not enable missing modules or retry the submission automatically. Modules own restore, migration, tombstones after ACK, upload/file resources, and schema-specific persistence conflict checks.
 <a id="chat-window-state"></a>
 #### Current-window read-only data
 Use only after checking `context.chatWindowVersion === 1`. Read through `context.state.chatWindow.getSnapshot()` and `subscribe(listener)`. There is no session parameter, history loading, pagination API, refresh action, write action, extra HTTP/SSE channel, or SDK read. Only the currently active session is visible;
 session switches never reuse old messages under a new identity.
 
 `ChatWindowSnapshot` contains `sessionId`, `status` (`unavailable`, `loading`, `ready`, `stale`, `error`), `hasMore`, `partial`, optional `error`, and root `messages`. `ready` is not proof of complete history. Empty ready windows, unavailable/stale/error, and partial windows are distinct.
+The current observer has a [reconnection freshness gap](architecture.md#implementation-gaps); `ready` alone does not establish that the current connection has received its session snapshot. This limitation does not grant modules access to private stores or extra native reads.
 
 Each `ChatWindowMessage` projects only `id`, `origin`, `role`, `text`, `complete`, optional `subtype`, and ordered `children`. `id` is presentation identity; `origin` is native session/message/agent attribution or null. Unknown origin is not guessed from DOM order, timestamp, or message ID shape. `complete` does not
 turn streaming or known-incomplete content into final content. `text` is existing message content only; thoughts, tool calls, attachments, private store, native session handles, and structured question bodies are not exported. Snapshots are frozen, stable by reference when unchanged, and subscriptions are revoked with

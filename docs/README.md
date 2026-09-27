@@ -32,7 +32,7 @@ work. Suggested path: [public TypeScript contract](module-contract.md#public-api
 
 | Page | Contents |
 | --- | --- |
-| [Architecture](architecture.md) | Repository map, host/SDK/module responsibilities, native authority, error codes, auth, shutdown, target gaps. |
+| [Architecture](architecture.md) | Repository map, thin-host/module boundaries, native authority, error codes, auth, shutdown, current fidelity/read-cost gaps and capability targets. |
 | [Product requirements R1–R8](product-requirements.md) | Confirmed positioning, boundaries and accepted costs; not a claim that every target is implemented. |
 | [Native chat](native-chat.md) | Native events, cursors, history/live/reconnect, the Web reading window, media. |
 | [Frontend guidelines](frontend-guidelines.md) | Native-first UI principles, minimal JS, truthful state, review checklist. |
@@ -60,7 +60,7 @@ work. Suggested path: [public TypeScript contract](module-contract.md#public-api
 
 Source docs describe `main`; for an older package read the docs at its tag. A
 requirement/implementation mismatch is an explicit gap
-([target gap](architecture.md#target-gap)), never a silent change to either. The
+([implementation status](architecture.md#target-gap)), never a silent change to either. The
 machine-readable transport list includes operational endpoints; it does not make each
 one a public product intent or unauthenticated. Maintenance rules are in
 [development](development.md#documentation-rules).

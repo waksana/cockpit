@@ -230,7 +230,7 @@ targets never performs host operations or moves user data.
 | Accepted | A single giant event may be read whole and sliced by offset/hash; ordinary multi-event overflow requires an explicitly smaller page — no automatic bisection, caching, spooling or opt-in. |
 | Accepted | Collapsed subagents still stream: a bandwidth cost of continuous updates and completeness. |
 | Accepted | Graceful exit does not wait for module business or close receipts; modules handle their unknown side effects. |
-| Confirmed | Cold loading only, frontend and backend in one package, trusted main-process import; per-module MCP paths remain a future target. |
+| Confirmed | Cold loading only, frontend and backend in one package, trusted main-process import; per-module MCP paths on the host port ([current implementation](module-contract.md#role-http-mcp)). |
 | Confirmed | A module failing to start is disabled locally with a visible error; the host keeps running. |
 | Accepted boundary | The next-start message only promises to record the automatic send attempt and its result; without a receiver idempotency key, local markers cannot guarantee no loss or duplicate across crashes. |
 
