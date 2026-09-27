@@ -1,5 +1,10 @@
 [
   {
+    "version": "0.3.0",
+    "kind": "additive",
+    "summary": "Add the settingsVersion capability and settings component middleware for module-owned sections in the host Settings dialog, preserving host controls, dialog ownership and module business boundaries."
+  },
+  {
     "version": "0.2.0",
     "kind": "breaking",
     "summary": "Move backend and frontend contracts from the root to dedicated entry points. Generate wire types from the canonical protocol, including all preparation statuses. Make environment peers optional and verify isolated TypeScript 5.9.3 / React 18 and 19 consumption."

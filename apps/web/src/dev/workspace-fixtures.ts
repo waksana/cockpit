@@ -115,6 +115,10 @@ export function installWorkspaceFixture(store: ReturnType<typeof createCockpitSt
     },
   });
   Object.assign(cockpitApi, {
+    identity: async () => ({
+      instanceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      version: 'dev+fixture', sourceSha: 'a'.repeat(40),
+    }),
     sessionDefaults: async () => ({ modelId: defaultModel, models: defaultModels, modelError: null }),
     setSessionDefaults: async modelId => {
       if (!defaultModels.some(model => model.modelId === modelId)) throw new Error('Unknown synthetic model');

@@ -1,4 +1,4 @@
-import { createElement } from 'react';
+import { createElement, Fragment, useState } from 'react';
 import type { ActivateFrontend } from '@cockpit/module-api/frontend';
 import type { SessionRole } from '@cockpit/protocol';
 import { ModuleRuntime } from '../lib/moduleRuntime';
@@ -86,7 +86,23 @@ export function createSidebarModuleFixture() {
             'data-sidebar-unread': props.sessionId, 'aria-label': '7 unread', className: 'ck-badge',
           }, '7', props.children),
         }),
+      }, {
+        id: 'preferences', boundary: 'settings', wrap: Base => props => createElement(Fragment, null,
+          createElement(Base, props), createElement(SyntheticPreferences)),
       }],
     })) satisfies ActivateFrontend }),
   });
+}
+
+function SyntheticPreferences() {
+  const [enabled, setEnabled] = useState(false);
+  return createElement('section', { 'aria-label': '示例模块设置' },
+    createElement('h3', { className: 'ck-heading' }, '示例模块设置'),
+    createElement('p', { className: 'ck-text-secondary' }, '仅用于检查公共设置区域的合成控件，不会改变浏览器权限或发送通知。'),
+    createElement('div', { className: 'ck-actions' },
+      createElement('span', { id: 'synthetic-preference-label' }, '示例开关'),
+      createElement('button', {
+        type: 'button', role: 'switch', className: `ck-button${enabled ? ' ck-primary' : ''}`, 'aria-checked': enabled,
+        'aria-labelledby': 'synthetic-preference-label', onClick: () => setEnabled(value => !value),
+      }, enabled ? '已开启' : '已关闭')));
 }

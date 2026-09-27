@@ -6,7 +6,7 @@ import {
   ListOrdered, Search, Square, SquarePen, SquareTerminal, Trash2, Wrench, X,
   FileText, FileSearch, FilePenLine, FileTerminal, ListTree, MessagesSquare, Send,
   Database, Globe, SearchCheck, CalendarClock, Users, FileArchive, Eye,
-  Plus, PowerOff, GitFork, RefreshCw,
+  Plus, PowerOff, GitFork, RefreshCw, Settings,
 } from 'lucide-react';
 
 export type IconName =
@@ -45,7 +45,7 @@ export type IconName =
   | 'shell' | 'tool' | 'agent' | 'decision' | 'queue'
   | 'read_file' | 'find_file' | 'edit_file' | 'shell_output' | 'shell_list'
   | 'agent_result' | 'agent_message' | 'agent_list' | 'database' | 'web' | 'web_search' | 'schedule'
-  | 'add' | 'session_reload' | 'unload' | 'fork';
+  | 'add' | 'session_reload' | 'unload' | 'fork' | 'settings';
 
 const icons = {
   search: Search, compose: SquarePen, newchat: MessageSquare, delete: Trash2,
@@ -59,7 +59,7 @@ const icons = {
   read_file: FileText, find_file: FileSearch, edit_file: FilePenLine, shell_output: FileTerminal,
   shell_list: ListTree, agent_result: MessagesSquare, agent_message: Send, agent_list: Users,
   database: Database, web: Globe, web_search: SearchCheck, schedule: CalendarClock,
-  add: Plus, session_reload: RefreshCw, unload: PowerOff, fork: GitFork,
+  add: Plus, session_reload: RefreshCw, unload: PowerOff, fork: GitFork, settings: Settings,
 } satisfies Record<IconName, typeof Search>;
 
 interface IconProps extends HTMLAttributes<HTMLSpanElement> {

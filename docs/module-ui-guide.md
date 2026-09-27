@@ -24,6 +24,7 @@ Current Web exposes these independent frontend capabilities:
 | --- | --- |
 | `apiVersion: 2` | Web frontend declaration/activation. Module manifests, backend API and backend manifests remain v1. |
 | `menuVersion: 1` | Declarative global/session menu actions. Check separately. |
+| `settingsVersion: 1` | Component middleware for module-owned sections in the shared Settings dialog. |
 | `chatWindowVersion: 1` | Read-only current-window text projection; check before `state.chatWindow`. |
 | `composerInputVersion: 1` | Middleware around the actual controlled textarea. |
 | `uiVersion: 1` | Public base classes, variables and control behavior here. |
@@ -169,6 +170,21 @@ editing; `sendBlocked`, pending and module blocks gate submission. Speech/freefo
 modules honor native free-text restrictions. Data consumers check `chatWindowVersion: 1`
 and use [read-only window state](module-contract.md#chat-window-state). Keep DOM,
 keyboard and visual order identical; no placeholder or position slot is provided.
+
+## Shared settings presentation
+
+Use the [settings middleware contract](module-contract.md#settings-content) after
+checking `settingsVersion: 1`. Keep `<Base {...props} />` and append a semantic section
+with a heading and labelled controls as its sibling, not inside Base's children.
+This keeps each module's render failures within its own boundary. Base is the real
+host preference section, not an empty mount point. The host supplies outer section spacing, separators, About and
+the only dialog/scroll owner.
+
+Use public typography and controls with module-prefixed internal layout. A switch
+must reflect the module's confirmed value and keep permission, unavailable, pending
+and error states explicit; do not equate a click with success. Do not reproduce the
+settings shell, wrap controls in another modal or make the host persist module
+business state. Closing settings is not permission to undo or cancel accepted work.
 
 ## Menu declarations
 

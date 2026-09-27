@@ -68,6 +68,82 @@
   user-select: text;
 }
 
+.dialog-card.settings-card {
+  display: flex;
+  flex-direction: column;
+  max-width: 36rem;
+  max-height: min(48rem, 100%);
+  padding: 0;
+  overflow: hidden;
+}
+
+.settings-header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--host-space-md);
+  padding: var(--host-space-md) var(--host-space-lg);
+  border-bottom: 1px solid var(--host-color-border);
+}
+
+.settings-body {
+  min-height: 0;
+  padding: var(--host-space-lg);
+  overflow-y: auto;
+}
+
+.settings-sections {
+  display: grid;
+  gap: var(--host-space-lg);
+  > * + * {
+    padding-top: var(--host-space-lg);
+    border-top: 1px solid var(--host-color-border);
+  }
+}
+
+.settings-section {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--host-space-md);
+  min-width: 0;
+}
+
+.settings-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--host-space-md);
+}
+
+.settings-description {
+  margin: 0;
+  color: var(--host-color-muted);
+  font-size: var(--host-text-body);
+  line-height: var(--host-leading-ui);
+  overflow-wrap: anywhere;
+}
+
+.settings-about {
+  margin-top: var(--host-space-lg);
+  padding-top: var(--host-space-lg);
+  border-top: 1px solid var(--host-color-border);
+  .runtime-identity {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: var(--host-space-sm) var(--host-space-lg);
+    margin: 0;
+    dt { color: var(--host-color-muted); }
+    code { font-size: var(--host-text-meta); }
+  }
+}
+
+@media (max-width: responsive.$phone-max) {
+  .settings-dialog {
+    padding: 0.5rem 0.5rem calc(0.5rem + var(--ux-error-height, 0px));
+  }
+}
+
 // ── Folder picker (new-session working directory chooser) ───────────────────
 .directory-modal {
   padding: 0.5rem 0.5rem calc(0.5rem + var(--ux-error-height, 0px));

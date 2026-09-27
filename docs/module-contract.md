@@ -1,5 +1,5 @@
 # Module contract
-This document defines the current Cockpit module host contract. Version numbers in this file are API capability versions, not release pairings: manifest/backend API v1, Web API v2, public UI v1, `menuVersion: 1`, `uiSurfaceVersion: 1`, `chatWindowVersion: 1`, `composerInputVersion: 1`, `draftLifecycleVersion: 1`,
+This document defines the current Cockpit module host contract. Version numbers in this file are API capability versions, not release pairings: manifest/backend API v1, Web API v2, public UI v1, `menuVersion: 1`, `settingsVersion: 1`, `uiSurfaceVersion: 1`, `chatWindowVersion: 1`, `composerInputVersion: 1`, `draftLifecycleVersion: 1`,
 `draftSubmissionVersion: 1`, and `context.serviceReadyVersion: 1`. Host/module release pairings belong in the [module catalog](modules.md) and GitHub Releases.
 
 Product boundaries are in [R1-R8](product-requirements.md). Business contracts for individual modules, such as File or Notification, stay in their own repositories; this document only defines host/module integration.
@@ -159,6 +159,7 @@ if (context.serviceReadyVersion !== 1) {
 | Draft schema | `context.state.registerDraft(...)` | Module owns validation, content test, projection, ACK, and optional persistence for its field only. |
 | Menus | `menus`, `getState`, optional `subscribe`, `onSelect` | Global/session commands; native items remain first; no page/router registration. |
 | Components | `components`, `wrap(Base)` | Middleware around real public components; preserve props, children, refs, identity, and accessibility. |
+| Shared settings | `settingsVersion: 1`, `SettingsProps`, `components` with `boundary: 'settings'` | Append module-owned sections to host preference content; no generic settings store, native action or page registration. |
 | Composer input | `composerInputVersion: 1`, `ComposerInputProps` | Actual controlled textarea; preserve value/onChange/events/ref and host submit gate. |
 | Markdown | `markdown`, `matches(node)`, `component` | Already-parsed link/image occurrences only; not attachments or full Markdown parsing. |
 | Worker | `context.worker?: { entry, scope }` | Narrow module worker URL/scope; module registers and unregisters itself. |
@@ -498,8 +499,8 @@ Each `ChatWindowMessage` projects only `id`, `origin`, `role`, `text`, `complete
 turn streaming or known-incomplete content into final content. `text` is existing message content only; thoughts, tool calls, attachments, private store, native session handles, and structured question bodies are not exported. Snapshots are frozen, stable by reference when unchanged, and subscriptions are revoked with
 the module scope.
 ### 6.2 Component middleware
-Boundaries are: `message`, `sessionStatus`, `composer`, `composerEditor`, `composerInput`, `attachment`, `managementHeader`, and `managementDetailHeader`. They correspond to real existing host components: visible message body/current ask question; concurrent session activity summary; actual composer card; input row;
-controlled textarea; historical attachment row; and management headers.
+Boundaries are: `message`, `sessionStatus`, `composer`, `composerEditor`, `composerInput`, `attachment`, `managementHeader`, `managementDetailHeader`, and `settings`. They correspond to real existing host components: visible message body/current ask question; concurrent session activity summary; actual composer card; input row;
+controlled textarea; historical attachment row; management headers; and shared preference content.
 
 Middleware sorts by `(order ?? 0, moduleId, id)` with lower values outermost. The host composes only on registration/base changes, not every render. Enhancers must preserve inherited props, children, refs, actions, native identity, scroll and a11y anchors, and layout semantics. Composition and error boundaries add no
 HTML. Empty production boundaries, fake slots, hidden dispatchers, or components that only return children are not allowed.
@@ -525,6 +526,27 @@ The first `send()` consumes the intent even if blocked; later calls return the s
 
 Dispatch uses the existing `SessionDraft` projection, native route construction, pending token, and schema ACK transaction. Prompt sends to the original session's prompt/enqueue route even if an ask later appears. Ask sends only to the original live free-text ask with `wasFreeform: true`; plan sends feedback;
 elicitation has no text route. Retired decisions never turn into prompts. Module unload mid-send does not prove no send happened.
+
+<a id="settings-content"></a>
+#### Shared settings content
+
+Check `context.settingsVersion === 1` before registering `boundary: 'settings'`.
+Base is the host's actual default-model section; `SettingsProps` carries its DOM
+props and content. Append module sections as siblings through
+`<><Base {...props} /><ModulePreferences /></>`, preserving Base, props and children.
+Do not insert module sections into `Base.children`: that places them inside another
+module's error boundary and can blame a healthy peer for a crash.
+This is existing component middleware, not
+a separate menu, page, configuration registry or empty placeholder.
+
+The host puts About after the composed preferences and owns the dialog, focus,
+close action, the outer section spacing and single scroll area. Module sections use semantic
+headings and public UI classes, without a second dialog, scroller or host-style
+copy. Each module owns settings reads, storage, permissions, mutation results and
+subscriptions; there is no host-wide module-settings save. Do not infer a session
+target from the current chat or import private stores. Unmount releases UI
+subscriptions, not an already-accepted operation; late errors retain an owner.
+
 ### 6.3 File-style draft input
 The host stores ordinary prompt drafts per session and separate drafts for each native ask/plan/elicitation request. Decision drafts are selected by kind and request ID, not by clearing/copying the prompt. When a request ends, the prompt returns; replacement requests get new lifetimes; failed/unknown answers retain
 their own input.

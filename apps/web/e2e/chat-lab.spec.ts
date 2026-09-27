@@ -84,25 +84,104 @@ const appPages: [name: string, query: string, ready: string][] = [
   ['full-web', 'scene=full-web', '.chat-input-card'],
 ];
 
-test('global default-model menu saves a future-session choice and restores keyboard focus', async ({ page }, testInfo) => {
+test('global settings combine preferences and About while preserving saves and keyboard focus', async ({ page }, testInfo) => {
   const guard = await open(page, 'scene=sidebar');
   const trigger = page.getByRole('button', { name: '全局导航' });
   await trigger.focus();
   await page.keyboard.press('Enter');
-  await page.getByRole('menuitem', { name: '默认新会话模型' }).focus();
+  await page.getByRole('menuitem', { name: '设置', exact: true }).focus();
   await page.keyboard.press('Enter');
-  const dialog = page.getByRole('dialog', { name: '默认新会话模型' });
+  const dialog = page.getByRole('dialog', { name: '设置', exact: true });
   await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('heading', { name: '设置', exact: true })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(dialog.getByRole('button', { name: '关闭设置' })).toBeFocused();
   await expect(dialog.getByText(/仅影响之后新建的会话/)).toBeVisible();
   await expect(dialog.getByRole('combobox')).toHaveValue('gpt-6-astra');
+  await expect(dialog.getByRole('heading', { name: '关于 Cockpit' })).toBeVisible();
+  await expect(dialog.getByText('dev+fixture')).toBeVisible();
+  await expect(page.getByRole('dialog')).toHaveCount(1);
+  await expect(dialog.getByRole('heading')).toHaveText(['设置', '默认模型', '示例模块设置', '关于 Cockpit']);
+  const preference = dialog.getByRole('switch', { name: '示例开关' });
+  await expect(preference).toHaveAttribute('aria-checked', 'false');
+  await preference.click();
+  await expect(preference).toHaveAttribute('aria-checked', 'true');
   await dialog.getByRole('combobox').selectOption('gpt-5.4-mini');
-  await snapshot(page, testInfo, 'default-new-session-model');
+  await snapshot(page, testInfo, 'global-settings');
   await dialog.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(dialog.getByText('已保存默认模型。')).toBeVisible();
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('button', { name: '关闭设置' }).click();
   await expect(dialog).toHaveCount(0);
   await expect(trigger).toBeFocused();
   await trigger.click();
-  await page.getByRole('menuitem', { name: '默认新会话模型' }).click();
+  await page.getByRole('menuitem', { name: '设置', exact: true }).click();
   await expect(dialog.getByRole('combobox')).toHaveValue('gpt-5.4-mini');
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  await expectHealthy(page, guard);
+});
+
+test('global settings preserve one scroll area and a reachable close control with long content', async ({ page }, testInfo) => {
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.setViewportSize({ width: testInfo.project.name === 'narrow' ? 390 : 1024, height: 480 });
+  const guard = await open(page, 'scene=sidebar');
+  const trigger = page.getByRole('button', { name: '全局导航' });
+  await trigger.click();
+  await page.getByRole('menuitem', { name: '设置', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '设置', exact: true });
+  await expect(dialog.getByText('dev+fixture')).toBeVisible();
+  const savedModelId = `synthetic-${'m'.repeat(160)}`;
+  await page.evaluate(async modelId => {
+    const modulePath = '/src/net/api.ts';
+    const { cockpitApi } = await import(/* @vite-ignore */ modulePath);
+    cockpitApi.sessionDefaults = async () => ({
+      modelId,
+      models: [{ modelId: 'synthetic-long-model', name: 'SyntheticLongModelNameWithoutSpaces'.repeat(12) }],
+      modelError: null,
+    });
+  }, savedModelId);
+  await dialog.getByRole('button', { name: '刷新默认模型' }).click();
+  await expect(dialog.getByRole('combobox')).toHaveValue(savedModelId);
+  await dialog.getByRole('combobox').selectOption('synthetic-long-model');
+  await expect(dialog.getByRole('combobox')).toHaveValue('synthetic-long-model');
+  await expect(dialog.getByText(`当前默认值：${savedModelId}`)).toBeVisible();
+  await dialog.getByRole('button', { name: '保存', exact: true }).scrollIntoViewIfNeeded();
+  await expect(dialog.getByRole('button', { name: '保存', exact: true })).toBeInViewport({ ratio: 1 });
+  const dimensions = await dialog.evaluate(element => {
+    const header = element.querySelector('.settings-header')!;
+    const body = element.querySelector('.settings-body')!;
+    return {
+      overflow: element.scrollWidth - element.clientWidth,
+      contentOverflow: body.scrollWidth - body.clientWidth,
+      scrollOwners: Array.from(element.querySelectorAll('*')).filter(node => {
+        const style = getComputedStyle(node);
+        return /auto|scroll/.test(style.overflowY) && node.scrollHeight > node.clientHeight;
+      }).length,
+      headerTop: header.getBoundingClientRect().top,
+      bodyScrollable: body.scrollHeight > body.clientHeight,
+    };
+  });
+  expect(dimensions.overflow).toBeLessThanOrEqual(1);
+  expect(dimensions.contentOverflow).toBeLessThanOrEqual(1);
+  expect(dimensions.scrollOwners).toBe(1);
+  expect(dimensions.bodyScrollable).toBe(true);
+  await dialog.getByRole('button', { name: '刷新关于信息' }).focus();
+  await expect(dialog.getByRole('button', { name: '刷新关于信息' })).toBeInViewport();
+  expect(await dialog.locator('.settings-header').evaluate(node => node.getBoundingClientRect().top))
+    .toBe(dimensions.headerTop);
+  await expect(dialog.getByRole('button', { name: '关闭设置' })).toBeInViewport();
+  await snapshot(page, testInfo, 'global-settings-short-dark');
+  await page.keyboard.press('Tab');
+  // Native dialog navigation may visit browser chrome before wrapping.
+  const focus = await page.evaluate(() => ({
+    chrome: document.activeElement === document.body,
+    modal: document.querySelector('dialog')!.contains(document.activeElement),
+  }));
+  expect(focus.chrome || focus.modal, 'Tab cannot reach background controls').toBe(true);
+  if (focus.chrome) await page.keyboard.press('Tab');
+  await expect(dialog.getByRole('button', { name: '关闭设置' })).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(dialog).toHaveCount(0);
   await expect(trigger).toBeFocused();
