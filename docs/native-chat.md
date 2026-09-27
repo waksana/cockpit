@@ -2,6 +2,8 @@
 
 Internal spec for current chat transport. See [architecture](architecture.md) and the
 [module catalog](modules.md) for adjacent boundaries.
+Known projection and module-window freshness limitations are tracked with the
+[current implementation gaps](architecture.md#implementation-gaps).
 
 Copilot owns durable history and model context. Cockpit backend has no chat cache, message
 fold/index, resume checkpoints or second conversation store. The browser owns loaded
@@ -351,12 +353,16 @@ rewrite.
 ## Media
 
 Native tool binary payloads are removed from chat responses without image locators or a
-chat/image cache. Current Web has no file cards, image/video previews or managed download
-service. Text/Markdown remains.
+chat/image cache. The base Web UI renders text/Markdown and native attachment metadata;
+the host owns no managed file library or browser upload/download service.
 
-Enhanced file rendering belongs to a future frontend plugin covering new and historical
-messages in the same event window. No renderer ABI is installed. The planned module owns
-file references and delivery; see the [module catalog](modules.md).
+Loaded modules already extend new and historical messages in the same event window.
+The public [Markdown and attachment contract](module-contract.md#64-markdown-and-lifecycle)
+supports parsed link/image replacements and native attachment component middleware.
+These are generic extension points, not a host file service: modules own enhanced file
+presentation, reference resolution and delivery. Availability depends on the loaded
+module; unmatched or failed replacements retain the base fallback. See the
+[module catalog](modules.md) for file capabilities.
 
 Native prompt attachments are separate from chat presentation. HTTP/MCP can forward SDK
 file/directory/selection/blob inputs; this neither uploads browser-local files nor
