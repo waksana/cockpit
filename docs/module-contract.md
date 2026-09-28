@@ -274,11 +274,48 @@ reject such manifests, because the manifest schema is strict.
 | `roles/add { sessionId, roles }` | Saves roles for a future reload/cold load; see below. |
 
 `context.host.call(name, body)` is limited to `session/new`, `session/get`,
-`session/rename`, `roles/readiness`, `session/resources-prepare`, and `prompt`,
+`session/rename`, `roles/readiness`, `session/resources-prepare`, `prompt`,
+`respondAsk`, and `session/chat`,
 with `@cockpit/protocol` validation and shutdown admission. It exposes no Engine,
 SDK objects, persistent stores, `session/tools-initialize`, resource toggles or
 arbitrary intent passthrough. Creation failure may include a confirmed
 `sessionId`; inspect before retrying and never blindly recreate.
+
+<a id="native-conversation-bridge"></a>
+#### Native ask responses and chat reads
+
+Check `context.host?.askResponseVersion === 1` and
+`context.host?.chatReadVersion === 1` before opening, creating or migrating
+persistent module data when these capabilities are required. Older API v1 hosts
+may omit them; SDK version or `apiVersion` alone is not support. The Rolling
+descriptor advertises the same capabilities as `askResponse.v1` and `chatRead.v1`.
+
+`host.call('respondAsk', { sessionId, requestId, answer, wasFreeform })` returns
+`{ ok: boolean }` from the existing native decision adapter. All four fields are
+required. Use the original session and pending request identity from `session/get`
+or native control events, never a currently selected replacement session.
+Native choice and `allowFreeform` checks still apply; stale or already answered
+requests fail with `REQUEST_NOT_PENDING`. Failure does not send a prompt or retry
+the answer. Ordinary `prompt` does not answer a pending ask.
+
+`host.call('session/chat', body)` returns one native event page, not folded
+messages, using the [native chat contract](native-chat.md). Its generated
+`ModuleHostIntentBody<'session/chat'>` and `ModuleHostIntentResult<'session/chat'>`
+come directly from the host schemas. The body carries `sessionId`, `source`,
+`direction`, optional opaque `cursor`, `max`, `waitMs`, optional
+`includeEphemeral`, `agentIds`, `agentScope`, `types`, and `bootstrap`. The result
+preserves `sessionId`, `source`, `direction`, `events`, `cursor`, `cursorStatus`,
+`hasMore`, optional `liveCursor`, and `read` counters.
+
+`max` bounds events (1–256), not bytes. Passive `persisted` reads never load a
+session; `live` reads require an existing loaded handle. Bootstrap adds a
+`liveCursor` only for a live read; persisted bootstrap remains passive. Keep
+source/direction/filter identity with cursors, and use `liveCursor` separately
+for forward continuation after bootstrap. `cursorStatus: 'expired'` is not a
+successful continuation; explicitly resynchronize rather than silently replacing
+the cursor. Unknown sessions, invalid filters, native failures and malformed
+results remain errors. No cache, replay, private history access, automatic load
+or retry is added. Calls retain the existing module activation/shutdown guards.
 
 `session/get` may include `nativeName` and `nativeNameUserSet` for loaded sessions
 when native reads are consistent. `nativeName:null` means none; omission means

@@ -21,6 +21,13 @@ test('host deployment capabilities include the real shared settings boundary', (
   assert.ok(descriptor.product.capabilities.includes('settings.v1'));
 });
 
+test('host deployment capabilities include native ask responses and cursor chat reads', () => {
+  const descriptor = deploymentManifest(repository, sha, 1, source);
+  for (const capability of ['askResponse.v1', 'chatRead.v1']) {
+    assert.ok(descriptor.product.capabilities.includes(capability));
+  }
+});
+
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'cockpit-rolling-test-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));

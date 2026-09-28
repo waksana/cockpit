@@ -13,6 +13,10 @@ export * from './contract.ts';
 export interface ModuleHostApi {
   /** Check before resource-aware creation/preparation; absent on older hosts. */
   readonly resourcePreparationVersion?: 1;
+  /** Native respondAsk bridge; check before opening persistent module data. */
+  readonly askResponseVersion?: 1;
+  /** Bounded native session/chat reads; absent on older hosts. */
+  readonly chatReadVersion?: 1;
   call<Name extends ModuleHostIntent>(
     name: Name,
     body: ModuleHostIntentBody<Name>,

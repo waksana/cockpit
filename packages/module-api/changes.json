@@ -1,5 +1,10 @@
 [
   {
+    "version": "0.4.0",
+    "kind": "additive",
+    "summary": "Expose canonical respondAsk and session/chat host calls with askResponseVersion and chatReadVersion capability checks, preserving native decision identity, passive reads, cursor expiry and bounded paging."
+  },
+  {
     "version": "0.3.0",
     "kind": "additive",
     "summary": "Add the settingsVersion capability and settings component middleware for module-owned sections in the host Settings dialog, preserving host controls, dialog ownership and module business boundaries."

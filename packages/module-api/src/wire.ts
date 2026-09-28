@@ -53,6 +53,44 @@ export type ModuleHostIntentMap = {
             sessionId: string;
         };
     };
+    "session/chat": {
+        body: {
+            agentIds?: string[] | undefined;
+            agentScope?: "all" | "primary" | undefined;
+            bootstrap: boolean;
+            cursor?: string | undefined;
+            direction: "backward" | "forward";
+            includeEphemeral?: boolean | undefined;
+            max: number;
+            sessionId: string;
+            source: "live" | "persisted";
+            types?: string[] | undefined;
+            waitMs: number;
+        };
+        result: {
+            cursor: string;
+            cursorStatus: "expired" | "ok";
+            direction: "backward" | "forward";
+            events: {
+                agentId?: string | undefined;
+                data: Record<string, unknown>;
+                ephemeral?: boolean | undefined;
+                id: string;
+                parentId?: null | string | undefined;
+                parentToolCallId?: string | undefined;
+                timestamp?: number | string | undefined;
+                type: string;
+            }[];
+            hasMore: boolean;
+            liveCursor?: string | undefined;
+            read: {
+                events: number;
+                rpc: number;
+            };
+            sessionId: string;
+            source: "live" | "persisted";
+        };
+    };
     "session/get": {
         body: {
             sessionId: string;
@@ -285,6 +323,17 @@ export type ModuleHostIntentMap = {
         result: {
             ok: boolean;
             queued?: boolean | undefined;
+        };
+    };
+    respondAsk: {
+        body: {
+            answer: string;
+            requestId: string;
+            sessionId: string;
+            wasFreeform: boolean;
+        };
+        result: {
+            ok: boolean;
         };
     };
 };

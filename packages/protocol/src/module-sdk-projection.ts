@@ -10,7 +10,8 @@ export type {
 } from './index.ts';
 
 type AllowedIntent =
-  'session/new' | 'session/get' | 'session/rename' | 'roles/readiness' | 'session/resources-prepare' | 'prompt';
+  'session/new' | 'session/get' | 'session/rename' | 'roles/readiness' | 'session/resources-prepare' | 'prompt'
+  | 'respondAsk' | 'session/chat';
 
 export type ModuleHostIntentMap = {
   [Name in AllowedIntent]: { body: IntentBody<Name>; result: IntentResult<Name> };
