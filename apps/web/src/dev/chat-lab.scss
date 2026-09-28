@@ -30,3 +30,16 @@
   .lab-toolbar { max-height: 150px; overflow: auto; padding: 8px; }
   .lab-receipt { padding: 4px 8px; }
 }
+.lab-inline-card {
+  display: inline-block;
+  inline-size: 580px;
+  max-inline-size: 100%;
+  min-inline-size: 0;
+  vertical-align: middle;
+  > .ck-surface {
+    display: grid;
+    gap: var(--ck-space);
+    > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    > button { justify-self: start; }
+  }
+}

@@ -172,6 +172,7 @@ export const scenarios = [
   ['all', '完整组件对话'],
   ['reading', '正文 / Markdown / 代码'],
   ['user-time', '用户时间 / 短长文本'],
+  ['card-messages', '模块卡片 / 消息布局'],
   ['native-attachments', '原生附件 / 混合正文 / 仅附件'],
   ['process', '思考 / 工具 / 子代理'],
   ['thought-markdown', '思考 Markdown / 流式 / 代码复制'],
@@ -257,6 +258,12 @@ export function fixtureSession(scenario: Scenario): ChatSession {
     message('time-long', 'user', '这是一段合成的多行用户消息。\n请把时间放在气泡外，并紧贴对应气泡。\n保留文字、代码复制和时间的自然归属。'),
     message('time-reply', 'user', '选择已确认。', { subtype: 'ask-reply', replyQuestion: '是否保留当前选择？' }),
     message('time-assistant', 'assistant', '助手的时间来源与展示分组保持不变。'),
+  ];
+  if (scenario === 'card-messages') session.messages = [
+    message('card-only', 'user', '[Synthetic card](synthetic-card:one)'),
+    message('card-mixed', 'user', 'Before [Mixed card](synthetic-card:two) after.\n\nPlain text remains readable.'),
+    message('card-multiple', 'user', '[First card](synthetic-card:three)\n\n[Second card](synthetic-card:four)'),
+    message('card-plain', 'user', 'Plain text.\n\n```text\nCopy this code\n```'),
   ];
   if (scenario === 'native-attachments') session.messages = [
     message('attachment-only', 'user', '', { attachments: [

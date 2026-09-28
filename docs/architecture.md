@@ -229,8 +229,12 @@ Interaction rules:
 preference sections and About. Global MCP and Skills remain separate navigation
 entries. Each section owns its reads, changes and feedback; there is no combined
 save that claims to commit module settings. The model requires an explicit save
-and stays open afterwards. About reads backend version/source on opening and
-explicit refresh, not a build-time constant.
+and stays open afterwards. The selector and Save share a wrapping row. About reads
+backend version/source and the current host's loaded module names, IDs and versions
+on opening and explicit refresh, not build-time constants or latest Release versions.
+The existing `/_modules` inventory includes backend-only modules and activation/runtime
+errors; installed but unloaded packages are not listed. Empty, failed and unknown
+version states remain explicit, and connection changes invalidate earlier results.
 
 Modules join the real preference content through
 [settings middleware](module-contract.md#settings-content), not a host notification

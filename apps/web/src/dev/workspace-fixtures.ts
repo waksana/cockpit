@@ -115,6 +115,13 @@ export function installWorkspaceFixture(store: ReturnType<typeof createCockpitSt
     },
   });
   Object.assign(cockpitApi, {
+    moduleInventory: async () => ({
+      active: [
+        { id: 'synthetic-cards', name: 'Synthetic cards', version: '1.0.0' },
+        { id: 'synthetic-backend', name: 'Synthetic backend', version: '2.0.0' },
+      ],
+      errors: [],
+    }),
     identity: async () => ({
       instanceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       version: 'dev+fixture', sourceSha: 'a'.repeat(40),

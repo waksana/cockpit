@@ -50,6 +50,21 @@ export const ServiceIdentity = z.object({
 });
 export type ServiceIdentity = z.infer<typeof ServiceIdentity>;
 
+// Read-only projection of /_modules; asset URLs and public configuration are not needed here.
+export const ModuleInventory = z.object({
+  active: z.array(z.object({
+    id: z.string().min(1),
+    name: z.string().min(1).optional(),
+    version: z.string().min(1).nullable().optional(),
+  })),
+  errors: z.array(z.object({
+    id: z.string().min(1),
+    stage: z.enum(['activation', 'runtime']),
+    error: z.string().min(1),
+  })),
+});
+export type ModuleInventory = z.infer<typeof ModuleInventory>;
+
 export const ContextTier = z.enum(['default', 'long_context']);
 export type ContextTier = z.infer<typeof ContextTier>;
 

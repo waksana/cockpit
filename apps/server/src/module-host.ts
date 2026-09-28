@@ -63,7 +63,7 @@ interface RequestScope {
 }
 export interface ModuleBootstrap {
   modules: ModuleAsset[];
-  active: Array<{ id: string; version: string; digest: string }>;
+  active: Array<{ id: string; name: string; version: string; digest: string }>;
   errors: ModuleHostError[];
 }
 
@@ -134,7 +134,8 @@ export class ModuleHost {
           } } : {}),
         }];
       }),
-      active: this.loaded.map(({ installation: { manifest, digest } }) => ({ id: manifest.id, version: manifest.version, digest })),
+      active: this.loaded.map(({ installation: { manifest, digest } }) =>
+        ({ id: manifest.id, name: manifest.name, version: manifest.version, digest })),
       errors: [...this.errors.values()],
     };
   }

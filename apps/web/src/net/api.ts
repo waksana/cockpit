@@ -34,6 +34,7 @@ export function createCockpitApi(store: ReturnType<typeof createCockpitStore>) {
 
   return {
     identity: (signal?: AbortSignal) => read(net => net.identity(signal)),
+    moduleInventory: (signal?: AbortSignal) => read(net => net.moduleInventory(signal)),
     sessionDefaults: (signal?: AbortSignal) => read(net => net.intent('settings/session-defaults', {}, { ...OWNED, signal })),
     setSessionDefaults: (modelId: string) => read(net => net.intent('settings/session-defaults-set', { modelId }, OWNED)),
     listDir: (path?: string): Promise<DirListing> => read(net => net.listDir(path, OWNED)),
@@ -67,3 +68,4 @@ export const loadRoleCatalog = () => cockpitApi.listRoles();
 export const loadRoleResources = () => cockpitApi.roleResources();
 export const loadSessionDefaults = (signal: AbortSignal) => cockpitApi.sessionDefaults(signal);
 export const loadServiceIdentity = (signal: AbortSignal) => cockpitApi.identity(signal);
+export const loadModuleInventory = (signal: AbortSignal) => cockpitApi.moduleInventory(signal);

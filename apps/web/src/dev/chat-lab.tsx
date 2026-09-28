@@ -354,7 +354,14 @@ if (scene === 'dialog-focus') {
   } else root.render(app);
 } else {
   const lab = <BrowserRouter><Lab /></BrowserRouter>;
-  if (new URLSearchParams(location.search).get('cards') === '1') {
+  if (scene === 'card-messages') {
+    const { createCardMessageFixture } = await import('./card-message-fixture');
+    const { ModuleRuntimeProvider } = await import('../components/ModuleComponents');
+    const runtime = createCardMessageFixture();
+    await runtime.start();
+    window.addEventListener('pagehide', () => runtime.stop(), { once: true });
+    root.render(<ModuleRuntimeProvider runtime={runtime}>{lab}</ModuleRuntimeProvider>);
+  } else if (new URLSearchParams(location.search).get('cards') === '1') {
     const { createAsyncCardFixture } = await import('./initial-history-fixture');
     const { ModuleRuntimeProvider } = await import('../components/ModuleComponents');
     const runtime = createAsyncCardFixture();

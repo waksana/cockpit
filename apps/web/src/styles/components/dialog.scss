@@ -124,6 +124,15 @@
   overflow-wrap: anywhere;
 }
 
+.settings-model-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--host-space-md);
+  > .ui-field { flex: 1 1 14rem; min-width: 0; }
+  > button { flex: none; }
+}
+
 .settings-about {
   margin-top: var(--host-space-lg);
   padding-top: var(--host-space-lg);
@@ -135,6 +144,14 @@
     margin: 0;
     dt { color: var(--host-color-muted); }
     code { font-size: var(--host-text-meta); }
+    &.settings-modules { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+    .settings-module {
+      display: grid;
+      grid-template-columns: subgrid;
+      grid-column: 1 / -1;
+      dt { min-width: 0; overflow-wrap: anywhere; color: var(--host-color-text); }
+      code { display: block; color: var(--host-color-muted); }
+    }
   }
 }
 
