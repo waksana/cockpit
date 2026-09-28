@@ -4,9 +4,11 @@ import { readFile, realpath, stat } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 import {
   MODULE_SKILL_NOT_FOUND, SessionRole,
-  type ModuleRoleResources, type ModuleRoleSkill, type ModuleSkillSource, type ModuleSource, type RoleSelection,
+  type ModuleRoleResources, type ModuleRoleSkill, type ModuleSkillSource, type ModuleSource, type RoleSelection, type RoleAssignmentNotificationResult,
 } from '@cockpit/protocol';
 import type { RoleAssembly, RoleProvider, SessionInstructions } from '@cockpit/core';
+import type { RoleAssignment } from '@cockpit/module-api/backend';
+import { RoleAssignments, type AssignmentHandler } from './role-assignments.ts';
 import type { ModuleInstallation } from './module-install.ts';
 import { MODULE_INSTRUCTIONS_LIMIT, safeModulePath } from './module-install.ts';
 
@@ -71,8 +73,21 @@ const normalizedTools = (tools: Iterable<string>) => {
 };
 
 export class ModuleRoles implements RoleProvider {
+  private readonly assignments: RoleAssignments;
   constructor(private readonly root: string, private readonly origin: string,
-    private readonly installations: () => ModuleInstallation[]) {}
+    private readonly installations: () => ModuleInstallation[],
+    handlers: () => AssignmentHandler[] = () => [],
+    sessionExists?: (id: string) => Promise<boolean>) {
+    this.assignments = new RoleAssignments(root, handlers, id => this.read(id), sessionExists);
+  }
+
+  assertAssignmentAllowed() { this.assignments.assertAllowed(); }
+  stopAssignments() { this.assignments.stop(); }
+  assertCallbackHostCall(name: string) { this.assignments.assertHostCallAllowed(name); }
+  withAssignment<T>(assignment: RoleAssignment, action: () => Promise<T>, notified?: (result: RoleAssignmentNotificationResult) => void) {
+    return this.assignments.run(assignment, action, notified);
+  }
+  replayAssignment(notificationId: string) { return this.assignments.replay(notificationId); }
 
   list() {
     return this.installations().flatMap(({ manifest }) => (manifest.roles ?? []).map(role => ({

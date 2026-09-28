@@ -24,7 +24,7 @@ test('host deployment capabilities include the real shared settings boundary', (
 
 test('host deployment capabilities include native ask responses and cursor chat reads', () => {
   const descriptor = deploymentManifest(repository, sha, 1, source);
-  for (const capability of ['askResponse.v1', 'chatRead.v1']) {
+  for (const capability of ['askResponse.v1', 'chatRead.v1', 'roleAssignment.v1', 'sessionDirectory.v1', 'sessionLoad.v1']) {
     assert.ok(descriptor.product.capabilities.includes(capability));
   }
 });

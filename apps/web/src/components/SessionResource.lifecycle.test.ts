@@ -779,6 +779,21 @@ for (const loaded of [true, false]) {
   });
 }
 
+test('ordinary role selection surfaces module permission denial without saving or loading', async t => {
+  const h = roleFixture(t);
+  let saves = 0;
+  setStoreAndApi({ addRoles: async () => {
+    saves++;
+    throw Object.assign(new Error('This role is already occupied'), { code: 'ROLE_ASSIGNMENT_DENIED' });
+  } });
+  await h.open();
+  await h.choose();
+  await h.submit();
+  assert.match(h.container.textContent, /This role is already occupied/);
+  assert.equal(saves, 1);
+  assert.doesNotMatch(h.container.textContent, /角色选择已保存/);
+});
+
 test('double save is exclusive; disconnect preserves the uncertain-save lock until explicit fresh identity', async t => {
   const h = roleFixture(t);
   const pending = deferred<IntentResult<'roles/add'>>();

@@ -18,7 +18,7 @@ export const HOST_INTENT_MUTATES = {
   'settings/session-defaults': false, 'settings/session-defaults-set': true,
   'system/shutdown': true, 'system/status': false, 'runtime/snapshot': false,
   'session/chat': false, 'session/new': true, 'roles/list': false, 'roles/resources': false,
-  'roles/skill-read': false, 'roles/add': true,
+  'roles/skill-read': false, 'roles/add': true, 'roles/notify': true, 'session/directory': false,
   'roles/readiness': false, 'session/tools-initialize': true, 'session/resources-prepare': true, 'session/fork': true,
   prompt: true, cancel: true, 'session/interrupt': true, 'session/control': true, setModel: true,
   'session/rename': true, 'session/compact': true, 'session/rewind': true, setMode: true,

@@ -130,8 +130,118 @@ Backend packages export `activate(context)` and return `ModuleBackend`:
 | `events` | Declared native event type filters and read-only handlers. |
 | `controlEvents` | Declared `ServerEvent` type filters for existing native control projections; no extra native reads. |
 | `onReady` | Optional service-ready callback; requires `context.serviceReadyVersion === 1`. |
+| `roleAssignments` | Optional mutation-time `permit` and saved-selection `saved` hooks; requires `context.host.roleAssignmentVersion === 1`. |
 | `dispose` | Non-blocking cleanup; it is not part of the host graceful-shutdown wait chain. |
 A module never receives the root Fastify instance, Engine internals, native session handles, or a security sandbox. Routes are validated before registration; failure or timeout is attributed to the module. Same-process modules can still block synchronously, exhaust memory, or call process-level APIs.
+
+### Role assignment lifecycle
+
+Check `context.host.roleAssignmentVersion === 1` before relying on
+`ModuleBackend.roleAssignments`. Both members are optional:
+
+```ts
+roleAssignments: {
+  permit(assignment, signal) {
+    signal.throwIfAborted();
+    return { allowed: true }; // or { allowed: false, reason: 'Role is occupied' }
+  },
+  async saved(notification, signal) {
+    // Idempotently record module-owned registration by notification.notificationId.
+    // Do not infer readiness, load a carrier, or change its model here.
+  },
+}
+```
+
+`assignment` contains `operation: 'create' | 'add'`, the exact `sessionId`,
+complete proposed `roles`, and `previousRoles`. Each role has `moduleId` and
+`roleId`; combined selections include other modules. A module is consulted when
+its roles occur in that selection. Missing permission means allow; missing
+notification means no module handling. `saved` receives those same fields plus
+a stable `notificationId`, derived from the session and complete saved role
+identities, independent of whether creation or addition first selected them.
+Explicit `roles/add` with already-saved roles can deliver a missing notification
+(including a newly added module callback) without re-saving roles. An existing
+receipt is recovered with its original ID and payload; already-delivered handlers
+are not called again. The addition result remains `status: 'unchanged'` and
+includes `notification: { notificationId, status: 'notified' | 'unchanged' |
+'not-saved' }` when notification handling occurred.
+
+After successful notification handling, the host emits a public
+`session/invalidated` control event with `resources: ['identity']`, after the
+assignment callback, module mutation lock, and this request's native lifecycle
+guard have been released. This also covers unchanged-add recovery and explicit
+`roles/notify` replay. Modules may fresh-read registration and native readiness
+from that event before scheduling work; the event itself does not assert
+readiness or authorize a prompt. Earlier creation/role events may precede the
+callback and are not a substitute for this post-notification invalidation.
+
+The host applies permission to both `session/new` and `roles/add`, not merely a
+UI preflight. Conflicting module-role mutations serialize through permission,
+save, and notification; unrelated modules can proceed. Denials surface through
+ordinary host role selection as `ROLE_ASSIGNMENT_DENIED`. Callbacks can make
+read-only host calls; recursive role mutations fail immediately with
+`ROLE_ASSIGNMENT_REENTRANT`, rather than waiting on their own lock. Their signal
+aborts on module shutdown or a host shutdown request, without waiting for module
+code to finish before preserving a partial-effect receipt. Permission callbacks should be read-only: a later
+module may deny, and the host does not roll back module business side effects.
+
+Notifications describe saved selection, **not readiness**. They can register an
+unloaded or unready session; no prepare/load/reload/model change is implicit.
+Because create-time role assembly requires saving before native creation, failed
+or unconfirmed creation defers notification. Recovery must confirm the exact
+native identity exists before notifying; no replacement is created.
+
+Notification failure returns HTTP 409 `ROLE_ASSIGNMENT_INCOMPLETE`, the actual
+`sessionId`, and the SDK-exported `RoleAssignmentFailureDetails` in
+`roleAssignment`: `notificationId`, `saved`, `roles`, `recovery`,
+`notificationStatus: 'pending' | 'deferred' | 'failed' | 'notified'`,
+`nativeCreation: 'confirmed' | 'unconfirmed' | 'not-applicable'`,
+optional `nativeError`, and optional original returned `mutationResult`.
+That result is `{ operation: 'create', result: { sessionId } }` or
+`{ operation: 'add', result: RoleAdditionResult }`. It preserves a confirmed
+creation result even if a later module notification fails. Absent returned
+results remain unconfirmed rather than receiving a success-shaped fallback.
+`RoleAssignmentFailure` types the common `code`/`sessionId`/`roleAssignment`
+envelope for thrown host errors and HTTP errors (which additionally have `error`).
+`saved` is `true` when confirmed and `null` when unconfirmed;
+the error is not native rollback. Durable receipts under
+`role-notifications/{pending,complete}/` fence conflicting assignments across
+host restarts. After inspection, explicitly call `roles/notify` with the
+`notificationId`. It only reconciles persisted roles and replays undelivered
+module callbacks; it never repeats permission, save, creation, load, or reload.
+Results are `notified`, `unchanged` (already delivered), or `not-saved` (a pending
+write is confirmed to retain its previous selection, so no callback runs).
+Unconfirmed native existence or changed saved roles remains an explicit failure.
+`roles/add` recovery of an accepted unchanged selection does not repeat its
+permission or native mutation. Callbacks must durably deduplicate IDs: a crash after module handling but before
+the host receipt can require replay. There is no automatic retry or global
+module-binding service.
+
+Each asynchronous permission or saved callback has a 30-second deadline.
+Timeout aborts its signal and rejects the operation; a saved callback timeout
+retains the partial receipt and conflict fence for explicit recovery. Modules
+must honor cancellation and must not commit late results. This bounds waiting
+on asynchronous callbacks, not synchronous blocking by trusted same-process code.
+
+### Passive session discovery and explicit load
+
+Check `context.host.sessionDirectoryVersion === 1` before calling
+`host.call('session/directory', { limit: 50, cursor? })`. The result contains
+`sessions` (at most 100 per page) and optional continuation `cursor`. Entries
+contain identity/title/cwd/current model when known, loaded/status/activity, and
+saved/applied roles with reload flags, using the native session catalog. It reads
+no chat/history, does not load or repair, and propagates native list/read failures.
+Every candidate is reachable by continuation for an unchanged catalog. Catalog
+identity changes reject the cursor; explicitly restart discovery rather than
+accepting incomplete results. Activity and metadata are fresh reads, not an
+atomic snapshot or a cached registry.
+
+Check `context.host.sessionLoadVersion === 1` before
+`host.call('session/load', { sessionId })`. This exposes the existing guarded
+native load: `{ ok: true, sessionId }` on confirmed return, concurrent loads
+coalesce, already-loaded handles are preserved, and missing identities or
+lifecycle/native failures remain explicit. It does not close/resume an existing
+loaded handle, create another session, send a prompt, or choose a new model.
 
 `onReady?()` is called once for each successful cold activation after native `runtime.start()` and public HTTP `listen()` both succeed, unless shutdown has already started or the module scope is closed. The module's declared routes are already active, so `context.host.call` can reach HTTP MCP endpoints mounted by the
 same module. `activate()`, Fastify `ready()`, injected requests, and earlier `agent/status: up` are not this signal. The callback promise does not block other modules, service startup, or graceful exit. Throws/rejections are reported through module errors and `/_modules.errors`; the host does not retry, unload, or send

@@ -19,7 +19,7 @@ const fixtures = [
   ` },
   ...['backend', 'backend-current'].map(name => ({ name, types: ['node'], lib: ['ES2022'], source: `
     import { Readable } from 'node:stream';
-    import type { ModuleBackend, ModuleHostApi, ModuleHostIntentBody, ModuleHostIntentResult, ModuleResponse } from '@waksana/cockpit-module-sdk/backend';
+    import type { ModuleBackend, ModuleHostApi, ModuleHostIntentBody, ModuleHostIntentResult, ModuleResponse, RoleAssignmentFailure } from '@waksana/cockpit-module-sdk/backend';
     const backend: ModuleBackend = { routes: [] };
     const response: ModuleResponse = { body: Readable.from('ok') };
     const created: ModuleHostIntentResult<'session/new'> = { sessionId: 's' };
@@ -28,6 +28,28 @@ const fixtures = [
     declare const host: ModuleHostApi;
     const askVersion: 1 | undefined = host.askResponseVersion;
     const chatVersion: 1 | undefined = host.chatReadVersion;
+    const roleVersion: 1 | undefined = host.roleAssignmentVersion;
+    const directoryVersion: 1 | undefined = host.sessionDirectoryVersion;
+    const loadVersion: 1 | undefined = host.sessionLoadVersion;
+    const roleBackend: ModuleBackend = { routes: [], roleAssignments: {
+      permit: (assignment, signal) => {
+        signal.throwIfAborted();
+        return assignment.roles.length > 1 ? { allowed: false, reason: 'Conflict' } : { allowed: true };
+      },
+      saved: async notification => { const id: string = notification.notificationId; void id; },
+    } };
+    const directory = host.call('session/directory', { limit: 50 });
+    const load = host.call('session/load', { sessionId: 's' });
+    const notify = host.call('roles/notify', { notificationId: 'a'.repeat(64) });
+    void [roleVersion, directoryVersion, loadVersion, roleBackend, directory, load, notify];
+    declare const partial: RoleAssignmentFailure;
+    const returned = partial.roleAssignment.mutationResult;
+    if (returned?.operation === 'create') {
+      const actualCreatedId: string = returned.result.sessionId;
+      void actualCreatedId;
+    }
+    const nativeCreation: 'confirmed' | 'unconfirmed' | 'not-applicable' = partial.roleAssignment.nativeCreation;
+    void nativeCreation;
     const answer: ModuleHostIntentBody<'respondAsk'> = {
       sessionId: 's', requestId: 'request', answer: 'yes', wasFreeform: false,
     };

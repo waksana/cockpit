@@ -24,6 +24,9 @@ export const ErrorCodes = {
   STATE_CONFLICT: 409,
   SESSION_CREATION_INCOMPLETE: 409,
   SESSION_CREATION_UNCERTAIN: 409,
+  ROLE_ASSIGNMENT_DENIED: 409,
+  ROLE_ASSIGNMENT_REENTRANT: 409,
+  ROLE_ASSIGNMENT_INCOMPLETE: 409,
   // 499: the client disconnected before the read completed.
   REQUEST_ABORTED: 499,
   // 500: Cockpit produced a result that failed its own contract.

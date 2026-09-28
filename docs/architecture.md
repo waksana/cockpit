@@ -118,6 +118,7 @@ live in `ErrorCodes` (`packages/protocol/src/errors.ts`); Engine throws
 | 404 | `SESSION_NOT_FOUND`, `SKILL_NOT_FOUND`, `MCP_NOT_FOUND`, `ROLE_NOT_FOUND`, `QUEUE_ITEM_NOT_FOUND`, `UNKNOWN_INTENT` | The addressed item does not exist. |
 | 409 | `SESSION_BUSY`, `SESSION_TRANSITION`, `SESSION_UNLOADED`, `REQUEST_NOT_PENDING`, `STALE_SESSION_CONTROLS`, `STATE_CONFLICT` | Current state rejects the request; retry only after it changes. |
 | 409 | `SESSION_CREATION_INCOMPLETE`, `SESSION_CREATION_UNCERTAIN` | Creation effect is uncertain; the body carries `sessionId`. Inspect it, never retry blindly. |
+| 409 | `ROLE_ASSIGNMENT_DENIED`, `ROLE_ASSIGNMENT_REENTRANT`, `ROLE_ASSIGNMENT_INCOMPLETE` | Module role permission, recursive mutation, or saved-notification recovery failure; see the [role assignment contract](module-contract.md#role-assignment-lifecycle). |
 | 499 | `REQUEST_ABORTED` | The client disconnected during a read. |
 | 500 | `INVALID_INTENT_RESULT` | Cockpit's result failed its own schema. |
 | 501 | `UNSUPPORTED` | The public SDK adapter cannot do this; nothing changed. |

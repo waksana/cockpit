@@ -54,6 +54,8 @@ const engine: ServerEngine = {
   setSessionDefaults: async (...args) => record('setSessionDefaults', args, { modelId: args[0] }),
   busyCount: async () => sessions.filter(sessionMetaBusy).length,
   newSession: async (...args) => record('newSession', args, 'created'),
+  sessionDirectory: async (...args) => record('sessionDirectory', args, { sessions: [] }),
+  replayRoleAssignment: async (...args) => record('replayRoleAssignment', args, { notificationId: args[0], sessionId: 's', status: 'notified' as const }),
   listRoles: (...args) => record('listRoles', args, []),
   listRoleResources: async (...args) => record('listRoleResources', args, []),
   readRoleSkill: async (...args) => record('readRoleSkill', args, {
@@ -173,6 +175,8 @@ const cases = {
   'settings/session-defaults': { body: {}, method: 'getSessionDefaults', args: [] },
   'settings/session-defaults-set': { body: { modelId: 'gpt-6-astra' }, method: 'setSessionDefaults', args: ['gpt-6-astra'] },
   'session/new': { body: { cwd: '/fixture' }, method: 'newSession', args: ['/fixture'] },
+  'session/directory': { body: { limit: 50 }, method: 'sessionDirectory', args: [50, undefined] },
+  'roles/notify': { body: { notificationId: 'a'.repeat(64) }, method: 'replayRoleAssignment', args: ['a'.repeat(64)] },
   'roles/list': { body: {}, method: 'listRoles', args: [] },
   'roles/resources': { body: {}, method: 'listRoleResources', args: [] },
   'roles/skill-read': { body: { moduleId: 'fixture', resourceId: 'role-skill-id' },
@@ -324,6 +328,23 @@ test('typed engine errors map their protocol code to its HTTP status with a read
   const invalid = await app.inject({ method: 'POST', url: '/intent/prompt', payload: { sessionId: 's', extra: true } });
   assert.equal(invalid.statusCode, ErrorCodes.INVALID_INTENT_BODY);
   assert.equal(invalid.json().code, 'INVALID_INTENT_BODY');
+});
+
+test('role notification failure preserves the actual native identity and saved-state recovery envelope', async t => {
+  const roleAssignment = { notificationId: 'b'.repeat(64), saved: true,
+    roles: [{ moduleId: 'fixture', roleId: 'owner' }], recovery: 'Explicit roles/notify; never repeat creation',
+    notificationStatus: 'failed', nativeCreation: 'confirmed',
+    mutationResult: { operation: 'create', result: { sessionId: 'actual-native-id' } } };
+  t.mock.method(engine, 'newSession', async () => {
+    throw Object.assign(new Error('Saved notification failed'), {
+      code: 'ROLE_ASSIGNMENT_INCOMPLETE', statusCode: 409, sessionId: 'actual-native-id', roleAssignment,
+    });
+  });
+  const response = await app.inject({ method: 'POST', url: '/intent/session/new', payload: { cwd: '/fixture' } });
+  assert.equal(response.statusCode, 409);
+  assert.deepEqual(response.json(), {
+    error: 'Saved notification failed', code: 'ROLE_ASSIGNMENT_INCOMPLETE', sessionId: 'actual-native-id', roleAssignment,
+  });
 });
 
 test('retired independent activity intent is absent from HTTP and capabilities', async () => {

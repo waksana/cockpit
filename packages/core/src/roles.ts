@@ -1,5 +1,5 @@
 import type { SessionConfig } from '@github/copilot-sdk';
-import type { ModuleRoleResources, ModuleRoleSkill, ModuleSkillSource, ModuleSource, RoleSelection, SessionRole } from '@cockpit/protocol';
+import type { ModuleRoleResources, ModuleRoleSkill, ModuleSkillSource, ModuleSource, RoleSelection, SessionRole, RoleAssignmentNotificationResult } from '@cockpit/protocol';
 
 export interface RoleAssembly {
   roles: SessionRole[];
@@ -18,6 +18,12 @@ export interface SessionInstructions {
 }
 
 export interface RoleProvider {
+  /** Reject nested mutations before a session's write queue can deadlock. */
+  assertAssignmentAllowed?(): void;
+  withAssignment?<T>(assignment: {
+    operation: 'create' | 'add'; sessionId: string; roles: RoleSelection[]; previousRoles: RoleSelection[];
+  }, action: () => Promise<T>, notified?: (result: RoleAssignmentNotificationResult) => void): Promise<T>;
+  replayAssignment?(notificationId: string): Promise<{ notificationId: string; sessionId: string; status: 'notified' | 'unchanged' | 'not-saved' }>;
   globalMcpSources?(config: object): ModuleSource[] | undefined;
   globalSkillSources?(path: string): Promise<ModuleSkillSource[] | undefined>;
   list(): Array<SessionRole & { description?: string }>;

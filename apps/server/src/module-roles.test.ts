@@ -9,6 +9,53 @@ import { ModuleRoles } from './module-roles.ts';
 import { chmod, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+test('cold module activation exposes role hooks and capability-gated passive directory and load calls', async t => {
+  const f = await moduleFixture(t);
+  await installLocalModule(await f.package(moduleEntries('lifecycle', `
+    export function activate(context) {
+      if (context.host.roleAssignmentVersion !== 1 || context.host.sessionDirectoryVersion !== 1
+        || context.host.sessionLoadVersion !== 1) throw new Error('missing lifecycle capability');
+      const notifications = [];
+      return {
+        routes: [
+          { method: 'GET', path: '/seen', handler: () => ({ body: notifications }) },
+          { method: 'POST', path: '/call', handler: async request =>
+            ({ body: await context.host.call(request.body.name, request.body.body) }) },
+        ],
+        roleAssignments: {
+          permit: input => input.roles.length > 1 ? { allowed: false, reason: 'Combined role denial' } : { allowed: true },
+          saved: notification => { notifications.push(notification); },
+        },
+      };
+    }
+  `, { roles: [{ id: 'owner', name: 'Owner' }, { id: 'worker', name: 'Worker' }] })), { trustLocalCode: true, enable: true });
+  const calls: string[] = [];
+  const app = Fastify();
+  t.after(() => app.close());
+  const host = new ModuleHost({ observer: f.observer, host: { call: async name => {
+    calls.push(name);
+    throw new Error('Synthetic host reached');
+  } } });
+  await host.register(app);
+  assert.deepEqual(host.bootstrap().errors, []);
+  const roles = host.roles.list();
+  await assert.rejects(host.roles.withAssignment({
+    operation: 'add', sessionId: 'unloaded', roles, previousRoles: [],
+  }, async () => { assert.fail('must not persist denied combined roles'); }), /Combined role denial/);
+  await host.roles.withAssignment({
+    operation: 'add', sessionId: 'unloaded', roles: roles.slice(0, 1), previousRoles: [],
+  }, async () => { host.roles.save('unloaded', roles.slice(0, 1)); });
+  const apiBase = host.bootstrap().modules[0]!.apiBase;
+  const seen = (await app.inject({ method: 'GET', url: `${apiBase}/seen` })).json();
+  assert.equal(seen[0].sessionId, 'unloaded');
+  for (const name of ['session/directory', 'session/load', 'roles/notify']) {
+    const response = await app.inject({ method: 'POST', url: `${apiBase}/call`,
+      headers: { 'x-cockpit-module-digest': host.bootstrap().modules[0]!.digest }, payload: { name, body: {} } });
+    assert.equal(response.statusCode, 500, response.body);
+  }
+  assert.deepEqual(calls, ['session/directory', 'session/load', 'roles/notify']);
+});
+
 test('global provenance verifies loaded module endpoints and file digests without inferring declaring roles', async t => {
   const f = await moduleFixture(t);
   const entries = moduleEntries('global', undefined, { roles: [

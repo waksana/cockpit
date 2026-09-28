@@ -1,5 +1,10 @@
 [
   {
+    "version": "0.6.0",
+    "kind": "additive",
+    "summary": "Add capability-gated role assignment permission and durable saved-selection notifications, explicit notification-only replay, a bounded passive session metadata directory, and the existing guarded session/load primitive to module host calls."
+  },
+  {
     "version": "0.5.0",
     "kind": "additive",
     "summary": "Add opt-in globalComponents and the globalComponentVersion capability for session-independent UI in the host React tree, with stable activation lifetimes and existing module failure/revocation ownership."
