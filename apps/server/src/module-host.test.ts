@@ -161,6 +161,25 @@ test('failed and timed-out backend activations cannot publish using retained con
   assert.deepEqual(events, []);
 });
 
+test('passive inventory includes backend-only names and excludes installed but unselected modules', async t => {
+  const f = await moduleFixture(t);
+  const backend = await installLocalModule(await f.package(moduleEntries('backend-only', undefined,
+    { frontend: undefined, name: 'Backend only' })), { trustLocalCode: true, enable: true });
+  await installLocalModule(await f.package(moduleEntries('unselected')), { trustLocalCode: true });
+  const app = Fastify();
+  t.after(() => app.close());
+  const host = new ModuleHost({ observer: f.observer });
+  await host.register(app);
+  for (let read = 0; read < 2; read++) {
+    const inventory = (await app.inject('/_modules')).json();
+    assert.deepEqual(inventory.active, [
+      { id: 'backend-only', name: 'Backend only', version: '1.0.0', digest: backend.digest },
+    ]);
+    assert.deepEqual(inventory.modules, []);
+    assert.deepEqual(inventory.errors, []);
+  }
+});
+
 test('cold-loaded modules expose only successful bootstrap assets and scoped digest-bound APIs', async t => {
   const f = await moduleFixture(t);
   const installed = await installLocalModule(await f.package(moduleEntries('fixture', workingBackend)), { trustLocalCode: true, enable: true });
@@ -175,7 +194,7 @@ test('cold-loaded modules expose only successful bootstrap assets and scoped dig
   assert.equal(bootstrap.headers['cache-control'], 'private, no-store');
   const value = bootstrap.json();
   assert.equal(value.errors.length, 0);
-  assert.deepEqual(value.active, [{ id: 'fixture', version: '1.0.0', digest: installed.digest }]);
+  assert.deepEqual(value.active, [{ id: 'fixture', name: installed.manifest.name, version: '1.0.0', digest: installed.digest }]);
   assert.equal(value.modules[0].apiBase, apiBase);
   assert.deepEqual(value.modules[0].config, { moduleId: 'fixture', configured: true });
   const headers = { 'x-cockpit-module-digest': installed.digest };

@@ -19,21 +19,21 @@ export function DefaultModelSettings({ settings }: { settings: ReturnType<typeof
     <p className="settings-description">仅影响之后新建的会话，不会更改已有会话、恢复、重载或分叉的模型。</p>
     <ResourceStatus status={resource.status} failed={resource.failed} pending={resource.pending} />
     {resource.usable && value?.modelError && <StateNotice kind="error">{value.modelError}</StateNotice>}
-    <SelectField label="新会话模型" value={selected}
-      disabled={!resource.valid || value?.models === null || action.busy}
-      onChange={event => select(event.target.value)}>
-      {!available && <option value={selected} disabled>{selected || '加载模型…'}{selected ? '（列表未提供）' : ''}</option>}
-      {models.map(model => <option key={model.modelId} value={model.modelId}>{model.name}</option>)}
-    </SelectField>
+    <div className="settings-model-controls">
+      <SelectField label="新会话模型" value={selected}
+        disabled={!resource.valid || value?.models === null || action.busy}
+        onChange={event => select(event.target.value)}>
+        {!available && <option value={selected} disabled>{selected || '加载模型…'}{selected ? '（列表未提供）' : ''}</option>}
+        {models.map(model => <option key={model.modelId} value={model.modelId}>{model.name}</option>)}
+      </SelectField>
+      <Button variant="primary" disabled={!canSave} onClick={() => { void save(); }}>
+        {action.busy ? '保存中…' : '保存'}
+      </Button>
+    </div>
     {resource.valid && value && (!available || selected !== value.modelId) &&
       <p className="settings-description">当前默认值：{value.modelId}</p>}
     {action.error
       ? <OperationErrorResult label="保存默认模型" error={action.error} cause={action.errorCause} />
       : saved && !action.busy && <OperationResult state="done">已保存默认模型。</OperationResult>}
-    <div className="ck-actions">
-      <Button variant="primary" disabled={!canSave} onClick={() => { void save(); }}>
-        {action.busy ? '保存中…' : '保存'}
-      </Button>
-    </div>
   </SettingsContent>;
 }

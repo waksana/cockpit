@@ -14,6 +14,7 @@ import { recordOperationFailure } from '../lib/operationErrors';
 function fixture(t: TestContext) {
   const previous = useCockpit.getState();
   useCockpit.setState({ connState: 'open' });
+  t.mock.method(cockpitApi, 'moduleInventory', async () => ({ active: [], errors: [] }));
   t.after(() => useCockpit.setState(previous, true));
   let modelId = 'gpt-6-astra';
   const reads = t.mock.method(cockpitApi, 'sessionDefaults', async () => ({
@@ -165,7 +166,7 @@ test('settings are a single dialog with module sections between the model and Ab
   await screen.findByText('dev+fixture');
   assert.equal(screen.getAllByRole('dialog').length, 1);
   assert.deepEqual(screen.getAllByRole('heading').map(node => node.textContent),
-    ['设置', '默认模型', '模块偏好', '关于 Cockpit']);
+    ['设置', '默认模型', '模块偏好', '关于 Cockpit', '已加载模块']);
   assert.ok(screen.getByRole('switch', { name: '示例开关' }));
   fireEvent.click(screen.getByRole('heading', { name: '设置' }));
   assert.equal(f.close.mock.callCount(), 0);

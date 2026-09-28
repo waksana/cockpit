@@ -101,7 +101,11 @@ test('global settings combine preferences and About while preserving saves and k
   await expect(dialog.getByRole('heading', { name: '关于 Cockpit' })).toBeVisible();
   await expect(dialog.getByText('dev+fixture')).toBeVisible();
   await expect(page.getByRole('dialog')).toHaveCount(1);
-  await expect(dialog.getByRole('heading')).toHaveText(['设置', '默认模型', '示例模块设置', '关于 Cockpit']);
+  await expect(dialog.getByRole('heading')).toHaveText(['设置', '默认模型', '示例模块设置', '关于 Cockpit', '已加载模块']);
+  await expect(dialog.getByText('synthetic-backend', { exact: true })).toBeVisible();
+  const selectBox = await dialog.getByRole('combobox').boundingBox();
+  const saveBox = await dialog.getByRole('button', { name: '保存', exact: true }).boundingBox();
+  expect(Math.abs(selectBox!.y + selectBox!.height - saveBox!.y - saveBox!.height)).toBeLessThanOrEqual(1);
   const preference = dialog.getByRole('switch', { name: '示例开关' });
   await expect(preference).toHaveAttribute('aria-checked', 'false');
   await preference.click();
@@ -123,6 +127,32 @@ test('global settings combine preferences and About while preserving saves and k
   await expectHealthy(page, guard);
 });
 
+test('inline module cards fit user bubbles without asymmetric surplus padding', async ({ page }, testInfo) => {
+  const guard = await open(page, 'scene=card-messages');
+  await expect(page.locator('.lab-inline-card')).toHaveCount(4);
+  await settle(page);
+  const geometry = await page.locator('.user-message').evaluateAll(messages => messages.map(message => {
+    const bubble = message.querySelector('.message')!;
+    const rect = bubble.getBoundingClientRect();
+    const card = message.querySelector('.lab-inline-card')?.getBoundingClientRect();
+    return {
+      surplus: card ? Math.abs((card.left - rect.left) - (rect.right - card.right)) : 0,
+      overflow: bubble.scrollWidth - bubble.clientWidth,
+    };
+  }));
+  expect(geometry[0].surplus).toBeLessThanOrEqual(1);
+  expect(geometry[2].surplus).toBeLessThanOrEqual(1);
+  expect(geometry.every(row => row.overflow <= 1)).toBe(true);
+  await page.getByText('Before', { exact: false }).scrollIntoViewIfNeeded();
+  await expect(page.getByText('Before', { exact: false })).toBeVisible();
+  await page.getByRole('button', { name: 'Card action' }).last().scrollIntoViewIfNeeded();
+  await expect(page.getByRole('button', { name: 'Card action' }).last()).toBeInViewport({ ratio: 1 });
+  await page.getByRole('button', { name: '复制代码' }).scrollIntoViewIfNeeded();
+  await expect(page.getByRole('button', { name: '复制代码' })).toBeVisible();
+  await snapshot(page, testInfo, 'card-messages');
+  await expectHealthy(page, guard);
+});
+
 test('global settings preserve one scroll area and a reachable close control with long content', async ({ page }, testInfo) => {
   await page.emulateMedia({ colorScheme: 'dark' });
   await page.setViewportSize({ width: testInfo.project.name === 'narrow' ? 390 : 1024, height: 480 });
@@ -141,7 +171,14 @@ test('global settings preserve one scroll area and a reachable close control wit
       models: [{ modelId: 'synthetic-long-model', name: 'SyntheticLongModelNameWithoutSpaces'.repeat(12) }],
       modelError: null,
     });
+    cockpitApi.moduleInventory = async () => ({
+      active: [{ id: 'long-module-identifier'.repeat(5), name: 'LongModuleNameWithoutSpaces'.repeat(10),
+        version: '1.0.0-synthetic-long-version'.repeat(5) }, { id: 'unknown', version: null }],
+      errors: [{ id: 'failed-module', stage: 'activation', error: 'Synthetic failure details '.repeat(10) }],
+    });
   }, savedModelId);
+  await dialog.getByRole('button', { name: '刷新关于信息' }).click();
+  await expect(dialog.getByText('版本未知')).toBeVisible();
   await dialog.getByRole('button', { name: '刷新默认模型' }).click();
   await expect(dialog.getByRole('combobox')).toHaveValue(savedModelId);
   await dialog.getByRole('combobox').selectOption('synthetic-long-model');
