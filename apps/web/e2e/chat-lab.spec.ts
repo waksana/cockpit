@@ -153,6 +153,68 @@ test('inline module cards fit user bubbles without asymmetric surplus padding', 
   await expectHealthy(page, guard);
 });
 
+test('global module dialog opens on empty home and keeps its lifetime through menus and navigation', async ({ page }, testInfo) => {
+  const guard = await open(page, 'scene=module-global');
+  const trigger = page.getByRole('button', { name: '全局导航' });
+  const item = page.getByRole('menuitem', { name: 'Global module example', exact: true });
+  const dialog = page.getByRole('dialog', { name: 'Global module example' });
+  const input = dialog.getByRole('textbox', { name: 'Module note' });
+  const close = dialog.getByRole('button', { name: 'Close example' });
+  await trigger.focus();
+  await page.keyboard.press('Enter');
+  await item.focus();
+  await page.keyboard.press('Enter');
+  await expect(dialog).toBeVisible();
+  await expect(page.getByRole('menu')).toHaveCount(0);
+  await expect(input).toBeFocused();
+  await input.fill('Retained across routes');
+  await page.keyboard.press('Tab');
+  await expect(close).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(input).toBeFocused();
+  await expect(dialog).toHaveJSProperty('open', true);
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(trigger).toBeFocused();
+  await trigger.press('Space');
+  await item.focus();
+  await page.keyboard.press('Enter');
+  await expect(input).toHaveValue('Retained across routes');
+  await expect(input).toBeFocused();
+  await snapshot(page, testInfo, 'module-global-dialog');
+  if (testInfo.project.use.isMobile) await close.tap();
+  else await close.click();
+  await expect(dialog).toBeHidden();
+  await expect(trigger).toBeFocused();
+  await page.evaluate(async () => {
+    const fixture = (window as unknown as { globalModuleLab: { restoreSessions(): void } }).globalModuleLab;
+    fixture.restoreSessions();
+  });
+  await page.getByText('聊天界面与交互细节', { exact: true }).click();
+  if (testInfo.project.use.isMobile) await page.getByRole('button', { name: '返回' }).click();
+  await page.getByText('API 参数与错误反馈', { exact: true }).click();
+  if (testInfo.project.use.isMobile) await page.getByRole('button', { name: '返回' }).click();
+  await trigger.click();
+  await page.getByRole('menuitem', { name: '全局 Skills', exact: true }).click();
+  await expect(page.getByRole('complementary', { name: '全局 Skills' })).toBeVisible();
+  await expect(page.locator('dialog.example-global-dialog')).toHaveCount(1);
+  await page.getByRole('button', { name: '返回会话列表' }).click();
+  if (testInfo.project.use.isMobile) await trigger.tap();
+  else await trigger.click();
+  if (testInfo.project.use.isMobile) await item.tap();
+  else await item.click();
+  await expect(input).toHaveValue('Retained across routes');
+  await expect(input).toBeFocused();
+  await page.evaluate(() => (window as unknown as { globalModuleLab: { stop(): void } }).globalModuleLab.stop());
+  await expect(page.locator('dialog.example-global-dialog')).toHaveCount(0);
+  await page.evaluate(() => (window as unknown as { globalModuleLab: { restart(): Promise<void> } }).globalModuleLab.restart());
+  await trigger.click();
+  await item.click();
+  await expect(input).toHaveValue('');
+  await close.click();
+  await expectHealthy(page, guard);
+});
+
 test('global settings preserve one scroll area and a reachable close control with long content', async ({ page }, testInfo) => {
   await page.emulateMedia({ colorScheme: 'dark' });
   await page.setViewportSize({ width: testInfo.project.name === 'narrow' ? 390 : 1024, height: 480 });

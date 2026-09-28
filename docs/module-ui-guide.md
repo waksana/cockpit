@@ -25,6 +25,7 @@ Current Web exposes these independent frontend capabilities:
 | `apiVersion: 2` | Web frontend declaration/activation. Module manifests, backend API and backend manifests remain v1. |
 | `menuVersion: 1` | Declarative global/session menu actions. Check separately. |
 | `settingsVersion: 1` | Component middleware for module-owned sections in the shared Settings dialog. |
+| `globalComponentVersion: 1` | Session-independent components in the host React tree, including module-owned dialogs. |
 | `chatWindowVersion: 1` | Read-only current-window text projection; check before `state.chatWindow`. |
 | `composerInputVersion: 1` | Middleware around the actual controlled textarea. |
 | `uiVersion: 1` | Public base classes, variables and control behavior here. |
@@ -45,6 +46,15 @@ Shared surfaces are CSS compositions, not a React component SDK. Modules own dia
 lifecycle, `showModal()`, `close()`, portal mounting and resource binding. Only `--ck-*`
 variables are module APIs; override them locally only for real surface/size variants, with
 foreground/background contrast preserved.
+
+For UI that must exist on the empty homepage and survive navigation/menu closure,
+use [global components](module-contract.md#global-components), not a hidden menu icon,
+session middleware or another React root. The public
+[global dialog example](../apps/web/src/dev/module-global-example.ts) pairs a menu
+action with a module-owned store and native dialog; its
+[styles](../apps/web/src/dev/module-global-example.scss) are module-local.
+Run `/chat-lab.html?scene=module-global` in the isolated
+[Chat Lab](development.md#isolated-chat-component-review) to exercise it.
 
 The host loads base CSS; modules declare business CSS in `frontend.styles`. Both run in
 one document: no Shadow DOM/sandbox. Use a unique prefix (`cf-`, `example-`). Do not

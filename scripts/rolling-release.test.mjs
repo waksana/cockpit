@@ -19,6 +19,7 @@ const put = (root, path, value) => {
 test('host deployment capabilities include the real shared settings boundary', () => {
   const descriptor = deploymentManifest(repository, sha, 1, source);
   assert.ok(descriptor.product.capabilities.includes('settings.v1'));
+  assert.ok(descriptor.product.capabilities.includes('globalComponent.v1'));
 });
 
 test('host deployment capabilities include native ask responses and cursor chat reads', () => {

@@ -582,6 +582,8 @@ export interface ModuleFrontendContext {
   readonly menuVersion: 1;
   /** Component middleware for the shared Settings preference content. */
   readonly settingsVersion: 1;
+  /** Session-independent components in the host React tree; absent on older hosts. */
+  readonly globalComponentVersion?: 1;
   /** Read-only current-window text projection. Check independently of Web API v2. */
   readonly chatWindowVersion: 1;
   /** Middleware around the actual controlled textarea, independently of the input row. */
@@ -613,7 +615,7 @@ export interface ModuleFrontendContext {
 
 /**
  * All IDs are nonempty and unique within this module across state services,
- * draft schemas, menus, middleware and Markdown. The host stages the entire activation
+ * draft schemas, menus, global components, middleware and Markdown. The host stages the entire activation
  * before publishing; old slot fields and frontend versions are rejected.
  *
  * Middleware sorts by (order ?? 0, moduleId, id), lowest first/outermost, and is
@@ -635,9 +637,25 @@ export interface ModuleFrontend {
   readonly sends?: readonly 'draft'[];
   /** Native commands remain first; additions sort by (order ?? 0, moduleId, id). */
   readonly menus?: readonly ModuleMenuRegistration[];
+  /** Stable across navigation/menu changes; requires globalComponentVersion: 1. */
+  readonly globalComponents?: readonly ModuleGlobalComponent[];
   readonly components?: readonly ModuleComponentMiddleware[];
   readonly markdown?: readonly MarkdownRenderer[];
   dispose?(): void;
+}
+
+/**
+ * One session-independent component mounted after successful activation in the
+ * host React tree, without a DOM wrapper or host props. Capture activation context
+ * and module services in its closure; use host React and createPortal for dialogs.
+ * IDs share the module registration namespace. Components retain declaration
+ * order within each module (modules sort by ID). A render/effect failure revokes
+ * the owning module, not the host or healthy peers. Revocation/stop unmounts them;
+ * a later activation is a fresh React lifetime, even for the same digest.
+ */
+export interface ModuleGlobalComponent {
+  readonly id: string;
+  readonly component: React.ComponentType;
 }
 
 export type ActivateFrontend = (context: ModuleFrontendContext) => ModuleFrontend | Promise<ModuleFrontend>;

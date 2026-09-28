@@ -297,6 +297,28 @@ if (scene === 'dialog-focus') {
     window.addEventListener('pagehide', () => moduleRuntime.stop(), { once: true });
   }
   root.render(<DialogFocusLab modules={modules} />);
+} else if (scene === 'module-global') {
+  const { installWorkspaceFixture } = await import('./workspace-fixtures');
+  const { installResourceFixture } = await import('./resource-fixtures');
+  const { createGlobalModuleFixture } = await import('./module-global-fixture');
+  const { ModuleRuntimeProvider } = await import('../components/ModuleComponents');
+  const { default: App } = await import('../App');
+  await import('./module-global-example.scss');
+  installWorkspaceFixture(useCockpit);
+  installResourceFixture(useCockpit);
+  const sessions = useCockpit.getState().sessions;
+  useCockpit.setState({ sessions: [], activeId: null });
+  const runtime = createGlobalModuleFixture();
+  await runtime.start();
+  window.addEventListener('pagehide', () => runtime.stop(), { once: true });
+  Object.assign(window, { globalModuleLab: {
+    restoreSessions: () => useCockpit.setState({ sessions }),
+    stop: () => runtime.stop(),
+    restart: () => runtime.start(),
+  } });
+  root.render(<ModuleRuntimeProvider runtime={runtime}>
+    <MemoryRouter><App /><UxErrorNotifications /></MemoryRouter>
+  </ModuleRuntimeProvider>);
 } else if (scene === 'full-web') {
   const { installFullWebFixture } = await import('./full-web-fixtures');
   const id = installFullWebFixture(useCockpit, new URLSearchParams(location.search).get('case') ?? 'mixed');

@@ -1,8 +1,8 @@
-import { createContext, createElement, useContext, useSyncExternalStore, type Attributes, type ComponentType, type ReactNode } from 'react';
+import { createContext, createElement, Suspense, useCallback, useContext, useEffect, useState, useSyncExternalStore, type Attributes, type ComponentType, type ReactNode } from 'react';
 import type {
   AttachmentProps, MarkdownNode, MessageProps, ModuleComponentProps, SessionStatusProps, SettingsProps,
 } from '@cockpit/module-api/frontend';
-import { ModuleErrorBoundary, moduleRuntime, type ModuleRuntime } from '../lib/moduleRuntime';
+import { ModuleErrorBoundary, moduleRuntime, type LoadedModule, type ModuleRuntime } from '../lib/moduleRuntime';
 import { sessionActivityIndicators } from '../lib/sessionActivity';
 import { SessionActivity } from './SessionActivity';
 
@@ -51,6 +51,42 @@ function SettingsBase({ children, ...props }: SettingsProps) {
 }
 export function SettingsContent(props: SettingsProps) {
   return useModuleElement('settings', SettingsBase, props);
+}
+
+function GlobalModuleLifetime({ module, runtime, active, onRetired }: {
+  module: LoadedModule; runtime: ModuleRuntime; active: boolean; onRetired(module: LoadedModule): void;
+}) {
+  const [unmounted, setUnmounted] = useState(false);
+  if (active && unmounted) setUnmounted(false);
+  useEffect(() => {
+    if (active) return;
+    // The first commit unmounts children. The next lets their captured cleanup
+    // errors reach componentDidCatch before a passive effect removes boundaries.
+    if (unmounted) onRetired(module);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    else setUnmounted(true);
+  }, [active, unmounted, module, onRetired]);
+  return <>{(module.frontend.globalComponents ?? []).map(({ id, component: Component }) =>
+      <ModuleErrorBoundary key={JSON.stringify([module.instanceId, id])} fallback={null}
+        onFailure={error => runtime.fail(module, error)}>
+        {active ? <Suspense fallback={null}><Component /></Suspense> : null}
+      </ModuleErrorBoundary>)}</>;
+}
+
+export function ModuleGlobalComponents() {
+  const runtime = useModuleRuntime();
+  const modules = useSyncExternalStore(runtime.subscribe, runtime.getSnapshot, runtime.getSnapshot);
+  const [retained, setRetained] = useState<readonly { module: LoadedModule; runtime: ModuleRuntime }[]>([]);
+  const added = modules.filter(module => !module.signal.aborted && module.frontend.globalComponents?.length
+    && !retained.some(entry => entry.module === module));
+  if (added.length) setRetained([...retained, ...added.map(module => ({ module, runtime }))]
+    .sort((a, b) => a.module.asset.id.localeCompare(b.module.asset.id)));
+  const onRetired = useCallback((module: LoadedModule) => {
+    setRetained(entries => entries.filter(entry => entry.module !== module));
+  }, []);
+  return <>{retained.map(entry =>
+    <GlobalModuleLifetime key={entry.module.instanceId} {...entry} onRetired={onRetired}
+      active={modules.includes(entry.module) && !entry.module.signal.aborted} />)}</>;
 }
 
 export function MarkdownReplacement({ node, fallback }: { node: MarkdownNode; fallback: ReactNode }) {

@@ -1,0 +1,16 @@
+.example-global-dialog {
+  box-sizing: border-box;
+  inline-size: min(100%, 48rem);
+  max-inline-size: 100%;
+  max-block-size: 100%;
+  overflow: auto;
+
+  > * + * {
+    margin-block-start: calc(2 * var(--ck-space));
+  }
+
+  label {
+    display: grid;
+    gap: var(--ck-space);
+  }
+}
