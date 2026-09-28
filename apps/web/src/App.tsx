@@ -12,6 +12,7 @@ import { moduleRuntime } from './lib/moduleRuntime';
 import { observeModuleView } from './lib/moduleView';
 import { PHONE_QUERY } from './lib/layout';
 import { Workspace } from './features/workspace/Workspace';
+import { ModuleGlobalComponents } from './components/ModuleComponents';
 
 const ManageWorkspace = lazy(() => import('./components/ManageWorkspace').then((m) => ({ default: m.ManageWorkspace })));
 
@@ -57,20 +58,23 @@ export default function App() {
   // Changing a panel preserves Workspace, while visible chat ownership decides
   // whether ConnectedThread is mounted. Neither shell owns native resource data.
   return (
+    <>
       <Routes>
-      <Route path="/" element={<Workspace />} />
-      <Route path="/mcp" element={<ManagementRoute />} />
-      <Route path="/mcp/:item" element={<ManagementRoute />} />
-      <Route path="/skills" element={<ManagementRoute />} />
-      <Route path="/skills/module/:moduleId/:resourceId" element={<ManagementRoute />} />
-      <Route path="/skills/:item" element={<ManagementRoute />} />
-      <Route path="/session/:sessionId" element={<Workspace />} />
-      {SESSION_PANELS.map(panel => (
-        <Route key={panel} path={`/session/:sessionId/${panel}`} element={<Workspace />} />
-      ))}
-      <Route path="*" element={<div className="detail-empty">
-        <div><p>页面不存在。</p><Link className="ck-button ck-primary" to="/">返回列表</Link></div>
-      </div>} />
+        <Route path="/" element={<Workspace />} />
+        <Route path="/mcp" element={<ManagementRoute />} />
+        <Route path="/mcp/:item" element={<ManagementRoute />} />
+        <Route path="/skills" element={<ManagementRoute />} />
+        <Route path="/skills/module/:moduleId/:resourceId" element={<ManagementRoute />} />
+        <Route path="/skills/:item" element={<ManagementRoute />} />
+        <Route path="/session/:sessionId" element={<Workspace />} />
+        {SESSION_PANELS.map(panel => (
+          <Route key={panel} path={`/session/:sessionId/${panel}`} element={<Workspace />} />
+        ))}
+        <Route path="*" element={<div className="detail-empty">
+          <div><p>页面不存在。</p><Link className="ck-button ck-primary" to="/">返回列表</Link></div>
+        </div>} />
       </Routes>
+      <ModuleGlobalComponents />
+    </>
   );
 }

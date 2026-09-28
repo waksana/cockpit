@@ -53,13 +53,19 @@ const fixtures = [
   ` })),
   ...['frontend-18', 'frontend-19'].map(name => ({ name, types: ['react'], lib: ['ES2022', 'DOM'], source: `
     import type * as React from 'react';
-    import type { ModuleFrontendContext, ModuleAsset, ComposerProps, SettingsProps, ModuleComponentMiddleware } from '@waksana/cockpit-module-sdk/frontend';
+    import type { ModuleFrontend, ModuleGlobalComponent, ModuleFrontendContext, ModuleAsset, ComposerProps, SettingsProps, ModuleComponentMiddleware } from '@waksana/cockpit-module-sdk/frontend';
     declare const frontend: ModuleFrontendContext;
     declare const asset: ModuleAsset;
     declare const props: ComposerProps;
     const children: React.ReactNode = props.children;
     const apiVersion: 2 = frontend.apiVersion;
     const settingsVersion: 1 = frontend.settingsVersion;
+    const globalVersion: 1 | undefined = frontend.globalComponentVersion;
+    const globalComponent: ModuleGlobalComponent = { id: 'dialog', component: () => null };
+    const declaration: ModuleFrontend = { apiVersion: 2, globalComponents: [globalComponent] };
+    // @ts-expect-error Global components receive no host session props.
+    const badGlobal: ModuleGlobalComponent = { id: 'bad', component: (props: { sessionId: string }) => null };
+    void [globalVersion, declaration, badGlobal];
     declare const settings: SettingsProps;
     const settingsChildren: React.ReactNode = settings.children;
     const labelledBy: string | undefined = settings['aria-labelledby'];

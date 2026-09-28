@@ -28,6 +28,7 @@ interface RuntimeOptions {
   };
 }
 export interface LoadedModule {
+  readonly instanceId: string;
   readonly asset: ModuleAsset;
   readonly frontend: ModuleFrontend;
   readonly signal: AbortSignal;
@@ -114,7 +115,8 @@ export function validateModuleAsset(value: unknown, backend: URL): ModuleAsset {
 }
 
 function component(value: unknown): boolean {
-  return typeof value === 'function' || (record(value) && '$$typeof' in value);
+  return typeof value === 'function' || (record(value) && typeof value.$$typeof === 'symbol'
+    && [Symbol.for('react.memo'), Symbol.for('react.forward_ref'), Symbol.for('react.lazy')].includes(value.$$typeof));
 }
 function claimId(ids: Set<string>, id: unknown): void {
   if (!nonempty(id) || ids.has(id)) throw new Error(`Invalid or duplicate module registration ID: ${String(id)}`);
@@ -122,13 +124,13 @@ function claimId(ids: Set<string>, id: unknown): void {
 }
 function validateFrontend(input: unknown, ids: Set<string>): ModuleFrontend {
   if (!record(input) || input.apiVersion !== 2) throw new Error('Module frontend API v2 is required');
-  const allowed = new Set(['apiVersion', 'writes', 'sends', 'components', 'markdown', 'menus', 'dispose']);
+  const allowed = new Set(['apiVersion', 'writes', 'sends', 'components', 'markdown', 'menus', 'globalComponents', 'dispose']);
   for (const key of Object.keys(input)) if (!allowed.has(key)) throw new Error(`Unsupported module frontend field: ${key}`);
   if (input.writes !== undefined && (!Array.isArray(input.writes)
     || input.writes.some(value => value !== 'text'))) throw new Error('Invalid module writes declaration');
   if (input.sends !== undefined && (!Array.isArray(input.sends)
     || input.sends.some(value => value !== 'draft'))) throw new Error('Invalid module sends declaration');
-  for (const key of ['components', 'markdown', 'menus'] as const) {
+  for (const key of ['components', 'markdown', 'menus', 'globalComponents'] as const) {
     const entries = input[key];
     if (entries === undefined) continue;
     if (!Array.isArray(entries)) throw new Error(`Invalid module ${key}`);
@@ -136,7 +138,8 @@ function validateFrontend(input: unknown, ids: Set<string>): ModuleFrontend {
       if (!record(entry)) throw new Error(`Invalid module ${key} registration`);
       claimId(ids, entry.id);
       const fields = key === 'components' ? ['id', 'boundary', 'order', 'wrap']
-        : key === 'menus' ? ['id', 'menu', 'order', 'getState', 'subscribe', 'onSelect'] : ['id', 'matches', 'component'];
+        : key === 'menus' ? ['id', 'menu', 'order', 'getState', 'subscribe', 'onSelect']
+          : key === 'globalComponents' ? ['id', 'component'] : ['id', 'matches', 'component'];
       if (Object.keys(entry).some(field => !fields.includes(field))) throw new Error(`Unsupported module ${key} registration field`);
       if (key === 'components') {
         if (!BOUNDARIES.has(entry.boundary as Boundary) || typeof entry.wrap !== 'function') throw new Error('Invalid component middleware');
@@ -147,6 +150,8 @@ function validateFrontend(input: unknown, ids: Set<string>): ModuleFrontend {
           throw new Error('Invalid module menu registration');
         }
         if (entry.order !== undefined && (typeof entry.order !== 'number' || !Number.isFinite(entry.order))) throw new Error('Invalid module order');
+      } else if (key === 'globalComponents') {
+        if (!component(entry.component)) throw new Error('Invalid global component');
       } else {
         if (!component(entry.component) || typeof entry.matches !== 'function') throw new Error('Invalid Markdown renderer');
       }
@@ -160,6 +165,7 @@ function validateFrontend(input: unknown, ids: Set<string>): ModuleFrontend {
     components: Object.freeze((input.components as object[] ?? []).map(entry => Object.freeze({ ...entry }))),
     markdown: Object.freeze((input.markdown as object[] ?? []).map(entry => Object.freeze({ ...entry }))),
     menus: Object.freeze((input.menus as object[] ?? []).map(entry => Object.freeze({ ...entry }))),
+    globalComponents: Object.freeze((input.globalComponents as object[] ?? []).map(entry => Object.freeze({ ...entry }))),
   }) as unknown as ModuleFrontend;
 }
 
@@ -342,7 +348,7 @@ export class ModuleRuntime {
     };
     parentSignal.addEventListener('abort', stop, { once: true });
     const context: ModuleFrontendContext = {
-      apiVersion: 2, uiVersion: 1, uiSurfaceVersion: 1, menuVersion: 1, settingsVersion: 1, chatWindowVersion: 1, composerInputVersion: 1, draftLifecycleVersion: 1, draftSubmissionVersion: 1,
+      apiVersion: 2, uiVersion: 1, uiSurfaceVersion: 1, menuVersion: 1, settingsVersion: 1, globalComponentVersion: 1, chatWindowVersion: 1, composerInputVersion: 1, draftLifecycleVersion: 1, draftSubmissionVersion: 1,
       moduleId: asset.id, react: React, createPortal, apiBase: asset.apiBase,
       config: asset.config, signal: controller.signal, report: this.report,
       state: Object.freeze({
@@ -465,7 +471,7 @@ export class ModuleRuntime {
       for (const style of asset.styles) styles.push((this.options.style ?? installStyle)(style));
       for (const schema of schemas) for (const draft of this.knownDrafts) schema.prepare(draft);
       for (const schema of schemas) schema.activate();
-      const loaded: LoadedModule = { asset, frontend, bindings, schemas: Object.freeze(schemas), signal: controller.signal, stop };
+      const loaded: LoadedModule = { instanceId: owner, asset, frontend, bindings, schemas: Object.freeze(schemas), signal: controller.signal, stop };
       this.publish([...this.snapshot, loaded].sort((a, b) => a.asset.id.localeCompare(b.asset.id)));
     };
     let timer: ReturnType<typeof setTimeout> | undefined;

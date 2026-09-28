@@ -499,16 +499,59 @@ Frontend entry also exports `activate(context)`, with frontend context and retur
 `context.uiVersion: 1` declares public semantic CSS and icon basics. `context.uiSurfaceVersion: 1` separately declares shared surface, heading, actions, badge, and modal CSS. Exact classes and patterns are maintained in the [module UI guide](module-ui-guide.md). `context.menuVersion: 1` separately declares menu
 registration support. Consumers must check each capability they use; none is an alias for package version, Web API version, or old navigation APIs.
 
-Module UI follows the interaction and structure rules in [development](development.md). Four integration mechanisms are distinct:
+Module UI follows the interaction and structure rules in [development](development.md). These integration mechanisms are distinct:
 | Mechanism | Responsibility |
 | --- | --- |
 | Menus | Declare actions and presentation for existing global/session menus. |
+| Global components | Mount session-independent UI in the host React tree. |
 | Component middleware | Enhance real host components through props/children/ref. |
 | State/service/draft | Own module business state, subscriptions, async actions, and draft schemas. |
 | Markdown renderers | Replace parsed link/image rendering only. |
 `context.createPortal(children, container)` is the host ReactDOM `createPortal`. It is not page registration or dialog management. Native dialogs may portal to `document.body`; modules must close/unmount on component unmount or scope revocation and must not mutate private host DOM.
 
-`ModuleFrontend` fields: `apiVersion: 2`; optional `writes: ['text']`; optional `sends: ['draft']`; optional `menus`, `components`, `markdown`; optional `dispose`. Text writes never grant send permission. Menus sort after native items. Markdown handles link/image only. State disposers are managed by the state system.
+`ModuleFrontend` fields: `apiVersion: 2`; optional `writes: ['text']`; optional `sends: ['draft']`; optional `menus`, `globalComponents`, `components`, `markdown`; optional `dispose`. Text writes never grant send permission. Menus sort after native items. Markdown handles link/image only. State disposers are managed by the state system.
+
+<a id="global-components"></a>
+### Session-independent global components
+
+Check `context.globalComponentVersion === 1` before registering
+`globalComponents: readonly ModuleGlobalComponent[]`. Older hosts omit this
+capability; reject them explicitly rather than creating another React root.
+`ModuleGlobalComponent` is `{ readonly id: string; readonly component: React.ComponentType }`.
+There are no host props, session target, route, dialog shell or extra permissions.
+Capture the activation context and module-owned services in the component closure.
+Use `context.react` for hooks/elements and `context.createPortal` for portals.
+
+After the entire activation validates, the host mounts each component once per
+activation lifetime outside its route switch, with no DOM wrapper. Modules sort
+by ID; each module's components retain declaration order. The empty homepage,
+menu open/close, session changes and management routes do not remount them.
+Modules without the declaration gain no new UI. IDs share the existing module
+registration namespace. Malformed/duplicate declarations fail activation
+atomically, including registered-service cleanup.
+
+React render/lifecycle errors revoke all contributions of the owning module,
+report through the existing error owner and preserve the host and healthy peers.
+Pending lazy components have local null Suspense fallbacks; rejected loads follow
+the same module error path. During revocation, the host retains empty error
+boundaries through layout/passive cleanup before discarding them, so cleanup
+failures remain with the retiring activation and cannot revoke its replacement.
+They do not automatically retry. Module revocation/runtime stop unmounts the
+components and their portals; a later successful activation creates fresh React
+state even for the same module digest. Services are disposed during revocation
+before React finishes unmounting: cleanup must release resources without using
+revoked handles or assuming live services. Event/async errors remain the module
+action's responsibility; `context.report` reports but does not itself revoke.
+
+The module owns `showModal()`, `close()`, state, CSS sizing, aborts and cleanup.
+A global menu action can update a module-owned external store; a mounted
+component observes it and opens its native dialog in a layout effect after the
+menu selection handler has closed the menu and restored trigger focus. Do not
+open synchronously in `onSelect` and then fight menu focus restoration, insert a
+hidden menu icon renderer, scan host DOM or add a second React root.
+See the runnable [global dialog example](../apps/web/src/dev/module-global-example.ts)
+and its [module-local styles](../apps/web/src/dev/module-global-example.scss).
+
 ### 6.1 State and draft extension
 `context.state.register({ id, create, dispose })` synchronously creates one module service during activation and returns a typed handle. `handle.get()` returns the instance and fails after revocation. Services may reuse stores or own keyed stores; snapshots, selectors, subscriptions, HTTP actions, and retries are
 module responsibilities. `create` must not return a Promise.
@@ -597,7 +640,7 @@ receive-files dispatcher exists. File modules capture the stable prompt draft wh
 Markdown rendering receives parsed link/image nodes with original unnormalized target, label, and message origin. It does not reparse full Markdown or receive native/draft attachments. No match keeps safe fallback. Multiple exclusive matches, predicate errors, or render errors report and fall back; download order does
 not decide. Replacements must remain inline phrasing content; dialogs portal to body. Native history attachments use `attachment` middleware and `NativeAttachmentDescriptor`, preserving omitted blob reasons and basic fallback.
 
-All module-local IDs across state services, draft schemas, components, menus, and Markdown must be unique. The host stages activation and publishes only after full validation. On stop it revokes draft bindings, schemas, live fields, projections, and blockers; runs state disposers once in reverse registration order;
+All module-local IDs across state services, draft schemas, components, global components, menus, and Markdown must be unique. The host stages activation and publishes only after full validation. On stop it revokes draft bindings, schemas, live fields, projections, and blockers; runs state disposers once in reverse registration order;
 reports cleanup errors without blocking other disposers; then publishes final state. State scope is not component mount scope: switching sessions does not cancel an upload owned by an old prompt. Page cleanup is not push unsubscribe or backend shutdown.
 ### 6.5 Menu registration
 `ModuleMenuRegistration`:

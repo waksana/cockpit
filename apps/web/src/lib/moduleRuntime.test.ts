@@ -103,6 +103,7 @@ test('chat-window capability is read-only, scoped, and revoked with its module',
   assert.equal(context.chatWindowVersion, 1);
   assert.equal(context.composerInputVersion, 1);
   assert.equal(context.settingsVersion, 1);
+  assert.equal(context.globalComponentVersion, 1);
   const state = context.state.chatWindow;
   assert.ok(Object.isFrozen(state));
   assert.equal(state.getSnapshot().status, 'unavailable');
@@ -120,6 +121,43 @@ test('chat-window capability is read-only, scoped, and revoked with its module',
   assert.equal(notified, 1);
   assert.throws(() => state.getSnapshot(), /abort/i);
   unsubscribe();
+  f.runtime.stop();
+});
+
+test('global components validate atomically and share the module registration namespace', async () => {
+  const entry = { id: 'global', component: () => null };
+  for (const patch of [
+    { globalComponents: {} }, { globalComponents: [null] },
+    { globalComponents: [{ ...entry, id: '' }] }, { globalComponents: [entry, entry] },
+    { globalComponents: [{ ...entry, component: 'div' }] },
+    { globalComponents: [{ ...entry, component: React.createElement('div') }] },
+    { globalComponents: [{ ...entry, extra: true }] },
+    { globalComponents: [{ ...entry, id: 'state' }] },
+    { globalComponents: [entry], menus: [{ id: 'global', menu: 'global', getState: () => ({ label: 'Open' }), onSelect() {} }] },
+  ]) {
+    let disposed = 0;
+    const f = fixture([asset()], context => {
+      context.state.register({ id: 'state', create: () => ({}), dispose: () => { disposed++; } });
+      return { apiVersion: 2, ...patch } as unknown as ModuleFrontend;
+    });
+    await f.runtime.start();
+    assert.deepEqual(f.runtime.getSnapshot(), [], JSON.stringify(patch));
+    assert.equal(disposed, 1);
+    assert.equal(f.contexts[0].signal.aborted, true);
+    assert.ok(f.reports.length);
+    f.runtime.stop();
+  }
+  const f = fixture([asset()], { apiVersion: 2, globalComponents: [
+    entry,
+    { id: 'memo', component: React.memo(() => null) },
+    { id: 'ref', component: React.forwardRef<HTMLDivElement>(() => null) },
+    { id: 'lazy', component: React.lazy(async () => ({ default: () => null })) },
+  ] });
+  await f.runtime.start();
+  const entries = f.runtime.getSnapshot()[0].frontend.globalComponents!;
+  assert.ok(Object.isFrozen(entries));
+  assert.ok(Object.isFrozen(entries[0]));
+  assert.equal(entries[0].component, entry.component);
   f.runtime.stop();
 });
 
