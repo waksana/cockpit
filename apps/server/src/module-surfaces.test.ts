@@ -21,7 +21,9 @@ test('bootstrap exposes the frontend entry and styles under the immutable identi
   const bootstrap = (await app.inject('/_modules')).json();
   const root = `/_modules/assets/surface-assets/${installed.digest}/web`;
   assert.deepEqual(bootstrap.errors, []);
-  assert.deepEqual(bootstrap.active, [{ id: 'surface-assets', version: installed.manifest.version, digest: installed.digest }]);
+  assert.deepEqual(bootstrap.active, [{
+    id: 'surface-assets', name: installed.manifest.name, version: installed.manifest.version, digest: installed.digest,
+  }]);
   assert.equal(bootstrap.modules[0].entry, `${root}/index.js`);
   assert.deepEqual(bootstrap.modules[0].styles, [`${root}/style.css`]);
   assert.equal((await app.inject(bootstrap.modules[0].entry)).statusCode, 200);
