@@ -607,6 +607,8 @@ const intentFixtures = {
   'queue/remove': { body: { ...sid, itemId: 'q1' }, result: ok },
   'session/refresh': { body: {}, result: ok },
   'session/list': { body: {}, result: { sessions: [brief] } },
+  'session/directory': { body: { limit: 50 }, result: { sessions: [brief] } },
+  'roles/notify': { body: { notificationId: 'a'.repeat(64) }, result: { notificationId: 'a'.repeat(64), sessionId: 's', status: 'notified' } },
   'session/get': { body: sid, result: { meta: fullMeta } },
   'mcp/global': {
     body: {},

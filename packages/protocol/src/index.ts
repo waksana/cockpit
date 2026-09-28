@@ -482,6 +482,11 @@ export const RoleReadiness = z.object({
   rolesNeedReload: z.boolean().optional(),
 });
 export type RoleReadiness = z.infer<typeof RoleReadiness>;
+export const RoleAssignmentNotificationResult = z.object({
+  notificationId: z.string(),
+  status: z.enum(['notified', 'unchanged', 'not-saved']),
+});
+export type RoleAssignmentNotificationResult = z.infer<typeof RoleAssignmentNotificationResult>;
 export const RoleAdditionResult = z.object({
   sessionId: z.string(),
   status: z.enum(['saved', 'unchanged', 'uncertain']),
@@ -491,8 +496,31 @@ export const RoleAdditionResult = z.object({
   rolesNeedReload: z.boolean(),
   error: z.string().optional(),
   recovery: z.string().optional(),
+  notification: RoleAssignmentNotificationResult.optional(),
 });
 export type RoleAdditionResult = z.infer<typeof RoleAdditionResult>;
+export const RoleAssignmentMutationResult = z.discriminatedUnion('operation', [
+  z.object({ operation: z.literal('create'), result: z.object({ sessionId: z.string() }) }),
+  z.object({ operation: z.literal('add'), result: RoleAdditionResult }),
+]);
+export type RoleAssignmentMutationResult = z.infer<typeof RoleAssignmentMutationResult>;
+export const RoleAssignmentFailureDetails = z.object({
+  notificationId: z.string(),
+  saved: z.literal(true).nullable(),
+  roles: z.array(RoleSelection),
+  notificationStatus: z.enum(['pending', 'deferred', 'failed', 'notified']),
+  nativeCreation: z.enum(['confirmed', 'unconfirmed', 'not-applicable']),
+  mutationResult: RoleAssignmentMutationResult.optional(),
+  recovery: z.string(),
+  nativeError: z.string().optional(),
+});
+export type RoleAssignmentFailureDetails = z.infer<typeof RoleAssignmentFailureDetails>;
+export const RoleAssignmentFailure = z.object({
+  code: z.literal('ROLE_ASSIGNMENT_INCOMPLETE'),
+  sessionId: z.string(),
+  roleAssignment: RoleAssignmentFailureDetails,
+});
+export type RoleAssignmentFailure = z.infer<typeof RoleAssignmentFailure>;
 
 export const SessionActivity = z.object({
   sampledAt: z.number().int().nonnegative().describe('Read completion time in epoch milliseconds; native reads are not atomic.'),
@@ -923,6 +951,16 @@ export const Intents = {
   'session/list': {
     body: z.object({}).strict(),
     result: z.object({ sessions: z.array(SessionBrief) }),
+  },
+  'session/directory': {
+    description: 'Bounded passive native session metadata directory. Does not read chat or load/repair sessions. A changed native catalog invalidates continuation: restart discovery explicitly.',
+    body: z.object({ limit: z.number().int().min(1).max(100).default(50), cursor: z.string().max(2048).optional() }).strict(),
+    result: z.object({ sessions: z.array(SessionBrief).max(100), cursor: z.string().optional() }),
+  },
+  'roles/notify': {
+    description: 'Explicitly reconcile and replay a durable saved-role notification by identity. Never repeats permission, role mutation, native creation, load, or reload. Modules must deduplicate the notification identity.',
+    body: z.object({ notificationId: z.string().regex(/^[a-f0-9]{64}$/) }).strict(),
+    result: RoleAssignmentNotificationResult.extend({ sessionId: z.string() }),
   },
   // Full authoritative metadata for ONE session, unlike the narrowed SSE
   // summary. Returns the operational ids a maintainer/agent needs to

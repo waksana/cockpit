@@ -24,6 +24,42 @@ import {
   unavailableSession,
 } from '../test-support/engine-harness.ts';
 
+test('session directory pages all native candidates without loading or reading history', async t => {
+  const h = harness(t);
+  await h.seed('c');
+  await h.seed('a');
+  await h.seed('b');
+  const before = h.runtime.resumeSession.mock.callCount();
+  const first = await h.engine.sessionDirectory(2);
+  assert.deepEqual(first.sessions.map(row => row.sessionId), ['a', 'b']);
+  assert.ok(first.cursor);
+  const second = await h.engine.sessionDirectory(2, first.cursor);
+  assert.deepEqual(second.sessions.map(row => row.sessionId), ['c']);
+  assert.equal(second.cursor, undefined);
+  for (const row of [...first.sessions, ...second.sessions]) {
+    assert.equal(row.loaded, false);
+    assert.equal(row.activity, null);
+    assert.equal('queue' in row, false);
+    assert.equal('decisions' in row, false);
+  }
+  assert.equal(h.runtime.resumeSession.mock.callCount(), before);
+  await h.seed('d');
+  await assert.rejects(h.engine.sessionDirectory(2, first.cursor), /restart discovery/);
+  h.runtime.listSessions.mock.mockImplementationOnce(async () => { throw new Error('native list failed'); });
+  await assert.rejects(h.engine.sessionDirectory(2), /native list failed/);
+});
+
+test('session directory projects only requested metadata from loaded candidates', async t => {
+  const h = harness(t);
+  const s = await h.load('loaded');
+  const before = nativeCalls(s);
+  const result = await h.engine.sessionDirectory(1);
+  assert.equal(result.sessions[0]?.loaded, true);
+  const delta = nativeCallDelta(s, before);
+  for (const key of Object.keys(delta)) assert.ok(!/eventLog|history|plan|schedule|skills/.test(key), key);
+  assert.equal('availableModels' in result.sessions[0]!, false);
+});
+
 test('native plan descriptions normalize only null to absence and preserve the complete mixed plan', async t => {
   const h = harness(t);
   const s = await h.load();

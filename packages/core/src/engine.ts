@@ -168,6 +168,7 @@ export class Engine {
   setSessionDefaults(modelId: string) { return this.defaults.set(modelId); }
 
   async newSession(cwd: string, roles: RoleSelection[] = []): Promise<string> {
+    this.k.roles?.assertAssignmentAllowed?.();
     this.k.assertAvailable();
     if (this.k.stopped) throw engineStopped('Engine is stopped; start it before creating sessions');
     if (this.k.lifecycle) throw transition('Engine lifecycle transition is in progress');
@@ -177,16 +178,25 @@ export class Engine {
     if (this.k.creating.has(id) || this.sessions.has(id)) throw conflict('Session identity already has an active handle or creation');
     const st = new SessionHandle(id);
     this.k.creating.add(id);
+    st.operations++;
+    let rolesNotified = false;
     try {
-      const model = await this.defaults.capture();
-      if (roles.length) {
-        if (!this.k.roles) throw unavailable('Module roles are unavailable');
-        const assembly = await this.k.roles.assemble(id, roles);
-        this.k.roles.save(id, assembly.roles);
-      }
-      await this.ensureLoaded(st, true, directory, model);
-      return id;
+      const create = async () => {
+        const model = await this.defaults.capture();
+        if (roles.length) {
+          if (!this.k.roles) throw unavailable('Module roles are unavailable');
+          const assembly = await this.k.roles.assemble(id, roles);
+          this.k.roles.save(id, assembly.roles);
+        }
+        await this.ensureLoaded(st, true, directory, model);
+        return id;
+      };
+      return roles.length && this.k.roles?.withAssignment
+        ? await this.k.roles.withAssignment({ operation: 'create', sessionId: id, roles, previousRoles: [] }, create,
+          result => { rolesNotified = result.status === 'notified'; })
+        : await create();
     } catch (error) {
+      if (error && typeof error === 'object' && 'roleAssignment' in error) throw error;
       if (st.sdk?.sessionId === id) {
         throw new CockpitError('SESSION_CREATION_INCOMPLETE', `Native session ${id} was created, but readiness readback failed: ${messageOf(error)}. Inspect this session; do not create a replacement automatically.`,
           { cause: error, sessionId: id });
@@ -195,8 +205,12 @@ export class Engine {
         `Native session creation ${id} is uncertain: ${messageOf(error)}. Inspect this identity; do not retry blindly.`, { cause: error, sessionId: id });
       throw error;
     } finally {
+      st.operations--;
       this.k.creating.delete(id);
+      this.k.release(st);
+      this.k.patch(st, { activeOperations: st.activeOperations() });
       this.k.bus.emit('activity-settled');
+      if (rolesNotified) this.k.emit({ type: 'session/invalidated', sessionId: id, resources: ['identity'] });
     }
   }
 
@@ -315,6 +329,15 @@ export class Engine {
     await this.k.operation(id, async () => {}, 'work', st);
   }
 
+  async replayRoleAssignment(notificationId: string) {
+    if (!this.k.roles?.replayAssignment) throw unavailable('Role assignment notifications are unavailable');
+    const result = await this.k.roles.replayAssignment(notificationId);
+    if (result.status === 'notified') {
+      this.k.emit({ type: 'session/invalidated', sessionId: result.sessionId, resources: ['identity'] });
+    }
+    return result;
+  }
+
   async reload(id: string): Promise<void> {
     const st = await this.k.state(id);
     await this.k.transition(st, () => this.k.close(st));
@@ -428,6 +451,7 @@ export class Engine {
   }
 
   listLive(): Promise<SessionBrief[]> { return this.reader.listLive(); }
+  sessionDirectory(limit: number, cursor?: string) { return this.reader.directory(limit, cursor); }
 
   status(): Promise<SessionMeta[]> { return this.reader.status(); }
 

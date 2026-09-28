@@ -25,6 +25,16 @@ export type ModelOption = {
     supportsLongContext?: boolean | undefined;
 };
 export type ModuleHostIntentMap = {
+    "roles/notify": {
+        body: {
+            notificationId: string;
+        };
+        result: {
+            notificationId: string;
+            sessionId: string;
+            status: "not-saved" | "notified" | "unchanged";
+        };
+    };
     "roles/readiness": {
         body: {
             roles?: {
@@ -89,6 +99,57 @@ export type ModuleHostIntentMap = {
             };
             sessionId: string;
             source: "live" | "persisted";
+        };
+    };
+    "session/directory": {
+        body: {
+            cursor?: string | undefined;
+            limit: number;
+        };
+        result: {
+            cursor?: string | undefined;
+            sessions: {
+                activity?: {
+                    abortable: boolean;
+                    hasActiveWork: boolean;
+                    mcp: {
+                        pendingConnectionCount: number;
+                    };
+                    processing: boolean;
+                    queue: {
+                        inFlightSteeringCount: number;
+                        pendingCount: number;
+                        steeringCount: number;
+                    };
+                    sampledAt: number;
+                    tasks: {
+                        activeAgents: number;
+                        activeShells: number;
+                        unknown: number;
+                    };
+                } | null | undefined;
+                appliedRoles?: {
+                    moduleId: string;
+                    moduleName: string;
+                    name: string;
+                    roleId: string;
+                }[] | undefined;
+                currentModelId?: string | undefined;
+                cwd: string;
+                lastActivity: number;
+                lastActivitySource?: "host-event-receipt" | "native-construction" | "native-persisted" | undefined;
+                loaded: boolean;
+                roles?: {
+                    moduleId: string;
+                    moduleName: string;
+                    name: string;
+                    roleId: string;
+                }[] | undefined;
+                rolesNeedReload?: boolean | undefined;
+                sessionId: string;
+                status: "error" | "idle" | "running" | "unloaded";
+                title: string;
+            }[];
         };
     };
     "session/get": {
@@ -233,6 +294,15 @@ export type ModuleHostIntentMap = {
                     total: number;
                 } | null | undefined;
             } | null;
+        };
+    };
+    "session/load": {
+        body: {
+            sessionId: string;
+        };
+        result: {
+            ok: true;
+            sessionId: string;
         };
     };
     "session/new": {
@@ -462,6 +532,130 @@ export type ResourcePreparationResult = {
         name: string;
     }[];
     tools: "initialized" | "not_attempted" | "unchanged" | "unconfirmed";
+};
+export type RoleAssignmentFailure = {
+    code: "ROLE_ASSIGNMENT_INCOMPLETE";
+    roleAssignment: {
+        mutationResult?: {
+            operation: "add";
+            result: {
+                appliedRoles: {
+                    moduleId: string;
+                    moduleName: string;
+                    name: string;
+                    roleId: string;
+                }[];
+                error?: string | undefined;
+                loaded: boolean;
+                notification?: {
+                    notificationId: string;
+                    status: "not-saved" | "notified" | "unchanged";
+                } | undefined;
+                recovery?: string | undefined;
+                roles: {
+                    moduleId: string;
+                    moduleName: string;
+                    name: string;
+                    roleId: string;
+                }[];
+                rolesNeedReload: boolean;
+                sessionId: string;
+                status: "saved" | "uncertain" | "unchanged";
+            };
+        } | {
+            operation: "create";
+            result: {
+                sessionId: string;
+            };
+        } | undefined;
+        nativeCreation: "confirmed" | "not-applicable" | "unconfirmed";
+        nativeError?: string | undefined;
+        notificationId: string;
+        notificationStatus: "deferred" | "failed" | "notified" | "pending";
+        recovery: string;
+        roles: {
+            moduleId: string;
+            roleId: string;
+        }[];
+        saved: null | true;
+    };
+    sessionId: string;
+};
+export type RoleAssignmentFailureDetails = {
+    mutationResult?: {
+        operation: "add";
+        result: {
+            appliedRoles: {
+                moduleId: string;
+                moduleName: string;
+                name: string;
+                roleId: string;
+            }[];
+            error?: string | undefined;
+            loaded: boolean;
+            notification?: {
+                notificationId: string;
+                status: "not-saved" | "notified" | "unchanged";
+            } | undefined;
+            recovery?: string | undefined;
+            roles: {
+                moduleId: string;
+                moduleName: string;
+                name: string;
+                roleId: string;
+            }[];
+            rolesNeedReload: boolean;
+            sessionId: string;
+            status: "saved" | "uncertain" | "unchanged";
+        };
+    } | {
+        operation: "create";
+        result: {
+            sessionId: string;
+        };
+    } | undefined;
+    nativeCreation: "confirmed" | "not-applicable" | "unconfirmed";
+    nativeError?: string | undefined;
+    notificationId: string;
+    notificationStatus: "deferred" | "failed" | "notified" | "pending";
+    recovery: string;
+    roles: {
+        moduleId: string;
+        roleId: string;
+    }[];
+    saved: null | true;
+};
+export type RoleAssignmentMutationResult = {
+    operation: "add";
+    result: {
+        appliedRoles: {
+            moduleId: string;
+            moduleName: string;
+            name: string;
+            roleId: string;
+        }[];
+        error?: string | undefined;
+        loaded: boolean;
+        notification?: {
+            notificationId: string;
+            status: "not-saved" | "notified" | "unchanged";
+        } | undefined;
+        recovery?: string | undefined;
+        roles: {
+            moduleId: string;
+            moduleName: string;
+            name: string;
+            roleId: string;
+        }[];
+        rolesNeedReload: boolean;
+        sessionId: string;
+        status: "saved" | "uncertain" | "unchanged";
+    };
+} | {
+    operation: "create";
+    result: {
+        sessionId: string;
+    };
 };
 export type RoleSelection = {
     moduleId: string;

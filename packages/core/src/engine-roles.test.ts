@@ -42,6 +42,124 @@ async function roleAdditionFixture(t: TestContext) {
   return { ...h, id, native, catalog, saved, provider };
 }
 
+test('ordinary creation publishes its settled operation count without a role callback', async t => {
+  const h = harness(t);
+  let activeOperations: number | undefined;
+  const off = h.engine.onEvent(event => {
+    if (event.type === 'session/added') activeOperations = event.session.activeOperations;
+    if (event.type === 'session/patch' && event.activeOperations !== undefined) activeOperations = event.activeOperations;
+  });
+  t.after(off);
+  await h.engine.newSession(h.cwd);
+  assert.equal(activeOperations, 0);
+});
+
+test('create and add use assignment boundary with complete union; unchanged add recovers without saving', async t => {
+  const h = await roleAdditionFixture(t);
+  const calls: Array<{ operation: string; sessionId: string; roles: unknown; previousRoles: unknown }> = [];
+  const save = t.mock.method(h.provider, 'save');
+  h.provider.withAssignment = async (input, action, notified) => {
+    calls.push(input);
+    notified?.({ notificationId: 'a'.repeat(64), status: 'notified' });
+    return action();
+  };
+  const created = await h.engine.newSession(h.cwd, [h.catalog[0]!]);
+  assert.equal(calls[0]?.operation, 'create');
+  assert.equal(calls[0]?.sessionId, created);
+  await h.engine.addRoles(created, [h.catalog[1]!]);
+  assert.equal(calls[1]?.operation, 'add');
+  assert.deepEqual(calls[1]?.roles, h.catalog);
+  assert.deepEqual(calls[1]?.previousRoles, [h.catalog[0]]);
+  const unchanged = await h.engine.addRoles(created, [h.catalog[1]!]);
+  assert.equal(calls.length, 3);
+  assert.equal(save.mock.callCount(), 2);
+  assert.equal(unchanged.status, 'unchanged');
+  assert.equal(unchanged.notification?.status, 'notified');
+});
+
+test('assignment denial prevents native creation and add persistence', async t => {
+  const h = await roleAdditionFixture(t);
+  h.provider.withAssignment = async () => { throw new Error('Role occupied'); };
+  const creates = h.runtime.createSession.mock.callCount();
+  await assert.rejects(h.engine.newSession(h.cwd, [h.catalog[0]!]), /Role occupied/);
+  await assert.rejects(h.engine.addRoles(h.id, [h.catalog[0]!]), /Role occupied/);
+  assert.equal(h.runtime.createSession.mock.callCount(), creates);
+  assert.deepEqual(h.saved.get(h.id) ?? [], []);
+});
+
+test('native destructive lifecycle cannot cross a waiting role assignment permission', async t => {
+  const h = await roleAdditionFixture(t);
+  const entered = deferred();
+  const proceed = deferred();
+  h.provider.withAssignment = async (_input, action) => {
+    entered.resolve();
+    await proceed.promise;
+    return action();
+  };
+  const adding = h.engine.addRoles(h.id, [h.catalog[0]!]);
+  await entered.promise;
+  await assert.rejects(h.engine.deleteSession(h.id), protectedWork);
+  await assert.rejects(h.engine.reload(h.id), protectedWork);
+  proceed.resolve();
+  assert.equal((await adding).status, 'saved');
+});
+
+for (const operation of ['create', 'add', 'unchanged'] as const) {
+  test(`${operation} emits identity invalidation after saved callback and mutation/lifecycle guards release`, async t => {
+    const h = await roleAdditionFixture(t);
+    if (operation === 'unchanged') await h.engine.addRoles(h.id, [h.catalog[0]!]);
+    let held = false;
+    let registered = false;
+    let notifiedId = '';
+    const followups: Promise<void>[] = [];
+    h.provider.withAssignment = async (input, action, notified) => {
+      held = true;
+      const result = await action();
+      registered = true;
+      notifiedId = input.sessionId;
+      notified?.({ notificationId: 'a'.repeat(64), status: 'notified' });
+      await nextTurn();
+      held = false;
+      return result;
+    };
+    const off = h.engine.onEvent(event => {
+      if (event.type !== 'session/invalidated' || !event.resources?.includes('identity') || !registered) return;
+      assert.equal(event.sessionId, notifiedId);
+      assert.equal(held, false, 'notification-complete event must not run inside assignment lock');
+      registered = false;
+      followups.push(h.engine.unload(event.sessionId));
+    });
+    t.after(off);
+    if (operation === 'create') await h.engine.newSession(h.cwd, [h.catalog[0]!]);
+    else await h.engine.addRoles(h.id, [h.catalog[0]!]);
+    assert.equal(followups.length, 1);
+    await Promise.all(followups);
+  });
+}
+
+test('explicit notification replay emits a post-lock identity invalidation without loading a session', async t => {
+  const h = await roleAdditionFixture(t);
+  let held = false;
+  h.provider.replayAssignment = async notificationId => {
+    held = true;
+    await nextTurn();
+    held = false;
+    return { notificationId, sessionId: h.id, status: 'notified' };
+  };
+  let observed = false;
+  const off = h.engine.onEvent(event => {
+    if (event.type === 'session/invalidated' && event.resources?.includes('identity')) {
+      assert.equal(held, false);
+      observed = true;
+    }
+  });
+  t.after(off);
+  const before = h.runtime.resumeSession.mock.callCount();
+  await h.engine.replayRoleAssignment('a'.repeat(64));
+  assert.equal(observed, true);
+  assert.equal(h.runtime.resumeSession.mock.callCount(), before);
+});
+
 test('concurrent role additions with asynchronous reads keep every saved role', async t => {
   const h = await roleAdditionFixture(t);
   t.mock.method(h.provider, 'read', async (id: string) => { await nextTurn(); return h.saved.get(id) ?? []; });

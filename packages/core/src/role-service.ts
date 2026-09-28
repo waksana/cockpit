@@ -1,4 +1,4 @@
-import type { RoleAdditionResult, RoleReadiness, RoleSelection, SessionRole } from '@cockpit/protocol';
+import type { RoleAdditionResult, RoleReadiness, RoleSelection, SessionRole, RoleAssignmentNotificationResult } from '@cockpit/protocol';
 import { CockpitError, invalid, transition, unavailable } from './errors.ts';
 import { messageOf, settled } from './async.ts';
 import type { SessionKernel } from './kernel.ts';
@@ -109,20 +109,28 @@ export class RoleService {
 
   // Serialize each session's read/union/write so concurrent additions cannot drop one another.
   async addRoles(id: string, additions: RoleSelection[]): Promise<RoleAdditionResult> {
+    this.k.roles?.assertAssignmentAllowed?.();
     const previous = this.roleWrites.get(id) ?? Promise.resolve();
     const run = previous.then(() => this.saveRoleAdditions(id, additions));
     const tail = run.then(() => {}, () => {});
     this.roleWrites.set(id, tail);
-    try { return await run; }
+    let result: RoleAdditionResult;
+    try { result = await run; }
     finally { if (this.roleWrites.get(id) === tail) this.roleWrites.delete(id); }
+    if (result.notification?.status === 'notified') {
+      this.k.emit({ type: 'session/invalidated', sessionId: id, resources: ['identity'] });
+    }
+    return result;
   }
 
   private async saveRoleAdditions(id: string, additions: RoleSelection[]): Promise<RoleAdditionResult> {
     if (!this.k.roles) throw unavailable('Module roles are unavailable');
+    const provider = this.k.roles;
     if (!additions.length) throw invalid('At least one additional role is required');
     const st = await this.k.state(id);
     this.k.assertAdmission(st);
     if (st.load) throw transition('Session is loading; save roles after the lifecycle transition completes');
+    st.operations++;
     try {
       let selected = await this.k.roles.read(id);
       const catalog = this.k.roles.list();
@@ -135,32 +143,41 @@ export class RoleService {
         });
       }
       if (combined.size > 64) throw invalid('A session can select at most 64 roles');
-      if (combined.size === selected.length) {
-        return { sessionId: id, status: 'unchanged', loaded: !!st.sdk, ...this.roleState(st, selected) };
-      }
-      try {
-        this.k.roles.save(id, [...combined.values()]);
-        selected = await this.k.roles.read(id);
-        if (selected.length !== combined.size || selected.some(role => !combined.has(`${role.moduleId}/${role.roleId}`))) {
-          throw new Error('Saved role selection did not confirm the requested additions');
+      const unchanged = combined.size === selected.length;
+      const save = async (): Promise<RoleAdditionResult> => {
+        if (unchanged) return { sessionId: id, status: 'unchanged', loaded: !!st.sdk, ...this.roleState(st, selected) };
+        try {
+          provider.save(id, [...combined.values()]);
+          selected = await provider.read(id);
+          if (selected.length !== combined.size || selected.some(role => !combined.has(`${role.moduleId}/${role.roleId}`))) {
+            throw new Error('Saved role selection did not confirm the requested additions');
+          }
+        } catch (error) {
+          this.k.invalidate(st, ['identity']);
+          try { selected = await provider.read(id); }
+          catch (readError) {
+            throw new AggregateError([error, readError],
+              'Role persistence outcome and saved selection are unconfirmed; inspect session/get before explicitly retrying. No reload, rollback or retry was performed.',
+              { cause: readError });
+          }
+          return { sessionId: id, status: 'uncertain', loaded: !!st.sdk, ...this.roleState(st, selected),
+            error: messageOf(error),
+            recovery: 'Inspect session/get for saved roles before explicitly retrying. No reload, rollback or retry was performed.' };
         }
-      } catch (error) {
+        const fields = this.roleState(st, selected);
+        this.k.patch(st, fields);
         this.k.invalidate(st, ['identity']);
-        try { selected = await this.k.roles.read(id); }
-        catch (readError) {
-          throw new AggregateError([error, readError],
-            'Role persistence outcome and saved selection are unconfirmed; inspect session/get before explicitly retrying. No reload, rollback or retry was performed.',
-            { cause: readError });
-        }
-        return { sessionId: id, status: 'uncertain', loaded: !!st.sdk, ...this.roleState(st, selected),
-          error: messageOf(error),
-          recovery: 'Inspect session/get for saved roles before explicitly retrying. No reload, rollback or retry was performed.' };
-      }
-      const fields = this.roleState(st, selected);
-      this.k.patch(st, fields);
-      this.k.invalidate(st, ['identity']);
-      return { sessionId: id, status: 'saved', loaded: !!st.sdk, ...fields };
+        return { sessionId: id, status: 'saved', loaded: !!st.sdk, ...fields };
+      };
+      let notification: RoleAssignmentNotificationResult | undefined;
+      const result = this.k.roles.withAssignment
+        ? await this.k.roles.withAssignment({
+          operation: 'add', sessionId: id, roles: [...combined.values()], previousRoles: selected,
+        }, save, value => { notification = value; })
+        : await save();
+      return { ...result, ...(notification ? { notification } : {}) };
     } finally {
+      st.operations--;
       this.k.release(st);
     }
   }

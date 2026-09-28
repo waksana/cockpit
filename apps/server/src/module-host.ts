@@ -29,6 +29,10 @@ const backendSchema = z.object({
   routes: z.array(routeSchema).max(256),
   publicConfig: z.record(z.unknown()).optional(),
   onReady: z.custom<NonNullable<ModuleBackend['onReady']>>(value => typeof value === 'function').optional(),
+  roleAssignments: z.object({
+    permit: z.custom<NonNullable<NonNullable<ModuleBackend['roleAssignments']>['permit']>>(value => typeof value === 'function').optional(),
+    saved: z.custom<NonNullable<NonNullable<ModuleBackend['roleAssignments']>['saved']>>(value => typeof value === 'function').optional(),
+  }).strict().optional(),
   events: z.object({
     types: z.array(z.string().min(1).max(128)).min(1).max(128),
     handle: z.custom<NonNullable<ModuleBackend['events']>['handle']>(value => typeof value === 'function'),
@@ -106,7 +110,13 @@ export class ModuleHost {
     origin?: string;
   }) {
     this.roles = new ModuleRoles(options.hostRoot ?? cockpitHome(), options.origin ?? 'http://127.0.0.1:8771',
-      () => this.closed ? [] : this.loaded.map(module => module.installation));
+      () => this.closed ? [] : this.loaded.map(module => module.installation),
+      () => this.closed ? [] : this.loaded.flatMap(module => module.backend.roleAssignments ? [{
+        moduleId: module.installation.manifest.id, hooks: module.backend.roleAssignments, signal: module.controller.signal,
+      }] : []), async sessionId => {
+        if (!this.options.host || this.closed) throw new Error('Module host is unavailable');
+        return (await this.options.host.call('session/get', { sessionId })).meta !== null;
+      });
   }
 
   // Request-level failures already reach their caller as HTTP errors; they are logged,
@@ -167,11 +177,13 @@ export class ModuleHost {
         const installation = await readModuleInstallation(id, selected, hostRoot);
         const apiBase = `/_modules/${id}/${installation.digest}/api`;
         const context: ModuleBackendContext = Object.freeze({
-          host: Object.freeze({ resourcePreparationVersion: 1, askResponseVersion: 1, chatReadVersion: 1, call: (name, body) => {
+          host: Object.freeze({ resourcePreparationVersion: 1, askResponseVersion: 1, chatReadVersion: 1,
+            roleAssignmentVersion: 1, sessionDirectoryVersion: 1, sessionLoadVersion: 1, call: (name, body) => {
             if (controller.signal.aborted || this.closed) throw new Error('Module is stopped');
             if (!this.loaded.some(module => module.controller === controller)) throw new Error('Module host intents are not active');
-            if (!['session/new', 'session/get', 'session/rename', 'roles/readiness', 'session/resources-prepare', 'prompt', 'respondAsk', 'session/chat'].includes(name)) throw new Error('Module host intent is not allowed');
+            if (!['session/new', 'session/get', 'session/rename', 'roles/readiness', 'session/resources-prepare', 'prompt', 'respondAsk', 'session/chat', 'session/directory', 'session/load', 'roles/notify'].includes(name)) throw new Error('Module host intent is not allowed');
             if (!this.options.host) throw new Error('Module host intents are unavailable');
+            this.roles.assertCallbackHostCall(name);
             return this.options.host.call(name, body);
           } } satisfies ModuleHostApi),
           apiVersion: 1, serviceReadyVersion: 1, moduleId: id, apiBase, dataRoot: await moduleDataRoot(id, hostRoot),
@@ -550,7 +562,10 @@ export class ModuleHost {
     catch (error) { this.report(id, error); }
   }
 
+  stopRoleAssignments(): void { this.roles.stopAssignments(); }
+
   close(): void {
+    this.stopRoleAssignments();
     if (this.closed) return;
     this.closed = true;
     for (const scope of this.scopes) scope.abort();

@@ -6,11 +6,18 @@ import type {
   ModuleHostIntentResult,
   NativeChatEvent,
   ServerEvent,
+  RoleSelection,
 } from './contract.ts';
 
 export * from './contract.ts';
 
 export interface ModuleHostApi {
+  /** Atomic role permission and durable saved-selection notifications. */
+  readonly roleAssignmentVersion?: 1;
+  /** Bounded, passive native session metadata directory. */
+  readonly sessionDirectoryVersion?: 1;
+  /** Explicit load without closing or reloading an existing handle. */
+  readonly sessionLoadVersion?: 1;
   /** Check before resource-aware creation/preparation; absent on older hosts. */
   readonly resourcePreparationVersion?: 1;
   /** Native respondAsk bridge; check before opening persistent module data. */
@@ -21,6 +28,19 @@ export interface ModuleHostApi {
     name: Name,
     body: ModuleHostIntentBody<Name>,
   ): Promise<ModuleHostIntentResult<Name>>;
+}
+
+export interface RoleAssignment {
+  operation: 'create' | 'add';
+  sessionId: string;
+  /** Complete proposed selection, including roles belonging to other modules. */
+  roles: RoleSelection[];
+  previousRoles: RoleSelection[];
+}
+
+export interface RoleAssignmentNotification extends RoleAssignment {
+  /** Stable across explicit notification-only replay; consumers must deduplicate. */
+  notificationId: string;
 }
 
 export interface NativeObservation {
@@ -82,6 +102,14 @@ export interface ModuleBackendContext {
 
 export interface ModuleBackend {
   routes: readonly ModuleRoute[];
+  roleAssignments?: {
+    /** Absent means allow. Called at mutation time, not just by a UI preflight. */
+    permit?(assignment: RoleAssignment, signal: AbortSignal):
+      { allowed: true } | { allowed: false; reason: string }
+      | Promise<{ allowed: true } | { allowed: false; reason: string }>;
+    /** Saved selection is not native readiness, existence, or permission to load. */
+    saved?(notification: RoleAssignmentNotification, signal: AbortSignal): void | Promise<void>;
+  };
   publicConfig?: Readonly<Record<string, unknown>>;
   /**
    * Called once after the runtime has started and public HTTP is listening,

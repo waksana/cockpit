@@ -1,4 +1,5 @@
 import type { CopilotSession, SessionMetadata } from '@github/copilot-sdk';
+import { createHash } from 'node:crypto';
 import type {
   MetaResource, PanelItem, PanelSection, QueuedItem, SessionBrief, SessionControls, SessionMeta, SessionPanels,
   SessionPlan, SessionProjection, TodoItem,
@@ -174,6 +175,37 @@ export class ResourceReader {
       activity: meta.activity,
       roles: meta.roles, appliedRoles: meta.appliedRoles, rolesNeedReload: meta.rolesNeedReload,
     }));
+  }
+
+  async directory(limit: number, cursor?: string): Promise<{ sessions: SessionBrief[]; cursor?: string }> {
+    this.k.assertReadable();
+    const rows = await this.k.untilFatal(() => this.k.runtime.listSessions());
+    const byId = new Map(rows.map(row => [row.sessionId, row]));
+    const ids = [...new Set([
+      ...rows.filter(row => !this.k.creating.has(row.sessionId) || this.k.sessions.get(row.sessionId)?.sdk).map(row => row.sessionId),
+      ...this.k.sessions.keys(),
+    ])].sort();
+    const fingerprint = createHash('sha256').update(JSON.stringify(ids)).digest('hex');
+    let offset = 0;
+    if (cursor) {
+      const match = /^([a-f0-9]{64}):([1-9][0-9]*)$/.exec(cursor);
+      if (!match || match[1] !== fingerprint || !Number.isSafeInteger(Number(match[2])) || Number(match[2]) >= ids.length) {
+        throw new CockpitError('STATE_CONFLICT', 'Session directory changed or cursor is invalid; restart discovery explicitly');
+      }
+      offset = Number(match[2]);
+    }
+    const sessions = await boundedMap(ids.slice(offset, offset + limit), readConcurrency, async id => {
+      const meta = await this.getResources(id, ['identity', 'control', 'model'], byId.get(id));
+      if (!meta) throw new CockpitError('STATE_CONFLICT', 'Session disappeared during discovery; restart explicitly');
+      const value = completeMeta(meta);
+      return {
+        sessionId: value.sessionId, title: value.title, cwd: value.cwd, status: value.status,
+        loaded: value.loaded, lastActivity: value.lastActivity, lastActivitySource: value.lastActivitySource,
+        currentModelId: value.currentModelId, activity: value.activity,
+        roles: value.roles, appliedRoles: value.appliedRoles, rolesNeedReload: value.rolesNeedReload,
+      };
+    });
+    return { sessions, ...(offset + limit < ids.length ? { cursor: `${fingerprint}:${offset + limit}` } : {}) };
   }
 
   async status(): Promise<SessionMeta[]> {

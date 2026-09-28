@@ -50,7 +50,7 @@ export type ServerEngine = Pick<Engine,
   | 'deleteSession' | 'unload' | 'load'
   | 'reload' | 'initializeSessionTools' | 'prepareSessionResources' | 'getPlan' | 'getUsage' | 'getPanels' | 'getPanel' | 'getResources' | 'respondAsk' | 'respondPlan'
   | 'planSupersede' | 'respondElicitation' | 'removeQueued' | 'refreshList'
-  | 'listLive' | 'getMeta' | 'listGlobalMcp' | 'setMcpDefault'
+  | 'listLive' | 'sessionDirectory' | 'replayRoleAssignment' | 'getMeta' | 'listGlobalMcp' | 'setMcpDefault'
   | 'refreshMcp' | 'reloadSessionMcp' | 'listSessionMcp' | 'toggleSessionMcp'
   | 'listGlobalSkills' | 'setGlobalSkill' | 'readSkillBody' | 'listSessionSkills' | 'toggleSessionSkill' | 'refreshSkills'
   | 'addSchedule' | 'stopSchedule' | 'listSchedules' | 'listDir'
@@ -137,6 +137,11 @@ function createShutdown(): GracefulShutdown {
   });
 }
 let shutdown = createShutdown();
+function requestShutdown() {
+  const state = shutdown.request();
+  moduleHost?.stopRoleAssignments();
+  return state;
+}
 
 app.addHook('onRequest', async (_req, reply) => {
   const state = shutdown.snapshot();
@@ -310,7 +315,7 @@ type IntentHandlers = {
 };
 
 const handlers: IntentHandlers = {
-  'system/shutdown': () => ({ ok: true, shutdown: shutdown.request() }),
+  'system/shutdown': () => ({ ok: true, shutdown: requestShutdown() }),
   'system/status': serviceStatus,
   'runtime/snapshot': async () => engine.snapshot(),
   'settings/session-defaults': async () => engine.getSessionDefaults(),
@@ -399,6 +404,8 @@ const handlers: IntentHandlers = {
     return { ok: true };
   },
   'session/list': async () => ({ sessions: await engine.listLive() }),
+  'session/directory': b => engine.sessionDirectory(b.limit, b.cursor),
+  'roles/notify': b => engine.replayRoleAssignment(b.notificationId),
   'session/get': async (b) => ({ meta: await engine.getMeta(b.sessionId) }),
   'session/resources': async (b) => ({ meta: await engine.getResources(b.sessionId, b.resources) }),
   'mcp/global': async () => ({ servers: await engine.listGlobalMcp() }),
@@ -474,7 +481,7 @@ function errorStatus(error: unknown): number {
 const readIntents = new Set<IntentName>([
   'settings/session-defaults',
   'roles/list', 'roles/resources', 'roles/skill-read', 'roles/readiness',
-  'system/status', 'runtime/snapshot', 'session/chat', 'session/list', 'session/get', 'session/refresh',
+  'system/status', 'runtime/snapshot', 'session/chat', 'session/list', 'session/directory', 'session/get', 'session/refresh',
   'session/resources', 'session/usage', 'session/plan', 'session/panels', 'session/panel',
   'mcp/global', 'mcp/session', 'skills/global', 'skills/read', 'skills/session',
   'schedule/list', 'fs/listDir',
@@ -539,6 +546,7 @@ app.post('/intent/*', async (req, reply) => {
       error: e instanceof Error ? e.message : String(e),
       ...(e && typeof e === 'object' && 'code' in e && typeof e.code === 'string' ? { code: e.code } : {}),
       ...(e && typeof e === 'object' && 'sessionId' in e && typeof e.sessionId === 'string' ? { sessionId: e.sessionId } : {}),
+      ...(e && typeof e === 'object' && 'roleAssignment' in e ? { roleAssignment: e.roleAssignment } : {}),
     };
   } finally {
     reply.raw.removeListener('close', cancel);
@@ -610,7 +618,7 @@ async function boot(): Promise<void> {
   runtime.log = (msg, data) => app.log.warn(data ?? {}, msg);
   engine = runtime;
   const stop = () => {
-    try { shutdown.request(); }
+    try { requestShutdown(); }
     catch (error) { app.log.error({ err: error }, 'shutdown request failed; signal does not force exit'); }
   };
   process.on('SIGTERM', stop);
