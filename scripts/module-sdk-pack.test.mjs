@@ -19,12 +19,36 @@ const fixtures = [
   ` },
   ...['backend', 'backend-current'].map(name => ({ name, types: ['node'], lib: ['ES2022'], source: `
     import { Readable } from 'node:stream';
-    import type { ModuleBackend, ModuleHostIntentResult, ModuleResponse } from '@waksana/cockpit-module-sdk/backend';
+    import type { ModuleBackend, ModuleHostApi, ModuleHostIntentBody, ModuleHostIntentResult, ModuleResponse } from '@waksana/cockpit-module-sdk/backend';
     const backend: ModuleBackend = { routes: [] };
     const response: ModuleResponse = { body: Readable.from('ok') };
     const created: ModuleHostIntentResult<'session/new'> = { sessionId: 's' };
     // @ts-expect-error sessionId is part of the canonical host result.
     const invalid: ModuleHostIntentResult<'session/new'> = { id: 's' };
+    declare const host: ModuleHostApi;
+    const askVersion: 1 | undefined = host.askResponseVersion;
+    const chatVersion: 1 | undefined = host.chatReadVersion;
+    const answer: ModuleHostIntentBody<'respondAsk'> = {
+      sessionId: 's', requestId: 'request', answer: 'yes', wasFreeform: false,
+    };
+    const answered: Promise<{ ok: boolean }> = host.call('respondAsk', answer);
+    const read: ModuleHostIntentBody<'session/chat'> = {
+      sessionId: 's', source: 'live', direction: 'backward', max: 10, waitMs: 0,
+      bootstrap: true, agentScope: 'primary', types: ['assistant.message'],
+    };
+    const page: ModuleHostIntentResult<'session/chat'> = {
+      sessionId: 's', source: 'live', direction: 'backward', events: [],
+      cursor: 'opaque', cursorStatus: 'expired', hasMore: false, liveCursor: 'tail',
+      read: { rpc: 2, events: 0 },
+    };
+    const reading: Promise<typeof page> = host.call('session/chat', read);
+    // @ts-expect-error An answer must retain its original native request identity.
+    host.call('respondAsk', { sessionId: 's', answer: 'yes', wasFreeform: false });
+    // @ts-expect-error No arbitrary intent passthrough is exposed.
+    host.call('respondPlan', { sessionId: 's', requestId: 'r', action: 'interactive' });
+    // @ts-expect-error Expiry cannot be represented as an invented success status.
+    const invalidStatus: typeof page.cursorStatus = 'unknown';
+    void [askVersion, chatVersion, answered, reading, invalidStatus];
     void [backend, response, created, invalid];
   ` })),
   ...['frontend-18', 'frontend-19'].map(name => ({ name, types: ['react'], lib: ['ES2022', 'DOM'], source: `
