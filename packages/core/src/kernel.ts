@@ -7,6 +7,7 @@ import type { RoleProvider } from './roles.ts';
 import { SessionUnloadedError, busy, engineStopped, sessionNotFound, transition } from './errors.ts';
 import { messageOf, settled } from './async.ts';
 import { SessionHandle } from './session-handle.ts';
+import { SessionDiagnostics } from './session-diagnostics.ts';
 
 export type EngineRuntime = Pick<OfficialRuntime,
   'start' | 'models' | 'listSessions' | 'createSession' | 'resumeSession' |
@@ -49,6 +50,7 @@ export class SessionKernel {
   startPromise?: Promise<void>;
   fatalError?: Error;
   log: (message: string, data?: Record<string, unknown>) => void = () => {};
+  readonly diagnostics = new SessionDiagnostics(id => this.sessions.get(id), () => this.log);
   private readonly hooks: KernelHooks;
 
   constructor(runtime: EngineRuntime, hooks: KernelHooks) {
@@ -193,6 +195,18 @@ export class SessionKernel {
   }
 
   async readControl(st: SessionHandle, sdk: CopilotSession) {
+    const sample = this.diagnostics.beginSample(st);
+    try {
+      const result = await this.readControlSample(st, sdk);
+      if (sample) this.diagnostics.sample(st, sdk, sample, result.summary);
+      return result;
+    } catch (error) {
+      if (sample) this.diagnostics.sample(st, sdk, sample);
+      throw error;
+    }
+  }
+
+  private async readControlSample(st: SessionHandle, sdk: CopilotSession) {
     const [processing, activity, queue, tasks, mcp] = await this.withSession(st, sdk, () => settled([
       sdk.rpc.metadata.isProcessing(), sdk.rpc.metadata.activity(), sdk.rpc.queue.pendingItems(),
       sdk.rpc.tasks.list(), sdk.rpc.mcp.list(),
