@@ -83,6 +83,15 @@ const fixtures = [
     const apiVersion: 3 = frontend.apiVersion;
     const componentVersion: 1 = frontend.publicComponentsVersion;
     const ownerVersion: 1 = frontend.draftOwnerVersion;
+    const messagePresentationVersion: 1 = frontend.messagePresentationVersion;
+    const MessageList = frontend.components.get('messageList');
+    const ChatMessage = frontend.components.get('chatMessage');
+    const chatMessage: import('@waksana/cockpit-module-sdk/frontend').ChatMessageProps = {
+      identity: { owner: 'module', id: 'one', kind: 'message', role: 'user' },
+      role: 'user', timestamp: 1000, complete: true, body: '**Hello**',
+      attachments: [{ type: 'file', path: '/synthetic/file.txt' }],
+      previous: { role: 'assistant', timestamp: 999 }, 'data-message-key': 'one',
+    };
     const submissionVersion: 2 = frontend.draftSubmissionVersion;
     const Composer: React.ComponentType<ComposerProps> = frontend.components.get('composer');
     // @ts-expect-error Component names remain a finite typed catalog.
@@ -96,7 +105,8 @@ const fixtures = [
     const rejection: DraftTransportOutcome<{ accepted: true }> = { status: 'rejected', reason: 'Not accepted' };
     // @ts-expect-error Enhancer draft bindings cannot settle an owner transaction.
     frontend.state.bindDraft(owner.reference).reconcile('original-submission');
-    void [componentVersion, ownerVersion, submissionVersion, Composer, noNativeTarget, editable, actionRevision, result, rejection];
+    void [componentVersion, ownerVersion, submissionVersion, Composer, noNativeTarget, editable, actionRevision, result, rejection,
+      messagePresentationVersion, MessageList, ChatMessage, chatMessage];
     const settingsVersion: 1 = frontend.settingsVersion;
     const globalVersion: 1 | undefined = frontend.globalComponentVersion;
     const globalComponent: ModuleGlobalComponent = { id: 'dialog', component: () => null };
@@ -109,6 +119,8 @@ const fixtures = [
     declare const legacy: LegacyModuleFrontendContext;
     // @ts-expect-error Legacy activation does not receive page navigation.
     legacy.navigation.home();
+    // @ts-expect-error Legacy activation does not receive complete message presentation.
+    legacy.messagePresentationVersion;
     // @ts-expect-error The host does not pass private router/session props to pages.
     const badPage: ModulePage = { id: 'bad', component: (props: { router: unknown }) => null };
     const declaration: ModuleFrontend = { apiVersion: 3, globalComponents: [globalComponent], pages: [page] };

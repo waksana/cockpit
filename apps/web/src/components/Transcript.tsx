@@ -19,6 +19,10 @@ import { Disclosure, DisclosureChevron } from './Disclosure';
 import { useDisclosureChoice } from '../lib/disclosureChoice';
 import { groupTranscript, transcriptGap, type TranscriptRow, type ProcessItem } from '../lib/transcriptRows';
 import { RegionErrorBoundary } from './ErrorBoundary';
+import { ChatMessagePresentation } from './ModuleComponents';
+import { ChatMessageFrameContext } from '../lib/publicComponentContext';
+import { MessageTimestamp } from './ConversationPresentation';
+import { messageClock as clock, messageDateLabel as dateLabel, sameMessageDay as sameDay } from '../lib/messagePresentation';
 
 function Thought({ message, latest, sessionId }: { message: ChatMessage; latest: boolean; sessionId: string }) {
   const { open, toggle } = useDisclosureChoice(JSON.stringify([sessionId, 'thought', message.thoughtKey ?? message.id]), latest);
@@ -94,30 +98,6 @@ export function MessageProcess({ items, sessionId, latest = false, identity = it
       </div>)}
     </div>
   </section>;
-}
-
-function clock(ts: number): string {
-  const d = new Date(ts);
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-}
-const MessageTimestamp = memo(function MessageTimestamp({ timestamp, className }: { timestamp: number; className?: string }) {
-  const date = new Date(timestamp);
-  const full = date.toLocaleString('zh-CN', { hour12: false, timeZoneName: 'short' });
-  return <time className={className} dateTime={date.toISOString()} title={full} aria-label={full}>{clock(timestamp)}</time>;
-});
-function sameDay(a: number, b: number): boolean {
-  const x = new Date(a), y = new Date(b);
-  return x.getFullYear() === y.getFullYear() && x.getMonth() === y.getMonth() && x.getDate() === y.getDate();
-}
-function dateLabel(ts: number, today: number): string {
-  const d = new Date(ts);
-  const now = new Date(today);
-  const that = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-  const dayMs = 86_400_000;
-  if (that === today) return '今天';
-  if (that === today - dayMs) return '昨天';
-  if (d.getFullYear() === now.getFullYear()) return `${d.getMonth() + 1}月${d.getDate()}日`;
-  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
 }
 
 // A sub-agent (spawned via the `task` tool) as one collapsible card. The header
@@ -216,18 +196,6 @@ const MessageRow = memo(function MessageRow({ m, sessionId, showByline, nested }
       <ElicitationRecordCard sessionId={sessionId} message={m} />
     </div>;
   }
-  if (m.role === 'user') {
-    return (
-      <div className="user-message">
-        <div className="message is-out" data-message-id={anchorId}>
-          <MessageContent message={m} />
-        </div>
-        <div className="user-message-meta">
-          <MessageTimestamp className="message-time" timestamp={m.timestamp} />
-        </div>
-      </div>
-    );
-  }
   if (m.role === 'system') {
     const level = m.level ?? 'info';
     return (
@@ -237,19 +205,12 @@ const MessageRow = memo(function MessageRow({ m, sessionId, showByline, nested }
       </div>
     );
   }
-  return (
-    <article className="message is-doc">
-      {showByline && hasMessageContent(m) && (
-        <header className="doc-byline">
-          <MessageTimestamp className="doc-time" timestamp={m.timestamp} />
-        </header>
-      )}
-      {/* Date/byline removal on prepend must not move the reading anchor. */}
-      <div className="message-speech" data-message-id={anchorId}>
-        <MessageContent message={m} />
-      </div>
-    </article>
-  );
+  return <ChatMessageFrameContext.Provider value={{ anchorId }}>
+    <ChatMessagePresentation identity={{ owner: m.origin ? 'native' : 'presentation', id: m.id, kind: 'message', role: m.role }}
+      origin={m.origin} complete={!m.streaming} role={m.role === 'user' ? 'user' : 'assistant'}
+      timestamp={m.timestamp} body={m.content} attachments={m.attachments}
+      showTimestamp={m.role === 'user' || showByline} />
+  </ChatMessageFrameContext.Provider>;
 });
 
 const MessageGroup = memo(function MessageGroup({ m, sessionId, date, showByline, live, layout, nested, gap }: {

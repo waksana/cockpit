@@ -105,8 +105,8 @@ test('latest tool overview exposes explicit recorded failure and unknown states'
 
 test('Chat dark theme targets the mounted chat, not an impossible nested chat', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
-  assert.match(css, /@media \(prefers-color-scheme: dark\) \{\s*\.chat,\s*\.chat-input-area \{[^}]*--chat-danger-ink:/);
-  assert.match(css, /\.chat,\s*\.chat-input-area \{[^}]*--host-color-text: var\(--host-color-text-contrast\);/);
+  assert.match(css, /@media \(prefers-color-scheme: dark\) \{\s*\.chat,\s*\.chat-input-area,\s*\.chat-messages,\s*\.chat-conversation-message \{[^}]*--chat-danger-ink:/);
+  assert.match(css, /\.chat,\s*\.chat-input-area,\s*\.chat-messages,\s*\.chat-conversation-message \{[^}]*--host-color-text: var\(--host-color-text-contrast\);/);
   assert.doesNotMatch(css, /\.chat \.chat \{/);
   const tokens = compile(new URL('../styles/tokens.scss', import.meta.url).pathname).css;
   assert.match(tokens, /@media \(prefers-color-scheme: dark\) \{\s*:root \{[^}]*--host-color-text-contrast:/);
@@ -616,7 +616,7 @@ test('host controls do not add decorative hover while selection and keyboard foc
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
   const all = compile(new URL('../styles/index.scss', import.meta.url).pathname).css;
   assert.doesNotMatch(all, /:hover/);
-  assert.match(css, /\.chat :is\(button, a, textarea, summary, \[tabindex\]\):focus-visible,\s*\.chat-input-area :is\(button, a, textarea, summary, \[tabindex\]\):focus-visible \{[^}]*outline: 2px/);
+  assert.match(css, /\.chat :is\(button, a, textarea, summary, \[tabindex\]\):focus-visible,\s*\.chat-input-area :is\(button, a, textarea, summary, \[tabindex\]\):focus-visible,\s*\.chat-messages :is\(button, a, textarea, summary, \[tabindex\]\):focus-visible,\s*\.chat-conversation-message :is\(button, a, textarea, summary, \[tabindex\]\):focus-visible \{[^}]*outline: 2px/);
   const primitives = compile(new URL('../styles/primitives/public-ui.scss', import.meta.url).pathname).css;
   assert.match(primitives, /--ck-color-hover: var\(--host-color-hover\)/, 'retain the public token for module compatibility');
   assert.match(primitives, /:is\(\.ck-button, \.ck-icon-button, \.ck-input\):focus-visible \{[^}]*outline: 2px/);

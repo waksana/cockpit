@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode, type RefObject } from 'react';
+import { useMemo, type ReactNode, type Ref } from 'react';
 import type { ChatMessage, ChatSession } from '../../net/types';
 import { Button } from '../../components/Button';
 import { Icon } from '../../components/Icon';
@@ -6,38 +6,35 @@ import { StateNotice } from '../../components/StateNotice';
 import { RegionErrorBoundary } from '../../components/ErrorBoundary';
 import { TranscriptMessages } from '../../components/Transcript';
 import { useElicitationRecords, withElicitationRecords } from '../../lib/decisionRecords';
+import { MessageList } from '../../components/ModuleComponents';
 
 // The scrollable transcript: history state, rows, the pending decision card
 // (always last: native callbacks carry no tool call position) and the
 // return-to-latest badge. The refs belong to the Thread scroll owner.
 export function ThreadTranscript({ session, messages, decision, scrollRef, contentRef, awayFromBottom, hasNewContent, onFollow, onRetryHistory }: {
   session: ChatSession; messages: ChatMessage[]; decision?: ReactNode;
-  scrollRef: RefObject<HTMLDivElement | null>; contentRef: RefObject<HTMLDivElement | null>;
+  scrollRef: Ref<HTMLDivElement>; contentRef: Ref<HTMLDivElement>;
   awayFromBottom: boolean; hasNewContent: boolean; onFollow: () => void; onRetryHistory?: () => void;
 }) {
   const records = useElicitationRecords(session.sessionId);
   const shown = useMemo(() => withElicitationRecords(messages, records), [messages, records]);
   return (
     <div className="chat-transcript">
-      <div ref={scrollRef} className="chat-messages" tabIndex={0} aria-label="对话消息" aria-busy={session.loadingHistory}>
-        <div ref={contentRef} className="chat-message-content">
-          <HistoryControls session={session} onFollow={onFollow} onRetryHistory={onRetryHistory} />
-          <div className="chat-message-rows">
-            {!decision && session.messages.length === 0 && session.materialized && !session.historyStale && !session.loadingHistory && !session.hasMore && (
-              <div className="chat-empty-hint"><Icon name="newchat" size={28} />
-                <strong>开始对话</strong><span>输入消息开始讨论。</span><code>{session.cwd}</code></div>
-            )}
-            <RegionErrorBoundary label="对话记录" resetKey={messages}>
-              <TranscriptMessages messages={shown} sessionId={session.sessionId}
-                liveId={session.status === 'running' ? session.messages.at(-1)?.id : undefined}
-                today={new Date().setHours(0, 0, 0, 0)} />
-            </RegionErrorBoundary>
-            {decision && <div className="msg-group" data-decision-row data-gap={shown.length ? 'speaker' : 'none'}>
-              <RegionErrorBoundary label="待处理的请求">{decision}</RegionErrorBoundary>
-            </div>}
-          </div>
-        </div>
-      </div>
+      <MessageList viewportRef={scrollRef} contentRef={contentRef} aria-busy={session.loadingHistory}
+        before={<HistoryControls session={session} onFollow={onFollow} onRetryHistory={onRetryHistory} />}>
+        {!decision && session.messages.length === 0 && session.materialized && !session.historyStale && !session.loadingHistory && !session.hasMore && (
+          <div className="chat-empty-hint"><Icon name="newchat" size={28} />
+            <strong>开始对话</strong><span>输入消息开始讨论。</span><code>{session.cwd}</code></div>
+        )}
+        <RegionErrorBoundary label="对话记录" resetKey={messages}>
+          <TranscriptMessages messages={shown} sessionId={session.sessionId}
+            liveId={session.status === 'running' ? session.messages.at(-1)?.id : undefined}
+            today={new Date().setHours(0, 0, 0, 0)} />
+        </RegionErrorBoundary>
+        {decision && <div className="msg-group" data-decision-row data-gap={shown.length ? 'speaker' : 'none'}>
+          <RegionErrorBoundary label="待处理的请求">{decision}</RegionErrorBoundary>
+        </div>}
+      </MessageList>
 
       {awayFromBottom && (
         <Button className="new-msg-badge" data-decision={!!decision || undefined} onClick={onFollow}>

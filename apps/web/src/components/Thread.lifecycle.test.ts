@@ -35,6 +35,8 @@ import { SessionControlBar } from './SessionControlBar';
 import { workspaceSessionId } from '../dev/workspace-fixtures';
 import App from '../App';
 import { failOnReport } from '../test/failOnReport';
+import { captureLocalSubmission } from '../lib/localSubmission';
+import type { ModuleFrontend } from '@cockpit/module-api/frontend';
 
 type TestElement = HTMLElement & {
   value: string;
@@ -48,6 +50,7 @@ type TestElement = HTMLElement & {
 test('Thread lifecycle: re-entry follows latest while mounted updates preserve the reader and resources', async t => {
   const frames = new Map<number, FrameRequestCallback>();
   const resizes = new Set<() => void>();
+  const resizeTargets = new Map<() => void, Set<Element>>();
   let frameId = 0;
   t.mock.method(globalThis, 'requestAnimationFrame', (callback: FrameRequestCallback) => { frames.set(++frameId, callback); return frameId; });
   t.mock.method(globalThis, 'cancelAnimationFrame', (id: number) => { frames.delete(id); });
@@ -61,10 +64,11 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
         target, contentRect: target.getBoundingClientRect(),
       }) as ResizeObserverEntry), this as unknown as ResizeObserver);
       resizes.add(this.callback);
+      resizeTargets.set(this.callback, this.observed);
     }
     observe(target: Element) { this.observed.add(target); }
     unobserve(target: Element) { this.observed.delete(target); }
-    disconnect() { this.observed.clear(); resizes.delete(this.callback); }
+    disconnect() { this.observed.clear(); resizes.delete(this.callback); resizeTargets.delete(this.callback); }
   } });
   const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientHeight');
   const originalClientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
@@ -740,6 +744,88 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.ok(row);
     return { id: row.dataset.messageId, offset: row.getBoundingClientRect().top };
   };
+
+  await t.test('late messageList activation and revocation rebind actual scroll nodes, observers, prefetch and submission follow', async subtest => {
+    const digest = 'd'.repeat(64);
+    const frontend: ModuleFrontend = { apiVersion: 3, components: [{
+      id: 'list', boundary: 'messageList', wrap: Base => props => createElement(Base, props),
+    }] };
+    const runtime = new ModuleRuntime({
+      pageUrl: 'https://fixture.invalid/',
+      fetch: async () => Response.json({ errors: [], modules: [{
+        id: 'list-fixture', name: 'List fixture', version: '1.0.0', digest, config: {}, styles: [],
+        apiBase: `/_modules/list-fixture/${digest}/api`, entry: `/_modules/assets/list-fixture/${digest}/index.js`,
+      }] }),
+      load: async () => ({ frontendApiVersion: 3, activate: () => frontend }), report: failOnReport,
+    });
+    subtest.after(() => runtime.stop());
+    const value = session('list-lifecycle');
+    let loads = 0;
+    const end = (node: HTMLElement) => {
+      const event = new Event('keydown', { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'key', { value: 'End' });
+      fireEvent(node, event);
+      return event.defaultPrevented;
+    };
+    await act(() => root.render(createElement(ModuleRuntimeProvider, { runtime, children: createElement(Thread, {
+      session: value, onLoadMore: () => { loads++; }, onSend: async () => true,
+    }) })));
+    await flush();
+    assert.equal(viewport().scrollTop, bottom());
+    await act(() => { assert.equal(end(viewport()), true); });
+    await flush();
+    for (const operation of ['activate', 'revoke'] as const) {
+      await readAt(400);
+      const oldViewport = viewport();
+      const oldContent = oldViewport.querySelector('.chat-message-content')!;
+      const reading = anchor();
+      const oldAccepted = captureLocalSubmission(value.sessionId);
+      const oldObservers = [...resizeTargets].filter(([, targets]) => targets.has(oldViewport) || targets.has(oldContent));
+      assert.ok(oldObservers.length >= 2, 'scroll ownership and history prefetch both observe the real nodes');
+      await act(async () => {
+        if (operation === 'activate') await runtime.start();
+        else runtime.unregister(runtime.getSnapshot()[0]);
+      });
+      await flush();
+      const current = viewport();
+      assert.notEqual(current, oldViewport, `${operation} actually replaces the viewport`);
+      assert.equal(oldViewport.isConnected, false);
+      assert.equal(current.scrollTop, 400, 'middleware replacement retains the mounted reader instead of following latest');
+      assert.deepEqual(anchor(), reading);
+      assert.doesNotMatch(container.querySelector('.new-msg-badge')?.textContent ?? '', /有新内容/);
+      assert.ok([...resizeTargets.values()].filter(targets => targets.has(current)).length >= 2);
+      assert.ok([...resizeTargets.values()].every(targets => !targets.has(oldViewport) && !targets.has(oldContent)));
+      const beforeStale = loads;
+      await act(() => {
+        assert.equal(end(oldViewport), false, 'removed viewport no longer owns keyboard navigation');
+        oldAccepted();
+        oldViewport.scrollTop = 0;
+        fireEvent.scroll(oldViewport);
+        for (const [callback] of oldObservers) callback();
+      });
+      await flush();
+      assert.equal(loads, beforeStale, 'detached scroll/resize work cannot request history');
+      assert.equal(current.scrollTop, 400, 'a submission captured by the detached owner cannot move its replacement');
+      await act(() => { assert.equal(end(current), true, 'new viewport owns keyboard follow'); });
+      await flush();
+      assert.equal(current.scrollTop, bottom());
+      await act(() => {
+        Object.assign(current, { clientHeight: 250 });
+        for (const [resize, targets] of resizeTargets) if (targets.has(current)) resize();
+        assert.equal(current.scrollTop, bottom(), 'replacement ResizeObserver keeps follow correct before paint');
+      });
+      await flush();
+      await readAt(400);
+      await act(() => captureLocalSubmission(value.sessionId)());
+      await flush();
+      assert.equal(current.scrollTop, bottom(), 'fresh local submissions follow the replacement owner');
+      const beforeRead = loads;
+      await readAt(100);
+      assert.equal(loads, beforeRead + 1, 'near-head prefetch binds to the replacement viewport');
+    }
+    await act(() => root.render(null));
+    await flush();
+  });
 
   const checkCompleteControls = async () => {
     const previous = useCockpit.getState();
