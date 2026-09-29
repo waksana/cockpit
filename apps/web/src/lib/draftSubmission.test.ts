@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test, type TestContext } from 'node:test';
-import type { DraftSchemaHandle, DraftSchemaRegistration, DraftSendBlockReason, ModuleFrontend, ModuleFrontendContext } from '@cockpit/module-api/frontend';
+import type { DraftSchemaHandle, DraftSchemaRegistration, DraftSendBlockReason,
+  LegacyModuleFrontend as ModuleFrontend, LegacyModuleFrontendContext as ModuleFrontendContext } from '@cockpit/module-api/frontend';
 import { DraftCache } from './draftSelection';
 import { ModuleRuntime } from './moduleRuntime';
 import type { NativeDraftRequest } from './draft';
@@ -255,4 +256,15 @@ test('pre-dispatch projection and persistence errors never claim an uncertain di
   assert.equal(persistence.source.getSnapshot().pending, false);
   assert.equal(persistence.source.getSnapshot().text, 'Keep');
   assert.equal(projection.requests.length + persistence.requests.length, 0);
+});
+
+test('a known accepted native request cannot be resent by dismissing a failed local field ACK', async t => {
+  const f = await fixture(t, { schema: fixtureSchema({ acknowledge: () => { throw new Error('Local settlement unavailable'); } }) });
+  appendFixture(f.handle!.forDraft(f.source.reference)!, fixtureItem('accepted-file'));
+  f.draft.editText('accepted text');
+  assert.deepEqual(await f.draft.captureSend().send(1), { status: 'unconfirmed', reason: 'settlement-failed' });
+  f.source.dismissNotice();
+  assert.equal(f.source.getSnapshot().unconfirmed, true);
+  assert.equal(await f.source.send(async () => assert.fail('Accepted native payload must not be sent again')), false);
+  assert.equal(f.requests.length, 1);
 });

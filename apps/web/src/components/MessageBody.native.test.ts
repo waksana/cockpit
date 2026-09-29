@@ -6,7 +6,7 @@ import { MessageBody } from './MessageBody';
 import { MessageContent } from './MessageContent';
 import { hasMessageContent } from '../lib/messageContent';
 import type { ChatMessage } from '@cockpit/protocol';
-import type { ActivateFrontend, MarkdownNode, MessageIdentity } from '@cockpit/module-api/frontend';
+import type { ActivateLegacyFrontend as ActivateFrontend, MarkdownNode, LegacyMessageIdentity as MessageIdentity } from '@cockpit/module-api/frontend';
 import { ModuleRuntime, moduleRuntime } from '../lib/moduleRuntime';
 import { ModuleRuntimeProvider } from './ModuleComponents';
 import { failOnReport } from '../test/failOnReport';
@@ -169,7 +169,8 @@ test('real adornments share the existing presentation parent without changing na
   t.after(() => runtime.stop());
   const body = createElement(MessageBody, {
     body: 'First paragraph\n\nFinal paragraph',
-    identity: { kind: 'message', role: 'assistant', sessionId: 'session', id: 'native-message' }, complete: true,
+    identity: { kind: 'message', role: 'assistant', owner: 'native', id: 'native-message' },
+    origin: { sessionId: 'session', messageId: 'native-message' }, complete: true,
   });
   const parent = createElement('div', { className: 'message-speech' }, body);
   const baseline = renderToStaticMarkup(parent);

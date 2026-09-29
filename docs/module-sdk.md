@@ -58,7 +58,7 @@ integrity. The public entry points have separate environment requirements:
 | --- | --- | --- |
 | `@waksana/cockpit-module-sdk` | Common wire, manifest and invocation types; constants | No React or Node types |
 | `@waksana/cockpit-module-sdk/backend` | Backend activation, routes and host calls; common exports | `@types/node` 22 through 25 for TypeScript |
-| `@waksana/cockpit-module-sdk/frontend` | Web API v2, React component and draft contracts; common types | Matching React / `@types/react` 18 or 19 and DOM types |
+| `@waksana/cockpit-module-sdk/frontend` | Web API v3 public components and owner drafts, explicit legacy v2 types; common types | Matching React / `@types/react` 18 or 19 and DOM types |
 | `@waksana/cockpit-module-sdk/runtime` | Runtime constants only | No peers |
 
 Environment peers are optional at installation because a consumer need not use
@@ -125,6 +125,14 @@ semver automatically. Review public meaning and capability changes as well as
 type signatures. Change records describe source preparation, not successful
 publication. Release identity checks and an actual registry install remain
 separate requirements.
+
+The Web v3 migration exports `frontendApiVersion = 3` from the frontend bundle
+before activation, checks `publicComponentsVersion: 1`, `draftOwnerVersion: 1`
+and `draftSubmissionVersion: 2`, and returns `apiVersion: 3`. Host compatibility
+keeps unmodified v2 entries native-only; generic drafts never reach their schema
+or composer wrappers. See the canonical [owner/recovery contract](module-contract.md#draft-owners)
+before implementing an adapter. The SDK publishes types, not a second React
+component implementation or a browser store.
 
 An SDK version is not proof that every host version supports a module. Module
 releases still record and test their exact host compatibility in the

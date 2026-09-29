@@ -22,6 +22,14 @@ test('host deployment capabilities include the real shared settings boundary', (
   assert.ok(descriptor.product.capabilities.includes('globalComponent.v1'));
 });
 
+test('host deployment capabilities describe both actual frontend contracts and generic draft owners', () => {
+  const descriptor = deploymentManifest(repository, sha, 1, source);
+  for (const capability of ['frontend-api.v2', 'frontend-api.v3', 'draftSubmission.v1', 'draftSubmission.v2',
+    'publicComponents.v1', 'draftOwner.v1']) {
+    assert.ok(descriptor.product.capabilities.includes(capability), capability);
+  }
+});
+
 test('host deployment capabilities include native ask responses and cursor chat reads', () => {
   const descriptor = deploymentManifest(repository, sha, 1, source);
   for (const capability of ['askResponse.v1', 'chatRead.v1', 'roleAssignment.v1', 'sessionDirectory.v1', 'sessionLoad.v1']) {

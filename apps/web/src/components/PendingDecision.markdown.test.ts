@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { test, type TestContext } from 'node:test';
 import { createElement } from 'react';
 import { NativeChatEvent, type NativeChatRead } from '@cockpit/protocol';
-import type { ActivateFrontend, MessageIdentity } from '@cockpit/module-api/frontend';
+import type { ActivateLegacyFrontend as ActivateFrontend, LegacyMessageIdentity as MessageIdentity } from '@cockpit/module-api/frontend';
 import { askMarkdownChoices, askMarkdownQuestion } from '../dev/ask-markdown-fixture';
 import { fixtureSession } from '../dev/chat-fixtures';
 import { getDraftSession, retireDraftSession } from '../lib/draftSelection';

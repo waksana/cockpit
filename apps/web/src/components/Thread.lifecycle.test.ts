@@ -19,14 +19,14 @@ import { MessageBody } from './MessageBody';
 import { DisclosureChoices } from './DisclosureChoices';
 import { useDisclosureChoice } from '../lib/disclosureChoice';
 import { groupTranscript } from '../lib/transcriptRows';
-import { ModuleRuntime, moduleRuntime } from '../lib/moduleRuntime';
+import { ModuleRuntime } from '../lib/moduleRuntime';
 import { MarkdownReplacement, ModuleRuntimeProvider } from './ModuleComponents';
 import { Composer, ComposerNotices } from './Composer';
 import { GlobalNavigation } from './GlobalNavigation';
 import { ManagementShell } from './ManagementShell';
 import { useLongPress } from '../lib/longpress';
 import { useMenuDismiss } from '../lib/useMenuDismiss';
-import type { ActivateFrontend, ComposerContext, ComposerInputProps, ComposerProps, ComponentMiddleware, DraftSchemaHandle, DraftSchemaScope, MessageIdentity, MessageProps, ModuleFrontendContext } from '@cockpit/module-api/frontend';
+import type { ActivateLegacyFrontend as ActivateFrontend, ComposerContext, ComposerInputProps, ComposerProps, ComponentMiddleware, DraftSchemaHandle, DraftSchemaScope, LegacyMessageIdentity as MessageIdentity, LegacyMessageProps as MessageProps, LegacyModuleFrontendContext as ModuleFrontendContext } from '@cockpit/module-api/frontend';
 import { fixtureSession } from '../dev/chat-fixtures';
 import { activityFixture } from '../dev/activity-fixtures';
 import { installFullWebFixture } from '../dev/full-web-fixtures';
@@ -183,11 +183,6 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     });
     await runtime.start();
     subtest.after(() => runtime.stop());
-    subtest.mock.method(moduleRuntime, 'compose', runtime.compose.bind(runtime));
-    subtest.mock.method(moduleRuntime, 'getSnapshot', runtime.getSnapshot);
-    subtest.mock.method(moduleRuntime, 'subscribe', runtime.subscribe);
-    subtest.mock.method(moduleRuntime, 'unregister', runtime.unregister.bind(runtime));
-    subtest.mock.method(moduleRuntime, 'report', runtime.report);
     subtest.mock.method(console, 'error', () => {});
     const timestamp = 1;
     let value: ChatSession = { ...fixtureSession('ask'), sessionId: 'host-route',
@@ -207,9 +202,9 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
           origin: { sessionId: 'native-session', messageId: 'user' } },
         { id: 'system', role: 'system', content: 'System text', timestamp },
       ], hasMore: false };
-    const show = () => root.render(createElement(Thread, {
+    const show = () => root.render(createElement(ModuleRuntimeProvider, { runtime, children: createElement(Thread, {
       session: value, onLoadMore() {}, onSend: async () => true, onRespondAsk: async () => true,
-    }));
+    }) }));
     await act(show);
     const speech = contexts.get(JSON.stringify(['message', 'native-shared', undefined]))!;
     assert.ok(speech);
@@ -928,7 +923,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       };
       await show(value);
       const source = getDraftSession(value.sessionId).current(value);
-      await act(() => source.edit('Synthetic local submission'));
+      if (surface !== 'elicitation') await act(() => source.edit('Synthetic local submission'));
       await readAt(325);
       let captured: Promise<unknown> | undefined;
       const before = requests;
@@ -1098,7 +1093,9 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
   assert.notEqual(viewport(), mounted);
   assert.equal(viewport().scrollTop, bottom(), 'A → B → A must not restore A’s old following:false position');
   assert.equal(a.messages, retainedMessages);
-  assert.equal(getSessionDraft(a.sessionId).getSnapshot(), draftSnapshot);
+  assert.equal(getSessionDraft(a.sessionId), draft);
+  assert.equal(draft.getSnapshot().text, draftSnapshot.text);
+  assert.equal(draft.getSnapshot().revision, draftSnapshot.revision);
 
   await readAt(225);
   await render(null); // The phone detail route removes the chat view.
@@ -1106,7 +1103,9 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
   await render(a);
   assert.equal(viewport().scrollTop, bottom(), 'phone detail → chat remount must enter at latest');
   assert.equal(a.messages, retainedMessages, 're-entry must retain the existing loaded window');
-  assert.equal(getSessionDraft(a.sessionId).getSnapshot(), draftSnapshot);
+  assert.equal(getSessionDraft(a.sessionId), draft);
+  assert.equal(draft.getSnapshot().text, draftSnapshot.text);
+  assert.equal(draft.getSnapshot().revision, draftSnapshot.revision);
 
   let short = { ...session('interrupted-fill'), messages: session('interrupted-fill').messages.slice(0, 2) };
   await render(null);

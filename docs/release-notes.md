@@ -19,6 +19,14 @@ isolated package snapshot, never committed back to source.
 - The independently versioned [module SDK](module-sdk.md) adds `settingsVersion: 1`
   and `settings` component middleware. Modules keep their own configuration and
   operations; the host supplies only the shared presentation boundary.
+- Web v3 exposes the same typed public components to host and module consumers,
+  including the composer/editor/input chain. Generic draft owners share the
+  existing draft core, persist complete requests before submission and explicitly
+  reconcile original receipts without resending. Display message identity is
+  separate from native origin. Legacy Web v2 modules stay native-only and are
+  never activated twice; backend/manifest APIs remain unchanged.
 
-No host data migration is introduced. Publication and promotion do not install
+Native browser draft records retain their keys and gain transaction/recovery
+metadata; an older host must not be assumed to understand these records.
+No server data migration is introduced. Publication and promotion do not install
 or restart a service; deployment remains separately authorized.

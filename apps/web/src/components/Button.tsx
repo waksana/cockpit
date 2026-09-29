@@ -14,10 +14,10 @@ function classes(base: string, variant: ButtonVariant, danger: boolean | undefin
 
 // `variant="primary"` fills with the accent; `danger` switches the ink, or the
 // fill when combined with primary (a filled destructive confirmation).
-export function Button({ variant = 'default', danger, className, type = 'button', ...props }: NativeButtonProps & {
-  variant?: ButtonVariant; danger?: boolean;
+export function Button({ variant = 'default', appearance = 'button', danger, className, type = 'button', ...props }: NativeButtonProps & {
+  variant?: ButtonVariant; danger?: boolean; appearance?: 'button' | 'icon';
 }) {
-  return <button type={type} className={classes('ck-button', variant, danger, className)} {...props} />;
+  return <button type={type} className={classes(appearance === 'icon' ? 'ck-icon-button' : 'ck-button', variant, danger, className)} {...props} />;
 }
 
 // An icon-only action always carries an accessible name. `busy` swaps the glyph

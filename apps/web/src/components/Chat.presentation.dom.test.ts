@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { test, type TestContext } from 'node:test';
 import { createElement } from 'react';
 import { fixtureSession } from '../dev/chat-fixtures';
-import { getDraftSession } from '../lib/draftSelection';
+import { getDraftSession, retireDraftSession } from '../lib/draftSelection';
 import { getSessionDraft } from '../lib/textDraft';
 import { useCockpit } from '../net/store';
 import { Shell, DetailPane } from './Shell';
@@ -56,9 +56,7 @@ test('one decision card holds every pending request; the input answers the selec
     onRespondPlan: async (_id, action) => { planned.push(action); return true; },
     onRespondElicitation: async () => true,
   }));
-  t.after(() => { for (const kind of ['ask', 'plan', 'elicitation'] as const) {
-    getDraftSession(session.sessionId).candidate({ kind, requestId: `lab-${kind}` }).edit('');
-  } });
+  t.after(() => retireDraftSession(session.sessionId));
   assert.equal(document.querySelectorAll('.chat-decision-card[data-state=pending]').length, 1);
   const tabs = screen.getAllByRole('tab');
   assert.deepEqual(tabs.map(tab => tab.textContent), ['问题 1', '计划', '问题 2', '工具确认']);

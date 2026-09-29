@@ -3,7 +3,8 @@ import { test } from 'node:test';
 import { createElement as h, Fragment, useSyncExternalStore } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type {
-  DraftSchemaHandle, DraftSchemaScope, ModuleComponentMiddleware, ModuleDraft, ModuleFrontend, ModuleFrontendContext,
+  DraftSchemaHandle, DraftSchemaScope, LegacyModuleComponentMiddleware as ModuleComponentMiddleware, ModuleDraft,
+  LegacyModuleFrontend as ModuleFrontend, LegacyModuleFrontendContext as ModuleFrontendContext,
 } from '@cockpit/module-api/frontend';
 import { SessionDraft } from '../lib/textDraft';
 import { ModuleRuntime } from '../lib/moduleRuntime';

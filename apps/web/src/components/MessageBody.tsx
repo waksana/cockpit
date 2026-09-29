@@ -1,9 +1,9 @@
-import { createContext, memo, useContext, useRef, type ReactNode, type Ref } from 'react';
+import { createContext, memo, useContext, useId, useRef, type ReactNode, type Ref } from 'react';
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { CopyButton } from './CopyButton';
 import { MarkdownReplacement, MessagePresentation } from './ModuleComponents';
-import type { MessageIdentity, MessageOrigin } from '@cockpit/module-api/frontend';
+import type { MessageIdentity, MessageOrigin, MessageProps } from '@cockpit/module-api/frontend';
 import { ORIGINAL_MARKDOWN_TARGET, originalMarkdownTarget, remarkOriginalMarkdownTargets } from '../lib/messageContent';
 
 const OriginContext = createContext<MessageOrigin | undefined>(undefined);
@@ -89,12 +89,15 @@ export const MarkdownLabel = memo(function MarkdownLabel({ body }: { body: strin
   </span>;
 });
 
-export const MessageBody = memo(function MessageBody({ body, origin, elementRef, identity, complete = true }: {
+export const MessageBody = memo(function MessageBody({ body, origin, elementRef, identity, complete = true, decisionOrigin, frameClassName }: {
   body: string; origin?: MessageOrigin; elementRef?: Ref<HTMLDivElement>; identity?: MessageIdentity; complete?: boolean;
+  decisionOrigin?: MessageProps['decisionOrigin']; frameClassName?: string;
 }) {
+  const displayId = useId();
   const children = <ReactMarkdown remarkPlugins={markdownPlugins} components={components} urlTransform={url => url}>{body}</ReactMarkdown>;
   return <OriginContext.Provider value={origin}>
-    {identity ? <MessagePresentation className="message-body" identity={identity} complete={complete} bodyRef={elementRef}>{children}</MessagePresentation>
-      : <div className="message-body" ref={elementRef}>{children}</div>}
+    <MessagePresentation className={frameClassName ?? 'message-body'} origin={origin} decisionOrigin={decisionOrigin}
+      identity={identity ?? { owner: origin ? 'native' : 'presentation', id: displayId, kind: 'message' }}
+      complete={complete} bodyRef={elementRef}>{frameClassName ? <div className="message-body">{children}</div> : children}</MessagePresentation>
   </OriginContext.Provider>;
 });

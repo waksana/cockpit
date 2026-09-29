@@ -214,8 +214,9 @@ test('invalid stored values and asynchronous factories fail explicitly without e
   const { storage, values } = memoryDraftStorage();
   values.set(recordKey, JSON.stringify({ text: 'Keep', unconfirmed: false,
     __cockpitDraft: { version: 1, purpose: { kind: 'prompt' }, schemas: { [namespace()]: 'not JSON' } } }));
-  const before = values.get(recordKey);
   const draft = new SessionDraft('A', storage);
+  const before = values.get(recordKey);
+  assert.equal(JSON.parse(before!).__cockpitDraft.schemas[namespace()], 'not JSON');
   const invalid = new RegisteredDraftSchema('owner', 'files', fixtureSchema(), () => {});
   assert.throws(() => invalid.prepare(draft));
   assert.equal(draft.hasUnclaimedStoredData(), true, 'a failed restorer must not claim stored data');

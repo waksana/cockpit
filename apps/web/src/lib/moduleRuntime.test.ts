@@ -4,7 +4,7 @@ import * as React from 'react';
 import { createPortal } from 'react-dom';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { ServerEvent, type ModuleEventPayload } from '@cockpit/protocol';
-import type { ActivateFrontend, ComposerEditorProps, DraftSchemaHandle, ModuleAsset, ModuleFrontend, ModuleFrontendContext, MarkdownNode, ModuleMenuRegistration, ModuleMenuState, ModuleMenuTarget } from '@cockpit/module-api/frontend';
+import type { ActivateLegacyFrontend as ActivateFrontend, ComposerEditorProps, DraftSchemaHandle, ModuleAsset, LegacyModuleFrontend as ModuleFrontend, LegacyModuleFrontendContext as ModuleFrontendContext, MarkdownNode, ModuleMenuRegistration, ModuleMenuState, ModuleMenuTarget } from '@cockpit/module-api/frontend';
 import { ModuleRuntime, validateModuleAsset } from './moduleRuntime';
 import { createSessionDrafts } from './textDraft';
 import { appendFixture, fixtureItem, fixtureSchema, memoryDraftStorage, type FixtureData } from '../test/draftFixture';
@@ -489,10 +489,11 @@ test('middleware receives the real Base and preserves ordinary callbacks without
     const callback = asynchronous ? () => Promise.reject(failure) : () => { throw failure; };
     let captured!: ComposerEditorProps;
     const Base = (props: ComposerEditorProps) => { captured = props; return null; };
+    const receivedBases: React.ComponentType<ComposerEditorProps>[] = [];
     const f = fixture([asset()], {
       apiVersion: 2,
       components: [{ id: 'editor', boundary: 'composerEditor', wrap: PassedBase => {
-        assert.equal(PassedBase, Base, 'middleware is given the original component, not an intercepting proxy');
+        receivedBases.push(PassedBase);
         // eslint-disable-next-line @typescript-eslint/no-misused-promises -- deliberately passes a rejecting module callback through
         return props => React.createElement(PassedBase, { ...props, onClick: callback });
       } }],
@@ -503,6 +504,7 @@ test('middleware receives the real Base and preserves ordinary callbacks without
     const onTextChange = () => {}, onSubmit = () => {}, onPaste = () => {};
     const child = React.createElement('span', null, 'Module content');
     const Component = f.runtime.compose('composerEditor', Base);
+    assert.equal(receivedBases.at(-1), Base, 'the composition engine passes through the registered Base');
     renderToStaticMarkup(React.createElement(Component, {
       draft: draft.reference, operation: 'prompt', disabled: false, busy: false, sendBlocked: false,
       onTextChange, onSubmit, onPaste, children: child, className: 'ordinary-editor',
@@ -734,6 +736,7 @@ test('component middleware validates IDs, boundaries and order and composes stab
     })),
   }));
   await f.runtime.start();
+  wraps.length = 0; // Startup already composed the public directory.
   const Base = () => React.createElement('button', null, 'Core');
   const first = f.runtime.compose('managementDetailHeader', Base);
   assert.deepEqual(wraps, ['z:last', 'a:last', 'z:first', 'a:first']);

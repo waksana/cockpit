@@ -60,6 +60,15 @@ export interface DraftAskContext {
 }
 
 export interface ModuleDraftSnapshot {
+  readonly editable: boolean;
+  readonly submittable: boolean;
+  readonly capabilities: { readonly attachments: boolean };
+  /** Owner action/target checkpoint, independent of text edits. Monotonically increasing. */
+  readonly actionRevision: number;
+  /** Optional already-visible context; at most 1,000 Unicode code points, never a history reader. */
+  readonly referenceText?: string;
+  /** Original unresolved transaction, including after a reload. Not send permission. */
+  readonly submissionId?: string;
   /**
    * Present only for an authoritative live ask with an available question.
    * Absent for other purposes, retirement, unload or lost authority. Capture
@@ -74,7 +83,7 @@ export interface ModuleDraftSnapshot {
   /** Text edit revision; an acknowledged send clears only its captured revision. */
   readonly revision: number;
   readonly pending: boolean;
-  /** Failure or unknown native outcome: retained content is not permission to retry. */
+  /** Unknown transport or incomplete local settlement: retained content is not retry permission. */
   readonly unconfirmed: boolean;
   /** Irreversible end of this lifetime: decision ended or session authoritatively deleted. */
   readonly retired: boolean;
@@ -82,8 +91,9 @@ export interface ModuleDraftSnapshot {
 
 /**
  * A host-issued, stable reference to one captured draft, not a native store.
- * id identifies its lifetime, not just its session/request. The ordinary prompt
- * and each native decision have distinct identities and independent storage.
+ * id identifies its runtime lifetime, not a business routing target. Generic
+ * owners do not require a session. In the native adapter, the ordinary prompt
+ * and each decision have distinct identities and independent storage.
  *
  * A pending decision selects a fresh request-keyed draft without copying,
  * clearing or borrowing prompt data. The prompt remains cached and writable by
@@ -91,20 +101,21 @@ export interface ModuleDraftSnapshot {
  * restore the prompt when no blocking decision remains. Failed/unknown answers
  * remain in their own draft. Replacements never inherit old answers, including
  * a request ID reused after retirement.
- * A late completion may settle only its original in-flight draft/token, never
+ * A late completion may settle only its original authorized draft/token, never
  * reactivate it or modify the current prompt/another decision. Retired decision
  * references cannot authorize new edits or sends. Saved answers are restored
  * only for the same live request occurrence, never a retired/reused request ID.
  */
 export interface DraftReference extends ReadonlyState<ModuleDraftSnapshot> {
   readonly id: string;
-  readonly sessionId: string;
+  /** Legacy native adapter only; generic owners never fabricate a session. */
+  readonly sessionId?: string;
   readonly purpose: DraftPurpose;
 }
 
 export type DraftWrite = 'text';
 
-/** Safe codes only: never native response text, payloads or module content. */
+/** Safe pre-dispatch codes only: never response text, payloads or module content. */
 export type DraftSendBlockReason =
   | 'revoked' | 'retired' | 'cancelled' | 'revision-mismatch' | 'draft-changed'
   | 'pending' | 'unconfirmed' | 'peer-blocked' | 'empty' | 'unavailable'
@@ -112,8 +123,68 @@ export type DraftSendBlockReason =
 
 export type DraftSendResult =
   | { readonly status: 'acknowledged' }
+  | { readonly status: 'rejected'; readonly reason: string }
   | { readonly status: 'blocked'; readonly reason: DraftSendBlockReason }
-  | { readonly status: 'unconfirmed'; readonly reason: 'native-unconfirmed' | 'settlement-failed' };
+  | { readonly status: 'unconfirmed'; readonly reason: 'native-unconfirmed' | 'transport-unconfirmed' | 'settlement-failed' };
+
+export interface DraftOwnerFacts {
+  readonly editable: boolean;
+  readonly submittable: boolean;
+  readonly capabilities: { readonly attachments: boolean };
+  readonly actionRevision: number;
+  readonly askContext?: DraftAskContext;
+  readonly referenceText?: string;
+}
+
+/** Captured content only. Business routing stays in prepare's owner closure. */
+export interface DraftSubmissionSnapshot extends DraftSubmission {
+  readonly text: string;
+  readonly fields: DraftFields;
+}
+
+export type DraftTransportOutcome<Receipt> =
+  | { readonly status: 'accepted'; readonly receipt: Receipt }
+  | { readonly status: 'rejected'; readonly reason: string }
+  | { readonly status: 'unknown'; readonly reason: string };
+
+/**
+ * Request and Receipt must be finite, plain JSON data. Validators strictly check
+ * persisted values, including version and complete request identity; they must not
+ * silently strip fields. Creation/update never invokes send or inspect.
+ */
+export interface DraftOwnerOptions<Request, Receipt> {
+  /** Stable module-local storage key; the host namespaces it by module ID. */
+  readonly key: string;
+  readonly purpose: DraftPurpose;
+  readonly facts: DraftOwnerFacts;
+  /** Synchronous: validates projected fields and captures an immutable business request. */
+  prepare(snapshot: DraftSubmissionSnapshot): Request;
+  validateRequest(value: unknown): Request;
+  validateReceipt(value: unknown): Receipt;
+  send(request: Request): Promise<DraftTransportOutcome<Receipt>>;
+  /**
+   * Explicit read of this exact original request only. Return accepted only after
+   * proving complete request/content identity; lack of evidence remains unknown.
+   * Never resend here or treat a missing response as a safe retry.
+   */
+  inspect(request: Request): Promise<DraftTransportOutcome<Receipt>>;
+  /**
+   * Synchronous, idempotent business cleanup, never network dispatch. Compare
+   * captured actionRevision before clearing owner state. Core owns text/field ACK.
+   */
+  settle?(request: Request, receipt: Receipt): void;
+}
+
+export interface DraftOwner {
+  readonly reference: DraftReference;
+  editText(text: string): void;
+  update(facts: DraftOwnerFacts): void;
+  submit(): Promise<DraftSendResult>;
+  /** Inspect and settle the original transaction; never calls send. */
+  reconcile(submissionId: string): Promise<DraftSendResult>;
+  /** Permanent logical retirement; preserves already-dispatched evidence. */
+  retire(): void;
+}
 
 /**
  * One consent checkpoint for an immutable captured draft lifetime and its full
@@ -125,7 +196,7 @@ export interface CapturedDraftSend {
    * Any other writer's edit or schema mutation/generation change since capture
    * invalidates consent, including ABA changes. Block release is not content.
    * The first call consumes this intent, including a blocked result. All later
-   * calls return the same promise/result, never another native dispatch.
+   * calls return the same promise/result, never another business dispatch.
    * blocked guarantees no dispatch; unconfirmed may have sent or failed local
    * ACK settlement. Never automatically retry either an uncertain dispatch or
    * a consumed intent by capturing replacement consent.
@@ -158,8 +229,9 @@ export interface ModuleDraft extends DraftReference {
    * Capture at explicit user consent, before waiting for background completion.
    * Throws on missing permission, revoked/retired or unavailable draft scope.
    * Own blocks may still be held at capture; release them before send.
-   * Sends through the original prompt/ask/plan native route with all applicable
-   * schema fields and ACK rules, even when the original prompt is inactive.
+   * Uses this draft owner's original adapter with all applicable schema fields
+   * and ACK rules. Native adapters retain prompt/ask/plan routing, including
+   * completion of an inactive prompt; enhancements never choose the target.
    */
   captureSend(): CapturedDraftSend;
   /**
@@ -214,10 +286,12 @@ export interface DraftRestoreInput {
     | { readonly present: false }
     | { readonly present: true; readonly value: unknown };
   /**
-   * Read-only original parsed record for THIS draft, or undefined when none exists.
+   * Read-only legacy extension data for THIS draft, or undefined when none exists.
    * Modules may migrate their old unnamespaced fields here. The host neither
    * interprets nor consumes those fields, and never supplies a prompt's legacy
    * record to a decision draft or another session.
+   * Generic owners omit host-private metadata, including business request,
+   * receipt, routing and settlement journals. Stored bytes remain unchanged.
    */
   readonly legacyRecord: unknown;
 }
@@ -248,10 +322,13 @@ export interface DraftSubmission {
   readonly base: Readonly<ModuleDraftSnapshot>;
 }
 
-type CoreDraftField = 'sessionId' | 'text' | 'mode' | 'requestId' | 'answer' | 'message' | 'wasFreeform' | 'action';
+type CoreDraftField = 'sessionId' | 'text' | 'mode' | 'requestId' | 'answer' | 'message' | 'wasFreeform' | 'action'
+  | 'target' | 'request' | 'decision' | 'topic' | 'topicId' | 'reply' | 'replyTo' | 'actionRevision' | 'submissionId';
 
-/** Explicit additions to the selected EXISTING native route, not arbitrary slice serialization. */
-export type DraftNativeFields = Readonly<Record<string, unknown>> & { readonly [Field in CoreDraftField]?: never };
+/** Explicit content projection, not arbitrary schema-store serialization or routing. */
+export type DraftFields = Readonly<Record<string, unknown>> & { readonly [Field in CoreDraftField]?: never };
+/** Native v2 name retained for schema source compatibility. */
+export type DraftNativeFields = DraftFields;
 
 /**
  * A draft-data extension in the state registry, not another component registry.
@@ -260,13 +337,12 @@ export type DraftNativeFields = Readonly<Record<string, unknown>> & { readonly [
  *
  * Before dispatch, the host captures text revision, applicable schema snapshots
  * and a unique pending token, publishing pending before native transport. It
- * merges only explicit project results, validates against the existing native
- * route, and rejects ALL peer-field collisions and
- * core-owned keys (sessionId, text, mode, requestId, answer, message, wasFreeform,
- * action). Unknown route fields are errors, not silently stripped. Empty text
+ * merges only explicit project results, validates through the owner adapter,
+ * and rejects ALL peer-field collisions and core/business routing keys.
+ * Unknown fields are errors, not silently stripped. Empty text
  * additionally requires schema-declared content with an actual projection.
  *
- * False/unknown native results preserve captured data without retry. Confirmed
+ * Rejected/unknown results preserve captured data without retry. Confirmed
  * success clears text only at its captured revision and calls acknowledge only
  * for participating projections, with current AND captured field data. Native
  * choice actions never implicitly submit another draft's fields.
@@ -274,8 +350,8 @@ export type DraftNativeFields = Readonly<Record<string, unknown>> & { readonly [
  * ACK checks the original draft/submission/schema-generation tokens before any
  * write. Stale callbacks cannot clean a replacement scope. A stale/failed ACK
  * is reported and its field retained, not represented as successful cleanup;
- * independently valid fields can still ACK. It never retries an acknowledged
- * native request. Projection/serialization/storage failures are explicit, never
+ * independently valid fields can still ACK. It never retries an accepted
+ * business request. Projection/serialization/storage failures are explicit, never
  * fallback success or empty payloads. Failed persistence keeps prior bytes.
  */
 export interface DraftSchemaRegistration<State extends object> {
@@ -286,14 +362,24 @@ export interface DraftSchemaRegistration<State extends object> {
   validate(value: unknown): State & { readonly then?: never };
   /** Pure content test for the base snapshot's aggregate hasContent. */
   hasContent(state: Readonly<State>): boolean;
-  /** Pure projection of captured data; undefined/{} contributes no native fields. */
+  /** Pure projection of captured data; undefined/{} contributes no content fields. */
   project(state: Readonly<State>, submission: DraftSubmission): DraftNativeFields | undefined;
-  /** Pure cleanup of captured items only, preserving concurrent additions/replacements. */
+  /**
+   * Pure, idempotent cleanup of captured items only. Compare persistent item
+   * identity/version, not object identity: reload restores a new captured object.
+   */
   acknowledge(current: Readonly<State>, captured: Readonly<State>, submission: DraftSubmission): State & { readonly then?: never };
   readonly persistence?: DraftSchemaPersistence<State>;
 }
 
 export interface ModuleStateRegistry {
+  /**
+   * Create/restore an owner in a service lifecycle, never during render. An active
+   * key reuses its owner; use update for facts, not replacement closures. Retiring
+   * and recreating starts a new logical occurrence. Module stop revokes runtime
+   * authority but retains durable recovery data. No implicit network calls.
+   */
+  createDraft<Request, Receipt>(options: DraftOwnerOptions<Request, Receipt>): DraftOwner;
   readonly host: ReadonlyState<HostSnapshot>;
   /** Read-only current loaded window, never a history reader or native state mutation API. */
   readonly chatWindow: ReadonlyState<ChatWindowSnapshot>;
@@ -314,7 +400,8 @@ export interface ModuleStateRegistry {
    * Inactive/unregistered serialized namespaces and legacy records stay opaque
    * and untouched: they are not projected, deleted, restored, or shown as file
    * fallback UI. Losing a schema drops its live contribution/blockers only;
-   * ordinary text and other active schemas remain usable.
+   * persisted unclaimed fields block submission rather than silently sending
+   * only text. Generic projected fields require persistence for recovery.
    */
   registerDraft<State extends object>(registration: DraftSchemaRegistration<State>): DraftSchemaHandle<State>;
   /**
@@ -357,9 +444,9 @@ export interface ComposerProps extends ComposerTarget {
   onTextChange(text: string): void;
   /**
    * Rechecks active draft/purpose/request, pending token, hasContent, blocks and
-   * disabled gates, even when called directly. Uses captured native routing, not
-   * a stale SDK callback. A decision without a free-text route cannot fall
-   * through to prompt. Schema projections, not serialized fields, enter the send.
+   * disabled gates, even when called directly. The owner adapter captures routing;
+   * the presentation never invents a native session or submission route.
+   * Schema projections, not serialized fields, enter the send.
    */
   onSubmit(): void;
 }
@@ -423,6 +510,10 @@ export interface ManagementHeaderProps {
   readonly item: string | null;
   readonly onRefresh?: () => void;
   readonly actions?: React.ReactNode;
+  readonly onBack?: () => void;
+  readonly refreshDisabled?: boolean;
+  readonly refreshing?: boolean;
+  readonly error?: string;
 }
 
 /** Existing resource-detail header with back navigation and its focused title. */
@@ -431,6 +522,7 @@ export interface ManagementDetailHeaderProps {
   /** Optional resource provenance before the unchanged item title. */
   readonly titlePrefix?: React.ReactNode;
   readonly actions?: React.ReactNode;
+  readonly onBack?: () => void;
 }
 
 export interface MessageOrigin {
@@ -440,22 +532,24 @@ export interface MessageOrigin {
 }
 
 export type MessageIdentity = {
-  readonly sessionId: string;
-  /** Native message id, or the host's current AskRequest.requestId. Never a DOM/row id. */
+  readonly owner: string;
+  /** Presentation identity; never native routing authority. */
   readonly id: string;
-  /** Native attribution, never a synthesized nested-session identifier. */
-  readonly agentId?: string;
 } & (
-  | { readonly kind: 'message'; readonly role: 'user' | 'assistant' | 'system' | 'tool' }
+  | { readonly kind: 'message'; readonly role?: 'user' | 'assistant' | 'system' | 'tool' }
   | { readonly kind: 'ask' }
 );
 
 /**
  * The existing visible message body or pending ask question, not its scroll
- * frame/byline/choice controls. Unattributed content uses the core fallback.
+ * frame/byline/choice controls. All content uses this public boundary; only real
+ * native origin/decision attribution enables legacy native middleware.
  */
 export interface MessageProps extends React.HTMLAttributes<HTMLDivElement> {
   readonly identity: MessageIdentity;
+  readonly origin?: MessageOrigin;
+  /** Real pending native decision attribution, not a message origin. */
+  readonly decisionOrigin?: { readonly sessionId: string; readonly requestId: string };
   /** Actual completion fact: final message or present pending ask, never inferred from session idle. */
   readonly complete: boolean;
   /**
@@ -533,6 +627,18 @@ export interface ModuleComponentProps {
   managementHeader: ManagementHeaderProps;
   managementDetailHeader: ManagementDetailHeaderProps;
   settings: SettingsProps;
+  button: PublicButtonProps;
+}
+
+export interface PublicButtonProps extends React.ComponentPropsWithRef<'button'> {
+  readonly variant?: 'default' | 'primary';
+  readonly danger?: boolean;
+  readonly appearance?: 'button' | 'icon';
+}
+
+export interface PublicComponents {
+  /** Stable runtime/name component type. Base registration and middleware composition are host-owned. */
+  get<Name extends keyof ModuleComponentProps>(name: Name): React.ComponentType<ModuleComponentProps[Name]>;
 }
 
 export type ComponentMiddleware<Props> =
@@ -577,7 +683,10 @@ export interface MarkdownRenderer {
 
 export interface ModuleFrontendContext {
   /** Web contract only. Module manifest, backend context and route API remain v1. */
-  readonly apiVersion: 2;
+  readonly apiVersion: 3;
+  readonly publicComponentsVersion: 1;
+  readonly draftOwnerVersion: 1;
+  readonly components: PublicComponents;
   /** Declarative global/session menu capability; not a component boundary. */
   readonly menuVersion: 1;
   /** Component middleware for the shared Settings preference content. */
@@ -590,8 +699,8 @@ export interface ModuleFrontendContext {
   readonly composerInputVersion: 1;
   /** Observable permanent retirement and atomic revision-guarded text completion. */
   readonly draftLifecycleVersion: 1;
-  /** Explicitly authorized captured one-shot native draft submission. */
-  readonly draftSubmissionVersion: 1;
+  /** Explicitly authorized captured draft submission through its owner adapter. */
+  readonly draftSubmissionVersion: 2;
   readonly moduleId: string;
   readonly react: typeof React;
   createPortal(children: React.ReactNode, container: Element | DocumentFragment): React.ReactPortal;
@@ -616,7 +725,8 @@ export interface ModuleFrontendContext {
 /**
  * All IDs are nonempty and unique within this module across state services,
  * draft schemas, menus, global components, middleware and Markdown. The host stages the entire activation
- * before publishing; old slot fields and frontend versions are rejected.
+ * before publishing; old slot fields are rejected. Export frontendApiVersion = 3
+ * from the bundle to select this context before the single activate call.
  *
  * Middleware sorts by (order ?? 0, moduleId, id), lowest first/outermost, and is
  * composed once per registration/base change, NOT per render/draft. Composition
@@ -631,7 +741,7 @@ export interface ModuleFrontendContext {
  * cleanup failure is reported without preventing remaining disposers.
  */
 export interface ModuleFrontend {
-  readonly apiVersion: 2;
+  readonly apiVersion: 3;
   readonly writes?: readonly DraftWrite[];
   /** Independent native-send permission; text writes alone never grant this. */
   readonly sends?: readonly 'draft'[];
@@ -659,3 +769,32 @@ export interface ModuleGlobalComponent {
 }
 
 export type ActivateFrontend = (context: ModuleFrontendContext) => ModuleFrontend | Promise<ModuleFrontend>;
+
+export type LegacyMessageIdentity = {
+  readonly sessionId: string;
+  readonly id: string;
+  readonly agentId?: string;
+} & ({ readonly kind: 'message'; readonly role: 'user' | 'assistant' | 'system' | 'tool' } | { readonly kind: 'ask' });
+export interface LegacyMessageProps extends Omit<MessageProps, 'identity' | 'origin' | 'decisionOrigin'> {
+  readonly identity: LegacyMessageIdentity;
+}
+export type LegacyModuleComponentProps = Omit<ModuleComponentProps, 'message' | 'button'> & { message: LegacyMessageProps };
+export type LegacyModuleComponentMiddleware = {
+  [Name in keyof LegacyModuleComponentProps]: {
+    readonly id: string;
+    readonly boundary: Name;
+    readonly order?: number;
+    readonly wrap: ComponentMiddleware<LegacyModuleComponentProps[Name]>;
+  };
+}[keyof LegacyModuleComponentProps];
+export interface LegacyModuleFrontendContext extends Omit<ModuleFrontendContext,
+  'apiVersion' | 'publicComponentsVersion' | 'draftOwnerVersion' | 'components' | 'draftSubmissionVersion' | 'state'> {
+  readonly apiVersion: 2;
+  readonly draftSubmissionVersion: 1;
+  readonly state: Omit<ModuleStateRegistry, 'createDraft'>;
+}
+export interface LegacyModuleFrontend extends Omit<ModuleFrontend, 'apiVersion' | 'components'> {
+  readonly apiVersion: 2;
+  readonly components?: readonly LegacyModuleComponentMiddleware[];
+}
+export type ActivateLegacyFrontend = (context: LegacyModuleFrontendContext) => LegacyModuleFrontend | Promise<LegacyModuleFrontend>;

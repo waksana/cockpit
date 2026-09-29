@@ -1,13 +1,13 @@
 import type {
   DraftNativeFields, DraftReference, DraftSchemaHandle, DraftSchemaRegistration, DraftSchemaScope, DraftSubmission,
 } from '@cockpit/module-api/frontend';
-import { draftRecord, immutableDraftData, resolveDraft, type DraftField, type DraftReport, type SessionDraft } from './textDraft';
+import { draftRecord, immutableDraftData, resolveDraft, type DraftField, type DraftReport, type DraftCore } from './textDraft';
 
 export interface RuntimeDraftSchema {
   readonly owner: string;
-  prepare(draft: SessionDraft): void;
-  ready(draft: SessionDraft): boolean;
-  applies(draft: SessionDraft): boolean;
+  prepare(draft: DraftCore): void;
+  ready(draft: DraftCore): boolean;
+  applies(draft: DraftCore): boolean;
   activate(): void;
   dispose(): void;
 }
@@ -30,21 +30,24 @@ class SchemaScope<State extends object> implements DraftField {
   readonly api: DraftSchemaScope<State>;
   readonly owner: string;
   readonly namespace: string;
-  private readonly draft: SessionDraft;
+  private readonly draft: DraftCore;
   private readonly definition: DraftSchemaRegistration<State>;
   private readonly report: DraftReport;
+  private readonly recoveryAllowed: () => boolean;
   constructor(
     owner: string,
     namespace: string,
-    draft: SessionDraft,
+    draft: DraftCore,
     definition: DraftSchemaRegistration<State>,
     report: DraftReport,
+    recoveryAllowed: () => boolean = () => true,
   ) {
     this.owner = owner;
     this.namespace = namespace;
     this.draft = draft;
     this.definition = definition;
     this.report = report;
+    this.recoveryAllowed = recoveryAllowed;
     const initial = draft.pure(() => {
       const restore = definition.persistence ? draft.restoreInput(namespace) : undefined;
       return this.validate(restore ? definition.persistence!.restore(restore, draft.reference) : definition.create(draft.reference));
@@ -111,6 +114,21 @@ class SchemaScope<State extends object> implements DraftField {
       this.commit(next, submission);
     };
   }
+  restoreAck(submission: DraftSubmission, encoded: string): () => void {
+    this.assertLive();
+    if (!this.recoveryAllowed()) throw new Error('Legacy draft schemas do not authorize restored submission ACK');
+    const persistence = this.definition.persistence;
+    if (!persistence) throw new Error('Draft schema cannot restore a captured submission');
+    const captured = this.draft.pure(() => this.validate(persistence.restore({
+      stored: { present: true, value: encoded }, legacyRecord: undefined,
+    }, this.draft.reference)));
+    if (captured.encoding !== encoded) throw new Error('Captured draft schema encoding is no longer compatible');
+    return () => {
+      this.assertLive();
+      const next = this.draft.pure(() => this.validate(this.definition.acknowledge(this.state, captured.state, submission)));
+      this.commit(next, submission);
+    };
+  }
   checkAttach(): void { this.draft.assertCanAttach(this); }
   activate(): void {
     if (this.live) return;
@@ -127,14 +145,18 @@ class SchemaScope<State extends object> implements DraftField {
 }
 
 export class RegisteredDraftSchema<State extends object> implements RuntimeDraftSchema {
-  private readonly scopes = new Map<SessionDraft, SchemaScope<State>>();
+  private readonly scopes = new Map<DraftCore, SchemaScope<State>>();
   private active = false;
   private alive = true;
+  private recoveryAllowed = true;
   private readonly definition: DraftSchemaRegistration<State>;
   readonly handle: DraftSchemaHandle<State>;
   readonly owner: string;
-  constructor(owner: string, moduleId: string, input: DraftSchemaRegistration<State>, report: DraftReport) {
+  private readonly accepts: (draft: DraftCore) => boolean;
+  constructor(owner: string, moduleId: string, input: DraftSchemaRegistration<State>, report: DraftReport,
+    accepts: (draft: DraftCore) => boolean = () => true) {
     this.owner = owner;
+    this.accepts = accepts;
     if (!draftRecord(input)
       || Object.keys(input).some(key => !['id', 'purposes', 'create', 'validate', 'hasContent', 'project', 'acknowledge', 'persistence'].includes(key))
       || !Array.isArray(input.purposes)
@@ -152,7 +174,7 @@ export class RegisteredDraftSchema<State extends object> implements RuntimeDraft
     });
     const namespace = JSON.stringify([moduleId, input.id]);
     this.prepareScope = draft => {
-      const scope = new SchemaScope(owner, namespace, draft, this.definition, report);
+      const scope = new SchemaScope(owner, namespace, draft, this.definition, report, () => this.recoveryAllowed);
       scope.checkAttach();
       this.scopes.set(draft, scope);
       if (this.active) scope.activate();
@@ -170,10 +192,11 @@ export class RegisteredDraftSchema<State extends object> implements RuntimeDraft
       },
     });
   }
-  private readonly prepareScope: (draft: SessionDraft) => void;
-  applies(draft: SessionDraft): boolean { return this.alive && this.definition.purposes.includes(draft.reference.purpose.kind); }
-  ready(draft: SessionDraft): boolean { return !this.applies(draft) || this.scopes.has(draft); }
-  prepare(draft: SessionDraft): void {
+  private readonly prepareScope: (draft: DraftCore) => void;
+  setRecoveryAllowed(allowed: boolean): void { this.recoveryAllowed = allowed; }
+  applies(draft: DraftCore): boolean { return this.alive && this.accepts(draft) && this.definition.purposes.includes(draft.reference.purpose.kind); }
+  ready(draft: DraftCore): boolean { return !this.applies(draft) || this.scopes.has(draft); }
+  prepare(draft: DraftCore): void {
     if (!this.alive || draft.isRetired() || this.ready(draft)) return;
     this.prepareScope(draft);
   }

@@ -7,10 +7,9 @@ import type { MessageIdentity } from '@cockpit/module-api/frontend';
 
 export function MessageContent({ message, elementRef }: { message: ChatMessage; elementRef?: Ref<HTMLDivElement> }) {
   if (!hasMessageContent(message)) return null;
-  const identity: MessageIdentity | undefined = message.origin ? {
-    kind: 'message', role: message.role, sessionId: message.origin.sessionId, id: message.origin.messageId,
-    ...(message.origin.agentId ? { agentId: message.origin.agentId } : {}),
-  } : undefined;
+  const identity: MessageIdentity = {
+    owner: message.origin ? 'native' : 'presentation', id: message.id, kind: 'message', role: message.role,
+  };
   const hasText = !!message.content.trim();
   const attachments = message.attachments?.map((attachment, index) => {
     const target = 'path' in attachment ? attachment.path : attachment.type === 'selection' ? attachment.filePath : undefined;
@@ -23,8 +22,8 @@ export function MessageContent({ message, elementRef }: { message: ChatMessage; 
   });
   return <>
     {hasText && <MessageBody body={message.content} origin={message.origin} elementRef={elementRef} identity={identity} complete={!message.streaming} />}
-    {!!attachments?.length && (identity && !hasText
-      ? <MessagePresentation className="message-attachments" identity={identity} complete={!message.streaming} bodyRef={elementRef}>{attachments}</MessagePresentation>
+    {!!attachments?.length && (!hasText
+      ? <MessagePresentation className="message-attachments" identity={identity} origin={message.origin} complete={!message.streaming} bodyRef={elementRef}>{attachments}</MessagePresentation>
       : <div className="message-attachments">{attachments}</div>)}
   </>;
 }

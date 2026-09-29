@@ -8,7 +8,6 @@ import { Icon, type IconName } from './Icon';
 import { Button } from './Button';
 import { DisclosureSection } from './Disclosure';
 import { MarkdownLabel, MessageBody } from './MessageBody';
-import { MessagePresentation } from './ModuleComponents';
 
 const ELICITATION_ACTION_LABEL = { accept: '同意', decline: '拒绝', cancel: '取消' } as const;
 export type ElicitationAction = keyof typeof ELICITATION_ACTION_LABEL;
@@ -103,9 +102,9 @@ function PendingBody({ decision, sessionId, pending, disabled, onChoice, onPlan,
   if (decision.kind === 'ask') {
     const request = decision.request;
     return <>
-      <MessagePresentation className="chat-ask-q" identity={{ sessionId, kind: 'ask', id: request.requestId }} complete>
-        <MessageBody body={request.question} />
-      </MessagePresentation>
+      <MessageBody body={request.question} frameClassName="chat-ask-q"
+        identity={{ owner: 'native', kind: 'ask', id: request.requestId }}
+        decisionOrigin={{ sessionId, requestId: request.requestId }} complete />
       {!!request.choices?.length && <div className="chat-ask-choices" data-layout="column">
         {request.choices.map(choice => <Button key={choice} className="chat-ask-choice"
           disabled={pending || disabled.ask} onClick={() => onChoice(request.requestId, choice)}>

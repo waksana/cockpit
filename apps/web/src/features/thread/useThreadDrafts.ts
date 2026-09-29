@@ -27,6 +27,30 @@ export function useThreadDrafts(session: ChatSession, { readOnly, authoritative,
   }, [drafts, decisions, authoritative, draftRevision]);
   useLayoutEffect(() => { drafts.synchronize(decisions, authoritative); }, [drafts, decisions, authoritative]);
   useLayoutEffect(() => { runtime.prepareDraft(draft, readOnly); }, [runtime, draft, readOnly]);
+  const referenceText = authoritative && session.materialized && !session.historyStale && !session.historyError
+    ? session.messages.findLast(message => message.role === 'assistant' && !message.subtype
+      && !message.streaming && !message.incomplete && message.origin?.sessionId === session.sessionId
+      && !!message.content.trim())?.content : undefined;
+  useLayoutEffect(() => {
+    for (const target of [drafts.prompt, ...pending.map(decision =>
+      drafts.candidate({ kind: decision.kind, requestId: decision.request.requestId }))]) {
+      if (target.isRetired()) continue;
+      const purpose = target.reference.purpose;
+      const decision = purpose.kind === 'prompt' ? undefined
+        : pending.find(value => value.kind === purpose.kind && value.request.requestId === purpose.requestId);
+      const acceptsText = purpose.kind !== 'elicitation'
+        && !(decision?.kind === 'ask' && decision.request.allowFreeform === false);
+      const current = target.getSnapshot();
+      target.updateFacts({
+        editable: !readOnly && acceptsText,
+        submittable: authoritative && !readOnly && acceptsText && (purpose.kind === 'prompt' || loaded !== false),
+        capabilities: { attachments: purpose.kind === 'prompt' },
+        actionRevision: current.actionRevision,
+        ...(current.askContext ? { askContext: current.askContext } : {}),
+        ...(referenceText !== undefined ? { referenceText } : {}),
+      });
+    }
+  }, [drafts, pending, readOnly, authoritative, loaded, referenceText]);
   const canAct = useRef(false);
   useLayoutEffect(() => {
     canAct.current = authoritative && !readOnly;
