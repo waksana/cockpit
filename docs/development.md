@@ -64,6 +64,47 @@ headers, so Vite cannot call a backend on another origin; use it for the
 Never point development at a running installation (default port 8771), your real
 `~/.copilot` or `~/.cockpit`, or another contributor's worktree.
 
+## Session control diagnostics
+
+The server writes structured `session.diagnostic` records at `info` level through
+the existing logger. `schemaVersion: 1`, process-local `sequence`, epoch-millisecond
+`at`, `sessionId`, native `handleId`, current Host `epoch` and `interactionId`
+identify each observation. `handleId` is a diagnostic identity, **not** a control
+token. UUID identifiers are retained; other opaque identifiers are represented by
+a fixed-length SHA-256 prefix so they cannot inject text or grow records.
+
+| Event | Meaning |
+| --- | --- |
+| `operation.start` / `operation.end` | A prompt, cancel, interrupt, queue removal or granular control attempt, with unique `operationId`, `action`, `entryHandleId`/`entryEpoch`/`entryInteractionId` and applicable decision kind/request ID. End means returned or threw, not that native work became idle. |
+| `native.start` / `native.ack` / `native.error` | Entry and settlement of the existing native mutation/send, with actual `targetHandleId` and dispatch `targetEpoch`/`targetInteractionId` retained through settlement. Interrupts use the existing control path's captured target, not the potentially older operation-entry context. ACK has only known boolean result flags (and a send receipt identity); errors mean unconfirmed, without raw error text. |
+| `control.step` | The granular control's existing accepted/unchanged/failed/unconfirmed classification; RPC return alone is not confirmation of its requested effect. |
+| `decision.settlement` | Pending, answered or rejected callback, identified by request ID and its original epoch/interaction; no question or answer. |
+| `native.event` | Receipt of user-message, turn-start/end, abort, idle, helper lifecycle, queue-change or background-change notifications. Native event/interaction/agent/tool-call/message identities permit alignment, without payloads. Current Host epoch is recorded **before** this callback's projection; a late event is not proof it changed Host state. |
+| `native.sample` | Count/boolean projection from a control read that the Host already needed, including processing, active work, abortability, task/queue/MCP counts. No additional SDK calls are made. |
+
+Each boundary records Host send/receipt/operation/decision counters. Boundary
+records have `native: "unavailable"`: they do not pretend an earlier native read
+was a fresh snapshot. A diagnostic burst requests at most one observation from
+the next existing control read; `afterSequence` links that sample to the latest
+boundary preceding the read. There is no polling, retained native-state snapshot
+or guarantee that a later read occurs. Idle resource reads and streaming deltas
+do not continuously produce diagnostics.
+
+Samples are explicitly non-atomic. `readEpoch`, `readInteractionId`, read/current
+revisions, `sameHandle` and `native.sameRevision` expose observable races, not
+native transactional consistency. The public SDK does not expose `turnActive`,
+native pending-send admission, operation/background-notification gate owners,
+deferred-idle scheduling or actual queue-drain skip/resume; these remain
+`"unavailable"`. A consumed user-message receipt or changed queue count must not
+be described as evidence of a particular drain gate or owner.
+
+Records contain no prompts, answers, message bodies, attachment metadata/bytes,
+control tokens, raw native payloads or error messages. Logger failures issue one
+constant warning per Engine and cannot reject a control or callback. Diagnostics
+do not clear queues, retry sends, cancel extra work, force idle or change the
+meaning of Stop/Interrupt. Keep target epoch/interaction separate from current
+epoch/interaction when aligning a late ACK with a newly started turn.
+
 ## Repository map
 
 | Path | Contents |

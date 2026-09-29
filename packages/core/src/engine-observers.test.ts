@@ -192,7 +192,7 @@ test('readonly native observer reports invalid or throwing SDK workspace as unkn
   assert.equal(activeState(h, session.id).turnEpoch, epoch + 1, 'Observer metadata failure cannot prevent native control delivery');
   assert.equal(observations.length, invalid.length + 1);
   assert.equal(Object.hasOwn(observations.at(-1)!, 'workspacePath'), false);
-  assert.deepEqual(reports.at(-1), {
+  assert.deepEqual(reports.findLast(report => report.message === 'native observer failed'), {
     message: 'native observer failed', data: { sessionId: session.id, error: 'Synthetic workspace getter failure' },
   });
   assert.deepEqual(nativeCalls(session), calls);
