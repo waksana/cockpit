@@ -1,7 +1,7 @@
-// Chat-local design roles. Shared Markdown keeps its existing defaults outside
-// Chat; component geometry is independent of the surrounding window width.
+// Shared Chat/Composer presentation roles. Public Composer supplies these itself;
+// consumers do not depend on a Chat ancestor or private CSS.
 @use '../responsive';
-.chat, .chat-topbar {
+@mixin type-roles {
   --chat-text-body: var(--messages-text-size);
   --chat-text-secondary: var(--host-text-body);
   --chat-text-label: var(--font-size-13);
@@ -14,7 +14,9 @@
   --chat-font-mono: var(--host-font-mono);
 }
 
-.chat {
+.chat, .chat-topbar { @include type-roles; }
+
+@mixin spacing {
   // Explicit dense-reading exceptions; standalone touch actions still use --ck-control-size.
   --chat-row-process: 28px;
   --chat-control-compact: 32px;
@@ -38,6 +40,35 @@
 
   row-gap: var(--chat-gap-region);
   @media (max-width: responsive.$phone-max) { --chat-gutter: var(--host-space-md); }
+}
+
+.chat { @include spacing; }
+
+@mixin palette {
+  --chat-placeholder-color: var(--host-color-placeholder-contrast);
+  --host-color-text: var(--host-color-text-contrast);
+  --host-color-muted: var(--host-color-muted-contrast);
+  --host-color-faint: var(--host-color-muted-contrast);
+  --primary-text-color: var(--host-color-text);
+  --secondary-text-color: var(--host-color-muted);
+  --tertiary-text-color: var(--host-color-faint);
+  --chat-accent-ink: color-mix(in srgb, var(--host-color-accent) 20%, var(--host-color-text));
+  --chat-link-ink: color-mix(in srgb, var(--host-color-link) 20%, var(--host-color-text));
+  --chat-danger-ink: color-mix(in srgb, var(--host-color-danger) 60%, var(--host-color-text));
+  --ck-color-text: var(--host-color-text);
+  --ck-color-muted: var(--host-color-muted);
+  --ck-color-accent: var(--chat-accent-ink);
+  --ck-color-danger: var(--chat-danger-ink);
+  --ck-color-on-accent: var(--host-color-surface);
+  color: var(--host-color-text);
+  :is(button, a, textarea, summary, [tabindex]):focus-visible {
+    outline: 2px solid var(--chat-accent-ink);
+    outline-offset: -2px;
+  }
+  @media (prefers-color-scheme: dark) {
+    --chat-danger-ink: color-mix(in srgb, var(--host-color-danger) 20%, var(--host-color-text));
+  }
+  button:disabled { cursor: default; }
 }
 
 @mixin column {

@@ -75,7 +75,7 @@ const fixtures = [
   ` })),
   ...['frontend-18', 'frontend-19'].map(name => ({ name, types: ['react'], lib: ['ES2022', 'DOM'], source: `
     import type * as React from 'react';
-    import type { ModuleFrontend, ModuleGlobalComponent, ModuleFrontendContext, ModuleAsset, ComposerProps, SettingsProps, ModuleComponentMiddleware, DraftOwnerOptions, DraftOwner, DraftTransportOutcome } from '@waksana/cockpit-module-sdk/frontend';
+    import type { ModuleFrontend, ModuleGlobalComponent, ModulePage, ModuleNavigation, LegacyModuleFrontendContext, ModuleFrontendContext, ModuleAsset, ComposerProps, SettingsProps, ModuleComponentMiddleware, DraftOwnerOptions, DraftOwner, DraftTransportOutcome } from '@waksana/cockpit-module-sdk/frontend';
     declare const frontend: ModuleFrontendContext;
     declare const asset: ModuleAsset;
     declare const props: ComposerProps;
@@ -100,10 +100,21 @@ const fixtures = [
     const settingsVersion: 1 = frontend.settingsVersion;
     const globalVersion: 1 | undefined = frontend.globalComponentVersion;
     const globalComponent: ModuleGlobalComponent = { id: 'dialog', component: () => null };
-    const declaration: ModuleFrontend = { apiVersion: 3, globalComponents: [globalComponent] };
+    const pageVersion: 1 = frontend.pageVersion;
+    const navigation: ModuleNavigation = frontend.navigation;
+    const path: string = navigation.path('main');
+    const page: ModulePage = { id: 'main', component: () => null };
+    navigation.navigate(page.id);
+    navigation.home();
+    declare const legacy: LegacyModuleFrontendContext;
+    // @ts-expect-error Legacy activation does not receive page navigation.
+    legacy.navigation.home();
+    // @ts-expect-error The host does not pass private router/session props to pages.
+    const badPage: ModulePage = { id: 'bad', component: (props: { router: unknown }) => null };
+    const declaration: ModuleFrontend = { apiVersion: 3, globalComponents: [globalComponent], pages: [page] };
     // @ts-expect-error Global components receive no host session props.
     const badGlobal: ModuleGlobalComponent = { id: 'bad', component: (props: { sessionId: string }) => null };
-    void [globalVersion, declaration, badGlobal];
+    void [globalVersion, declaration, badGlobal, pageVersion, path, badPage];
     declare const settings: SettingsProps;
     const settingsChildren: React.ReactNode = settings.children;
     const labelledBy: string | undefined = settings['aria-labelledby'];

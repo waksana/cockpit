@@ -134,6 +134,13 @@ or composer wrappers. See the canonical [owner/recovery contract](module-contrac
 before implementing an adapter. The SDK publishes types, not a second React
 component implementation or a browser store.
 
+The compatible Web v3 page addition has its own `pageVersion: 1` check and
+`ModulePage` / `ModuleNavigation` types. It does not change the frontend API
+major, legacy v2 or global-component behavior. See
+[module pages](module-contract.md#module-pages) for URL ownership, navigation,
+activation and revocation. SDK types alone do not prove a host advertises
+`page.v1` in its deployment descriptor.
+
 An SDK version is not proof that every host version supports a module. Module
 releases still record and test their exact host compatibility in the
 [module catalog](modules.md) and their own release material. Pin the SDK version

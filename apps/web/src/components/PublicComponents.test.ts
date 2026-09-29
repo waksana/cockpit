@@ -14,6 +14,7 @@ import { fixtureSchema, memoryDraftStorage, type FixtureData } from '../test/dra
 import { ModuleRuntimeProvider } from './ModuleComponents';
 import { MessageContent } from './MessageContent';
 import { Composer } from './Composer';
+import { ComposerCard, ComposerSurface } from './ComposerSurface';
 import { PendingDecisionCard } from './PendingDecision';
 import { ManagementShell } from './ManagementShell';
 
@@ -129,6 +130,33 @@ test('explicit v3 negotiation occurs before one activation; absent export remain
     assert.match(String(mismatch.errors[0]), /API v[23] is required/);
     mismatch.runtime.stop();
   }
+});
+
+test('standalone public Composer owns the same single surface/card used by the native dock', async t => {
+  let context!: ModuleFrontendContext, draft!: DraftOwner;
+  const f = fixture({ modern: { frontendApiVersion: 3, activate: ctx => {
+    context = ctx; draft = owner(ctx); return { apiVersion: 3 };
+  } } });
+  t.after(() => f.runtime.stop());
+  await f.runtime.start();
+  const PublicComposer = context.components.get('composer');
+  const element = () => h(PublicComposer, {
+    draft: draft.reference, operation: 'prompt', busy: false, disabled: false, sendBlocked: false,
+    onTextChange: text => { draft.editText(text); }, onSubmit: () => {},
+  });
+  const mounted = render(element());
+  const assertSurface = () => {
+    assert.equal(document.querySelectorAll('.chat-input-area').length, 1);
+    assert.equal(document.querySelectorAll('.chat-input-card').length, 1);
+    assert.equal(document.querySelectorAll('.chat-input-card-body').length, 1);
+    assert.ok(document.querySelector('.chat-input-area > .chat-input-card > .chat-input-card-body .chat-composer textarea'));
+    assert.equal(document.querySelector('.chat'), null, 'public use requires no private Chat ancestor');
+  };
+  assertSurface();
+  const standalone = mounted.container.innerHTML;
+  mounted.rerender(h(ComposerSurface, null, h(ComposerCard, null, element())));
+  assertSurface();
+  assert.equal(mounted.container.innerHTML, standalone, 'host embedding and standalone consumption share the exact presentation');
 });
 
 test('generic composer recursively uses the public directory, preserving DOM refs, input and IME', async () => {

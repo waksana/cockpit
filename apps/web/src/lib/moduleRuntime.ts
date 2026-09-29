@@ -69,6 +69,13 @@ function record(value: unknown): value is Record<string, unknown> {
 }
 function nonempty(value: unknown): value is string { return typeof value === 'string' && !!value.trim(); }
 
+export function modulePagePath(moduleId: string, pageId: string): string {
+  if (![moduleId, pageId].every(id => typeof id === 'string' && /^[a-z][a-z0-9-]{0,63}$/.test(id))) {
+    throw new Error('Invalid module page ID');
+  }
+  return `/modules/${moduleId}/${pageId}`;
+}
+
 function backendUrl(base: string, page: string): URL {
   const url = new URL(`${base.replace(/\/+$/, '')}/`, page);
   if (!/^https?:$/.test(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('Invalid module backend URL');
@@ -130,12 +137,13 @@ function claimId(ids: Set<string>, id: unknown): void {
 function validateFrontend(input: unknown, ids: Set<string>, version: 2 | 3): ModuleFrontend | LegacyModuleFrontend {
   if (!record(input) || input.apiVersion !== version) throw new Error(`Module frontend API v${version} is required`);
   const allowed = new Set(['apiVersion', 'writes', 'sends', 'components', 'markdown', 'menus', 'globalComponents', 'dispose']);
+  if (version === 3) allowed.add('pages');
   for (const key of Object.keys(input)) if (!allowed.has(key)) throw new Error(`Unsupported module frontend field: ${key}`);
   if (input.writes !== undefined && (!Array.isArray(input.writes)
     || input.writes.some(value => value !== 'text'))) throw new Error('Invalid module writes declaration');
   if (input.sends !== undefined && (!Array.isArray(input.sends)
     || input.sends.some(value => value !== 'draft'))) throw new Error('Invalid module sends declaration');
-  for (const key of ['components', 'markdown', 'menus', 'globalComponents'] as const) {
+  for (const key of ['components', 'markdown', 'menus', 'globalComponents', 'pages'] as const) {
     const entries = input[key];
     if (entries === undefined) continue;
     if (!Array.isArray(entries)) throw new Error(`Invalid module ${key}`);
@@ -144,7 +152,7 @@ function validateFrontend(input: unknown, ids: Set<string>, version: 2 | 3): Mod
       claimId(ids, entry.id);
       const fields = key === 'components' ? ['id', 'boundary', 'order', 'wrap']
         : key === 'menus' ? ['id', 'menu', 'order', 'getState', 'subscribe', 'onSelect']
-          : key === 'globalComponents' ? ['id', 'component'] : ['id', 'matches', 'component'];
+          : key === 'globalComponents' || key === 'pages' ? ['id', 'component'] : ['id', 'matches', 'component'];
       if (Object.keys(entry).some(field => !fields.includes(field))) throw new Error(`Unsupported module ${key} registration field`);
       if (key === 'components') {
         if (!BOUNDARIES.has(entry.boundary as Boundary) || (version === 2 && entry.boundary === 'button')
@@ -156,8 +164,9 @@ function validateFrontend(input: unknown, ids: Set<string>, version: 2 | 3): Mod
           throw new Error('Invalid module menu registration');
         }
         if (entry.order !== undefined && (typeof entry.order !== 'number' || !Number.isFinite(entry.order))) throw new Error('Invalid module order');
-      } else if (key === 'globalComponents') {
-        if (!component(entry.component)) throw new Error('Invalid global component');
+      } else if (key === 'globalComponents' || key === 'pages') {
+        if (!component(entry.component)) throw new Error(`Invalid module ${key} component`);
+        if (key === 'pages') modulePagePath('module', entry.id as string);
       } else {
         if (!component(entry.component) || typeof entry.matches !== 'function') throw new Error('Invalid Markdown renderer');
       }
@@ -172,6 +181,7 @@ function validateFrontend(input: unknown, ids: Set<string>, version: 2 | 3): Mod
     markdown: Object.freeze((input.markdown as object[] ?? []).map(entry => Object.freeze({ ...entry }))),
     menus: Object.freeze((input.menus as object[] ?? []).map(entry => Object.freeze({ ...entry }))),
     globalComponents: Object.freeze((input.globalComponents as object[] ?? []).map(entry => Object.freeze({ ...entry }))),
+    ...(version === 3 ? { pages: Object.freeze((input.pages as object[] ?? []).map(entry => Object.freeze({ ...entry }))) } : {}),
   }) as unknown as ModuleFrontend;
 }
 
@@ -213,6 +223,8 @@ export class ModuleRuntime {
   private readonly invalidationListeners = new Map<string, Set<() => void>>();
   private readonly eventListeners = new Map<string, Set<(payload: ModuleEventPayload) => void>>();
   private controller?: AbortController;
+  private pageStatus: 'idle' | 'loading' | 'ready' | 'stopped' = 'idle';
+  private navigation?: (path: string) => void;
   private readonly reports = new Set<string>();
   private readonly componentCache = new Map<object, { boundary: Boundary; entries: readonly object[]; component: unknown }>();
   private readonly knownDrafts = new Set<DraftCore>();
@@ -248,6 +260,12 @@ export class ModuleRuntime {
     this.publicProxies.set(name, PublicProxy as React.ComponentType<never>);
   }
   getSnapshot = (): readonly LoadedModule[] => this.snapshot;
+  getPageStatus = () => this.pageStatus;
+  /** Installed by the existing App router, never exposed to modules. */
+  connectNavigation(navigate: (path: string) => void): () => void {
+    this.navigation = navigate;
+    return () => { if (this.navigation === navigate) this.navigation = undefined; };
+  }
   getViewSnapshot = (): HostSnapshot => this.view;
   getChatWindowSnapshot = (): ChatWindowSnapshot => this.readChatWindow();
   updateChatWindow(read: () => ChatWindowSnapshot): void {
@@ -309,6 +327,8 @@ export class ModuleRuntime {
     if (this.controller) return;
     const controller = new AbortController();
     this.controller = controller;
+    this.pageStatus = 'loading';
+    this.publish([...this.snapshot]);
     try {
       const backend = backendUrl(baseUrl, this.options.pageUrl ?? window.location.href);
       const fetcher = this.options.fetch ?? globalThis.fetch;
@@ -330,6 +350,12 @@ export class ModuleRuntime {
           pending.push(this.activate(asset, fetcher, controller.signal)
             .catch(error => { if (!controller.signal.aborted) this.report(error); }));
         } catch (error) { if (!controller.signal.aborted) this.report(error); }
+        finally {
+          if (this.controller === controller && !controller.signal.aborted) {
+            this.pageStatus = 'ready';
+            this.publish([...this.snapshot]);
+          }
+        }
       }
       await Promise.all(pending);
       if (!controller.signal.aborted) this.publish(this.snapshot);
@@ -384,10 +410,29 @@ export class ModuleRuntime {
       return unsubscribe;
     };
     parentSignal.addEventListener('abort', stop, { once: true });
+    const navigate = (path: string) => {
+      controller.signal.throwIfAborted();
+      if (!this.snapshot.some(module => module.instanceId === owner)) throw new Error('Module navigation requires successful activation');
+      if (!this.navigation) throw new Error('Module page router is unavailable');
+      this.navigation(path);
+    };
     const makeContext = (version: 2 | 3): ModuleFrontendContext | LegacyModuleFrontendContext => ({
       uiVersion: 1, uiSurfaceVersion: 1, menuVersion: 1, settingsVersion: 1, globalComponentVersion: 1, chatWindowVersion: 1, composerInputVersion: 1, draftLifecycleVersion: 1,
       ...(version === 3
-        ? { apiVersion: 3, draftSubmissionVersion: 2, publicComponentsVersion: 1, draftOwnerVersion: 1, components: this.components }
+        ? {
+          apiVersion: 3, draftSubmissionVersion: 2, publicComponentsVersion: 1, draftOwnerVersion: 1, components: this.components,
+          pageVersion: 1,
+          navigation: Object.freeze({
+            path: (pageId: string) => { controller.signal.throwIfAborted(); return modulePagePath(asset.id, pageId); },
+            navigate: (pageId: string) => {
+              controller.signal.throwIfAborted();
+              const path = modulePagePath(asset.id, pageId);
+              if (frontend?.apiVersion !== 3 || !frontend.pages?.some(page => page.id === pageId)) throw new Error(`Unknown module page: ${pageId}`);
+              navigate(path);
+            },
+            home: () => navigate('/'),
+          }),
+        }
         : { apiVersion: 2, draftSubmissionVersion: 1 }),
       moduleId: asset.id, react: React, createPortal, apiBase: asset.apiBase,
       config: asset.config, signal: controller.signal, report: this.report,
@@ -564,6 +609,7 @@ export class ModuleRuntime {
     this.batchDraftChanges(() => {
       this.controller?.abort();
       this.controller = undefined;
+      this.pageStatus = 'stopped';
       this.publish([]);
     });
   }

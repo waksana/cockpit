@@ -687,6 +687,9 @@ export interface ModuleFrontendContext {
   readonly publicComponentsVersion: 1;
   readonly draftOwnerVersion: 1;
   readonly components: PublicComponents;
+  /** Namespaced pages in the existing host SPA. Check independently of Web v3. */
+  readonly pageVersion: 1;
+  readonly navigation: ModuleNavigation;
   /** Declarative global/session menu capability; not a component boundary. */
   readonly menuVersion: 1;
   /** Component middleware for the shared Settings preference content. */
@@ -724,7 +727,7 @@ export interface ModuleFrontendContext {
 
 /**
  * All IDs are nonempty and unique within this module across state services,
- * draft schemas, menus, global components, middleware and Markdown. The host stages the entire activation
+ * draft schemas, menus, pages, global components, middleware and Markdown. The host stages the entire activation
  * before publishing; old slot fields are rejected. Export frontendApiVersion = 3
  * from the bundle to select this context before the single activate call.
  *
@@ -749,6 +752,8 @@ export interface ModuleFrontend {
   readonly menus?: readonly ModuleMenuRegistration[];
   /** Stable across navigation/menu changes; requires globalComponentVersion: 1. */
   readonly globalComponents?: readonly ModuleGlobalComponent[];
+  /** Route-owned components; requires pageVersion: 1. Not global overlays. */
+  readonly pages?: readonly ModulePage[];
   readonly components?: readonly ModuleComponentMiddleware[];
   readonly markdown?: readonly MarkdownRenderer[];
   dispose?(): void;
@@ -766,6 +771,22 @@ export interface ModuleFrontend {
 export interface ModuleGlobalComponent {
   readonly id: string;
   readonly component: React.ComponentType;
+}
+
+/** The host owns /modules/:moduleId/:pageId. IDs match ^[a-z][a-z0-9-]{0,63}$. */
+export interface ModulePage {
+  readonly id: string;
+  /** No host props; capture activation context and services in the closure. */
+  readonly component: React.ComponentType;
+}
+
+export interface ModuleNavigation {
+  /** Pure namespaced URL construction, including during activation. */
+  path(pageId: string): string;
+  /** Push a registered page after successful activation through the host router. */
+  navigate(pageId: string): void;
+  /** Navigate to the host homepage, not arbitrary browser history. */
+  home(): void;
 }
 
 export type ActivateFrontend = (context: ModuleFrontendContext) => ModuleFrontend | Promise<ModuleFrontend>;
@@ -788,12 +809,12 @@ export type LegacyModuleComponentMiddleware = {
   };
 }[keyof LegacyModuleComponentProps];
 export interface LegacyModuleFrontendContext extends Omit<ModuleFrontendContext,
-  'apiVersion' | 'publicComponentsVersion' | 'draftOwnerVersion' | 'components' | 'draftSubmissionVersion' | 'state'> {
+  'apiVersion' | 'publicComponentsVersion' | 'draftOwnerVersion' | 'components' | 'draftSubmissionVersion' | 'state' | 'pageVersion' | 'navigation'> {
   readonly apiVersion: 2;
   readonly draftSubmissionVersion: 1;
   readonly state: Omit<ModuleStateRegistry, 'createDraft'>;
 }
-export interface LegacyModuleFrontend extends Omit<ModuleFrontend, 'apiVersion' | 'components'> {
+export interface LegacyModuleFrontend extends Omit<ModuleFrontend, 'apiVersion' | 'components' | 'pages'> {
   readonly apiVersion: 2;
   readonly components?: readonly LegacyModuleComponentMiddleware[];
 }

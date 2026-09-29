@@ -1,5 +1,10 @@
 [
   {
+    "version": "0.8.0",
+    "kind": "additive",
+    "summary": "Add Web v3 pageVersion: 1, declarative namespaced module pages and activation-scoped navigation through the existing host SPA router. Preserve legacy v2 and global component behavior."
+  },
+  {
     "version": "0.7.0",
     "kind": "breaking",
     "summary": "Introduce Web v3 public components, generic owner-controlled durable drafts and explicit receipt reconciliation. Separate display message identity from native origin. Keep legacy Web v2 activation native-only without exposing generic drafts or double activation."

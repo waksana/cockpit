@@ -1,12 +1,12 @@
 # Module contract
 This document defines the current Cockpit module host contract. Version numbers in this file are API capability versions, not release pairings: manifest/backend API v1, Web API v3 (with native-only v2 compatibility), public UI v1, `menuVersion: 1`, `settingsVersion: 1`, `uiSurfaceVersion: 1`, `chatWindowVersion: 1`, `composerInputVersion: 1`, `draftLifecycleVersion: 1`,
-`draftSubmissionVersion: 2`, `publicComponentsVersion: 1`, `draftOwnerVersion: 1`, and `context.serviceReadyVersion: 1`. Host/module release pairings belong in the [module catalog](modules.md) and GitHub Releases.
+`draftSubmissionVersion: 2`, `publicComponentsVersion: 1`, `draftOwnerVersion: 1`, `pageVersion: 1`, and `context.serviceReadyVersion: 1`. Host/module release pairings belong in the [module catalog](modules.md) and GitHub Releases.
 
 Product boundaries are in [R1-R8](product-requirements.md). Business contracts for individual modules, such as File or Notification, stay in their own repositories; this document only defines host/module integration.
 
 ## 1. Supported scope
 The host verifies trusted local `.tgz` packages into immutable install directories, imports built backend JavaScript in the main Node process, serves digest-bound module API/assets, and lets same-package ESM/CSS reuse host React, theme, state and public component boundaries without creating another SPA root. Loaded
-modules may observe declared native SDK projections for loaded sessions, declare global/session menus, wrap real semantic components, register module state/services and draft schemas, and render parsed Markdown link/image nodes. The host owns base prompt/decision draft state and native send/ACK; modules extend drafts
+modules may observe declared native SDK projections for loaded sessions, declare global/session menus and namespaced pages, wrap real semantic components, register module state/services and draft schemas, and render parsed Markdown link/image nodes. The host owns base prompt/decision draft state and native send/ACK; modules extend drafts
 only through scoped declarations. Install, enable, disable, migrate and config changes take effect on a later cold start, not by hot-load, hot-unload or restart. Current APIs do not provide arbitrary page/router registration, a workflow engine, generic business slots, browser notification policy, file library pages,
 remote signed URL installation, pure-content packages or frontend-only packages. Unknown manifest fields and old frontend slots are rejected.
 <a id="package-install"></a>
@@ -269,6 +269,7 @@ if (context.serviceReadyVersion !== 1) {
 | Captured send | `draftSubmissionVersion: 2`, `sends: ['draft']`, `captureSend().send(expectedRevision)` | Same owner transaction as the button; one user-consent checkpoint, no caller-selected target or payload. |
 | Draft schema | `context.state.registerDraft(...)` | Module owns validation, content test, projection, ACK, and optional persistence for its field only. |
 | Menus | `menus`, `getState`, optional `subscribe`, `onSelect` | Global/session commands; native items remain first; no page/router registration. |
+| Pages | `pageVersion: 1`, `pages`, `context.navigation.path/navigate/home` | This module's namespaced SPA pages and explicit homepage navigation; no arbitrary router access. |
 | Components | `publicComponentsVersion: 1`, `context.components.get(name)`, `components`, `wrap(Base)` | Same public entry for host and module consumers; stable runtime/name identity and existing middleware. |
 | Shared settings | `settingsVersion: 1`, `SettingsProps`, `components` with `boundary: 'settings'` | Append module-owned sections to host preference content; no generic settings store, native action or page registration. |
 | Composer input | `composerInputVersion: 1`, `ComposerInputProps` | Actual controlled textarea; preserve value/onChange/events/ref and host submit gate. |
@@ -618,12 +619,13 @@ Module UI follows the interaction and structure rules in [development](developme
 | --- | --- |
 | Menus | Declare actions and presentation for existing global/session menus. |
 | Global components | Mount session-independent UI in the host React tree. |
+| Pages | Register namespaced routes in the existing SPA; the host owns navigation and page lifetime. |
 | Component middleware | Enhance real host components through props/children/ref. |
 | State/service/draft | Own module business state, subscriptions, async actions, and draft schemas. |
 | Markdown renderers | Replace parsed link/image rendering only. |
 `context.createPortal(children, container)` is the host ReactDOM `createPortal`. It is not page registration or dialog management. Native dialogs may portal to `document.body`; modules must close/unmount on component unmount or scope revocation and must not mutate private host DOM.
 
-`ModuleFrontend` fields: `apiVersion: 3`; optional `writes: ['text']`; optional `sends: ['draft']`; optional `menus`, `globalComponents`, `components`, `markdown`; optional `dispose`. Text writes never grant send permission. Menus sort after native items. Markdown handles link/image only. State disposers are managed by the state system.
+`ModuleFrontend` fields: `apiVersion: 3`; optional `writes: ['text']`; optional `sends: ['draft']`; optional `menus`, `pages`, `globalComponents`, `components`, `markdown`; optional `dispose`. Text writes never grant send permission. Menus sort after native items. Markdown handles link/image only. State disposers are managed by the state system.
 
 An entry without the version export is activated exactly once against the legacy
 v2 context (`draftSubmissionVersion: 1`), without `components.get` or
@@ -634,6 +636,59 @@ Generic owners never fabricate a session to activate an old enhancement.
 This is an activation/props adapter, not a second component library or a second
 File/Speech activation. New consumers must explicitly check the v3 capabilities;
 an SDK dependency alone does not establish host support.
+
+<a id="module-pages"></a>
+### Module pages and navigation
+
+Web v3 provides the independent `context.pageVersion === 1` capability, advertised
+as `page.v1` in the host deployment descriptor. Check it before using
+`context.navigation` or returning `pages: readonly ModulePage[]`. Legacy v2
+receives neither capability nor navigation and cannot register pages. Missing
+support is an incompatibility, not permission to substitute a dialog or private
+router.
+
+A page is `{ id: string, component: React.ComponentType }`, with no host props.
+Capture activation context and module services in the component closure. Page IDs
+match `^[a-z][a-z0-9-]{0,63}$` and share the existing registration namespace with
+services, schemas, menus, middleware, global components and Markdown renderers.
+Malformed IDs, duplicates, arbitrary path declarations and invalid components
+reject the entire activation with its existing rollback.
+
+The host owns `/modules/:moduleId/:pageId` in the existing React Router tree.
+Modules cannot claim a host path or access a private router/store. The public
+navigation object has only:
+
+| Method | Meaning |
+| --- | --- |
+| `path(pageId)` | Construct this module's namespaced URL from a valid page ID, including during activation. This does not establish page availability. |
+| `navigate(pageId)` | Push this module's registered page through the host router after successful activation. Unknown pages or an absent router throw without navigating. |
+| `home()` | Push the explicit host homepage `/`, never blind history-back to an external site. Requires successful activation and a connected host router. |
+
+All methods reject after activation revocation. Do not use `window.location`,
+another React root/router, hidden Chat, or a portal to simulate a page. A global
+menu's `onSelect` can call `context.navigation.navigate('main')`; it does not need
+a global component. Ordinary anchors can use `path` for direct URLs, while
+`navigate` keeps interactive navigation inside the SPA.
+
+Only the current page mounts, after successful activation. Direct URL entry and
+refresh wait for asynchronous activation; the existing router owns history,
+back and forward. A module route replaces the current workspace/Chat, releasing
+visible session ownership and unmounting its editor, not covering it with an
+overlay. Leaving the route unmounts the page but does not revoke its module,
+dispose its services, clear an owner draft or cancel an already accepted write.
+Keep durable business state in module services/owner drafts, not only page state.
+Existing `globalComponents` retain their original navigation-independent lifetime.
+
+Unknown, unavailable or failed pages provide an explicit homepage link and page
+reload recovery; loading and lazy rendering have a local loading state. There is
+no automatic retry or recreation of a failed module. Render, effect and cleanup
+failures use the existing module error boundary and revoke only their owning
+activation. Empty boundaries remain briefly after navigation or revocation so
+cleanup failures cannot escape to the host or revoke a replacement activation.
+Module stop/revocation unmounts pages; a later activation has a fresh React
+lifetime even for the same digest. As with global components, services can already
+be revoked during React cleanup; event handlers and asynchronous actions remain
+the module's responsibility.
 
 <a id="global-components"></a>
 ### Session-independent global components
