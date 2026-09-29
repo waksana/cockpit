@@ -31,7 +31,7 @@ test('the package serves its own assets without adopting a retired external asse
 
 test('SPA fallback serves only recognized application routes', async () => {
   for (const path of ['/', '/session/fixture', '/session/fixture/info', '/mcp', '/skills/project',
-    '/skills/module/fixture/opaque-resource']) {
+    '/skills/module/fixture/opaque-resource', '/modules/example/main', '/modules/example/main/']) {
     const response = await app.inject({ method: 'GET', url: path });
     assert.equal(response.statusCode, 200, path);
     assert.match(response.headers['content-type'] ?? '', /text\/html/);
@@ -45,5 +45,33 @@ test('SPA fallback serves only recognized application routes', async () => {
     assert.equal(response.statusCode, 404, path);
     assert.equal(response.headers.location, undefined, path);
     assert.deepEqual(response.json(), { error: 'not found' });
+  }
+});
+
+test('real HTTP direct entry and refresh serve only exact namespaced module page URLs', async () => {
+  const origin = await app.listen({ host: '127.0.0.1', port: 0 });
+  for (const path of ['/modules/example/main', '/modules/example/main/', '/modules/example/main?refresh=1',
+    '/modules/unavailable/unknown']) {
+    const response = await fetch(`${origin}${path}`);
+    assert.equal(response.status, 200, path);
+    assert.match(response.headers.get('content-type') ?? '', /text\/html/, path);
+    assert.match(await response.text(), /<title>Fixture app<\/title>/, path);
+  }
+  for (const path of ['/modules', '/modules/example', '/modules/example/main/extra',
+    '/modules/Example/main', '/modules/example/Main', '/modules/example/main.js',
+    `/modules/${'a'.repeat(65)}/main`, `/modules/example/${'a'.repeat(65)}`,
+    '/_modules/example/api', '/intent/modules/list', '/assets/missing.js']) {
+    const response = await fetch(`${origin}${path}`, { redirect: 'manual' });
+    assert.equal(response.status, 404, path);
+    assert.equal(response.headers.get('location'), null, path);
+    assert.deepEqual(await response.json(), { error: 'not found' }, path);
+  }
+  for (const path of ['/modules/example/main//', '/modules//main', '/modules/example/%2Fmain']) {
+    const response = await fetch(`${origin}${path}`, { redirect: 'manual' });
+    // Static-file path normalization may reject malformed separators before the SPA fallback.
+    assert.ok(response.status === 403 || response.status === 404, path);
+    assert.doesNotMatch(response.headers.get('content-type') ?? '', /text\/html/, path);
+    assert.equal(response.headers.get('location'), null, path);
+    await response.text();
   }
 });

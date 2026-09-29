@@ -655,6 +655,9 @@ Malformed IDs, duplicates, arbitrary path declarations and invalid components
 reject the entire activation with its existing rollback.
 
 The host owns `/modules/:moduleId/:pageId` in the existing React Router tree.
+Its built-in HTTP server serves the SPA for that exact path, with an optional
+trailing slash, so direct URLs and refreshes work without a reverse proxy.
+Unmatched module/API/asset paths are not a general SPA fallback.
 Modules cannot claim a host path or access a private router/store. The public
 navigation object has only:
 

@@ -12,7 +12,7 @@ import { useCockpit } from '../net/store';
 import App from '../App';
 
 const h = React.createElement;
-function fixture(t: TestContext, activate: ActivateFrontend, version: 2 | 3 = 3) {
+function fixture(t: TestContext, activate: ActivateFrontend, version: 2 | 3 = 3, bootstrap?: () => Response) {
   const prior = useCockpit.getState();
   installWorkspaceFixture(useCockpit);
   const reports: unknown[] = [];
@@ -20,7 +20,7 @@ function fixture(t: TestContext, activate: ActivateFrontend, version: 2 | 3 = 3)
   const digest = 'a'.repeat(64);
   const runtime = new ModuleRuntime({
     pageUrl: 'https://fixture.invalid/',
-    fetch: async () => Response.json({ errors: [], modules: [{
+    fetch: async () => bootstrap ? bootstrap() : Response.json({ errors: [], modules: [{
       id: 'example', name: 'Example', version: '1.0.0', digest, config: {}, styles: [],
       apiBase: `/_modules/example/${digest}/api`, entry: `/_modules/assets/example/${digest}/entry.js`,
     }] }),
@@ -116,6 +116,10 @@ test('direct URL waits for late activation and remounting the App restores that 
   let starting!: Promise<void>;
   act(() => { starting = f.runtime.start(); });
   assert.ok(screen.getByRole('link', { name: '返回主页' }));
+  await waitFor(() => assert.equal(f.contexts.length, 1));
+  assert.equal(f.runtime.getPageStatus(), 'loading', 'enumeration is not completed activation');
+  assert.ok(screen.getByText('正在加载模块页面…'));
+  assert.equal(screen.queryByText(/模块页面不存在或已不可用/), null);
   await act(async () => { finish(); await starting; });
   assert.ok(screen.getByRole('heading', { name: 'Late page' }));
   first.view.unmount();
@@ -124,6 +128,22 @@ test('direct URL waits for late activation and remounting the App restores that 
   assert.equal(mounts, 2);
   assert.equal(cleanups, 1);
 });
+
+for (const result of ['empty', 'failed'] as const) {
+  test(`${result} bootstrap settles the direct page route instead of leaving an endless loading state`, async t => {
+    const f = fixture(t, () => assert.fail('No module should activate'), 3,
+      () => result === 'empty' ? Response.json({ errors: [], modules: [] }) : new Response(null, { status: 503 }));
+    f.mount('/modules/example/main');
+    assert.ok(screen.getByText('正在加载模块页面…'));
+    await act(() => f.runtime.start());
+    assert.equal(f.runtime.getPageStatus(), 'ready');
+    assert.equal(screen.queryByText('正在加载模块页面…'), null);
+    assert.ok(screen.getByText(/模块页面不存在或已不可用/));
+    assert.ok(screen.getByRole('link', { name: '返回主页' }));
+    assert.ok(screen.getByRole('button', { name: '刷新页面' }));
+    assert.equal(f.reports.length, result === 'empty' ? 0 : 1);
+  });
+}
 
 test('the existing global menu opens a page from an empty homepage without inventing a session', async t => {
   const f = fixture(t, context => ({

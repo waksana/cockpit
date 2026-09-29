@@ -350,16 +350,15 @@ export class ModuleRuntime {
           pending.push(this.activate(asset, fetcher, controller.signal)
             .catch(error => { if (!controller.signal.aborted) this.report(error); }));
         } catch (error) { if (!controller.signal.aborted) this.report(error); }
-        finally {
-          if (this.controller === controller && !controller.signal.aborted) {
-            this.pageStatus = 'ready';
-            this.publish([...this.snapshot]);
-          }
-        }
       }
       await Promise.all(pending);
-      if (!controller.signal.aborted) this.publish(this.snapshot);
     } catch (error) { if (!controller.signal.aborted) this.report(error); }
+    finally {
+      if (this.controller === controller && !controller.signal.aborted) {
+        this.pageStatus = 'ready';
+        this.publish([...this.snapshot]);
+      }
+    }
   }
   private async activate(asset: ModuleAsset, fetcher: typeof fetch, parentSignal: AbortSignal) {
     const controller = new AbortController();
