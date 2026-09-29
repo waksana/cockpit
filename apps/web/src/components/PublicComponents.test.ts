@@ -108,11 +108,13 @@ test('explicit v3 negotiation occurs before one activation; absent export remain
   assert.equal(activations, 2);
   assert.equal(current.apiVersion, 3);
   assert.equal(current.publicComponentsVersion, 1);
+  assert.equal(current.messagePresentationVersion, 1);
   assert.equal(current.draftOwnerVersion, 1);
   assert.equal(current.draftSubmissionVersion, 2);
   assert.equal(legacy.apiVersion, 2);
   assert.equal(legacy.draftSubmissionVersion, 1);
   assert.equal('components' in legacy, false);
+  assert.equal('messagePresentationVersion' in legacy, false);
   assert.equal('createDraft' in legacy.state, false);
   assert.equal(before, current.components.get('message'));
   assert.equal(before, current.components.get('message'));

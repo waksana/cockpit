@@ -1,5 +1,10 @@
 [
   {
+    "version": "0.9.0",
+    "kind": "additive",
+    "summary": "Add capability-gated messageList and chatMessage public components sharing native Chat row, Markdown, timestamp, spacing and attachment presentation without changing the existing message body middleware contract."
+  },
+  {
     "version": "0.8.0",
     "kind": "additive",
     "summary": "Add Web v3 pageVersion: 1, declarative namespaced module pages and activation-scoped navigation through the existing host SPA router. Preserve legacy v2 and global component behavior."

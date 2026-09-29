@@ -10,9 +10,10 @@ import { hasNewTranscriptContent } from '../../lib/transcriptActivity';
 export function useThreadScroll(session: ChatSession, { readOnly, connected, snapshotReady, onLoadMore }: {
   readOnly: boolean; connected: boolean; snapshotReady: boolean; onLoadMore: () => void;
 }) {
-  const scrollRef = useRef<HTMLDivElement | null>(null);
-  const contentRef = useRef<HTMLDivElement | null>(null);
+  const [viewport, scrollRef] = useState<HTMLDivElement | null>(null);
+  const [content, contentRef] = useState<HTMLDivElement | null>(null);
   const scrollOwnerRef = useRef<ThreadScroll | null>(null);
+  const retained = useRef<{ sessionId: string; position: ReturnType<ThreadScroll['snapshot']> } | null>(null);
   const [pageVisible, setPageVisible] = useState(() => typeof document === 'undefined' || document.visibilityState === 'visible');
   useEffect(() => {
     const visible = () => setPageVisible(document.visibilityState === 'visible');
@@ -32,50 +33,50 @@ export function useThreadScroll(session: ChatSession, { readOnly, connected, sna
   const [awayFromBottom, setAwayFromBottom] = useState(false);
   const previousMessages = useRef<ChatMessage[]>([]);
   useLayoutEffect(() => {
-    const el = scrollRef.current;
-    const content = contentRef.current;
-    if (!el || !content) return;
-    previousMessages.current = [];
-    const owner = observeThreadScroll(el, content, () => setHasNewContent(false), (active) => {
+    if (!viewport || !content) return;
+    const position = retained.current?.sessionId === session.sessionId ? retained.current.position : undefined;
+    if (!position) previousMessages.current = [];
+    const owner = observeThreadScroll(viewport, content, () => setHasNewContent(false), (active) => {
       const id = content.querySelector<HTMLElement>('[data-window-item-id]')?.getAttribute('data-window-item-id') ?? undefined;
       setHeldHead(active && id ? { sessionId: session.sessionId, id } : null);
-    }, setAwayFromBottom);
+    }, setAwayFromBottom, position);
     scrollOwnerRef.current = owner.scroll;
-    // A new view enters at latest; only this mounted owner retains reading anchors.
+    // Middleware may replace the actual nodes without ending this Thread's view.
     return () => {
+      retained.current = { sessionId: session.sessionId, position: owner.scroll.snapshot() };
       owner.dispose();
       scrollOwnerRef.current = null;
+      setHeldHead(null);
     };
-  }, [session.sessionId]);
+  }, [session.sessionId, viewport, content]);
 
   useLayoutEffect(() => {
     const owner = scrollOwnerRef.current;
     if (!owner || readOnly) return;
     return observeLocalSubmissions(session.sessionId, () => owner.follow());
-  }, [session.sessionId, readOnly]);
+  }, [session.sessionId, readOnly, viewport, content]);
 
   // Every mounted viewport owns its measured fill and near-head prefetch. A
   // retained native page proves neither two screens nor this viewport's size.
   // Existing rows stay visible; the separate scroll owner preserves the reader.
   useLayoutEffect(() => {
-    const el = scrollRef.current;
-    const content = contentRef.current;
-    if (!connected || !snapshotReady || !pageVisible || !el || !content || !session.materialized
+    if (!connected || !snapshotReady || !pageVisible || !viewport || !content || !session.materialized
       || session.loadingHistory || session.historyError || session.error || session.historyStale || prependHeld) return;
-    const needsFill = () => el.clientHeight > 0 && el.scrollHeight < el.clientHeight * 2;
-    return observeHistoryPrefetch(el, content, () => session.hasMore && !session.incompleteBoundary
-      && (needsFill() || !scrollOwnerRef.current?.following), onLoadMore, () => el.scrollTop, needsFill);
+    const needsFill = () => viewport.clientHeight > 0 && viewport.scrollHeight < viewport.clientHeight * 2;
+    return observeHistoryPrefetch(viewport, content, () => session.hasMore && !session.incompleteBoundary
+      && (needsFill() || !scrollOwnerRef.current?.following), onLoadMore, () => viewport.scrollTop, needsFill);
   }, [session.sessionId, session.hasMore, session.materialized, session.loadingHistory, session.historyError,
     session.error, session.historyStale, session.incompleteBoundary, onLoadMore,
-    prependHeld, pageVisible, connected, snapshotReady]);
+    prependHeld, pageVisible, connected, snapshotReady, viewport, content]);
 
   useLayoutEffect(() => {
-    if (!scrollOwnerRef.current?.following && hasNewTranscriptContent(previousMessages.current, session.messages)) {
+    const owner = scrollOwnerRef.current;
+    if (owner && !owner.following && hasNewTranscriptContent(previousMessages.current, session.messages)) {
       setHasNewContent(true);
     }
     previousMessages.current = session.messages;
-    scrollOwnerRef.current?.changed({ contentReady: !!contentRef.current?.querySelector('[data-message-frame]') });
-  }, [messages, session.sessionId, session.messages, session.status, session.compacting, session.error, session.materialized, session.hasMore]);
+    owner?.changed({ contentReady: !!content?.querySelector('[data-message-frame]') });
+  }, [messages, session.sessionId, session.messages, session.status, session.compacting, session.error, session.materialized, session.hasMore, viewport, content]);
 
   const follow = useCallback(() => { scrollOwnerRef.current?.follow(); }, []);
   return { scrollRef, contentRef, messages, hasNewContent, awayFromBottom, follow };

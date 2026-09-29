@@ -4,7 +4,7 @@
 @use 'chat-design';
 @use '../responsive';
 
-.chat, .chat-input-area {
+.chat, .chat-input-area, .chat-messages, .chat-conversation-message {
   @include chat-design.palette;
 }
 .chat {
@@ -78,6 +78,10 @@
   font-size: var(--chat-text-secondary);
   color: var(--host-color-muted);
 }
+.chat-messages, .chat-conversation-message {
+  @include chat-design.type-roles;
+  @include chat-design.spacing;
+}
 .chat-messages {
   flex: 1 1 auto;
   min-width: 0;
@@ -109,6 +113,7 @@
 }
 
 .message-speech, .chat-decision-body { position: relative; }
+.chat-message-actions { margin-block-start: var(--chat-gap-region); }
 
 .msg-group { display: flex; flex-direction: column; min-width: 0; }
 .msg-group[data-gap='related'] { padding-block-start: var(--chat-gap-message); }

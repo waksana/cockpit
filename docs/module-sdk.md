@@ -141,6 +141,12 @@ major, legacy v2 or global-component behavior. See
 activation and revocation. SDK types alone do not prove a host advertises
 `page.v1` in its deployment descriptor.
 
+Complete ordinary conversation presentation is separately gated by
+`messagePresentationVersion: 1`. The `messageList` and `chatMessage` component
+types extend the same public directory while keeping `message` as the original
+body middleware boundary. See [conversation presentation](module-contract.md#conversation-presentation)
+for row identity, native provenance and layout ownership.
+
 An SDK version is not proof that every host version supports a module. Module
 releases still record and test their exact host compatibility in the
 [module catalog](modules.md) and their own release material. Pin the SDK version

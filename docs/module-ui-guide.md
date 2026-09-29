@@ -24,6 +24,7 @@ Current Web exposes these independent frontend capabilities:
 | --- | --- |
 | `apiVersion: 3` | Generic Web frontend declaration/activation; native-only v2 compatibility remains. Module manifests/backend remain v1. |
 | `publicComponentsVersion: 1` | Stable typed `components.get(name)` shared by host and module consumers. |
+| `messagePresentationVersion: 1` | Shared `messageList` viewport and complete `chatMessage` conversation rows (Web v3 only). |
 | `draftOwnerVersion: 1` | Module-owned generic draft controllers and explicit durable receipt recovery. |
 | `draftSubmissionVersion: 2` | Owner-controlled submissions; legacy v2 keeps native-only submission version 1. |
 | `menuVersion: 1` | Declarative global/session menu actions. Check separately. |
@@ -62,6 +63,15 @@ page's footer without copying padding, borders or private `.chat-*` classes.
 Native Chat embeds that same presentation around its own execution controls;
 it does not nest a second composer frame. Module-owned layout remains responsible
 for the page's reading area, not for restyling the input component.
+
+For a conversational message stream, use the public
+[`messageList` and `chatMessage`](module-contract.md#conversation-presentation)
+components, not just the `message` body boundary inside a module-specific card.
+They own the same native Chat reading width, user bubbles, assistant document
+layout, Markdown, timestamps, spacing and attachment presentation. Pass real
+content/identity and the previous visible row; keep business filtering,
+pagination and reading position in the module. No private classes, duplicated
+Markdown parser or second chat store are required.
 
 For full-page UI, use [module pages](module-contract.md#module-pages): register a
 page and navigate to it from an existing menu action. It replaces the current

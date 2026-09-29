@@ -562,6 +562,38 @@ export interface MessageProps extends React.HTMLAttributes<HTMLDivElement> {
   readonly adornment?: React.ReactNode;
 }
 
+/** Shared Chat reading viewport and width. Owns presentation, not history or scroll following. */
+export interface MessageListProps extends React.HTMLAttributes<HTMLDivElement> {
+  readonly viewportRef?: React.Ref<HTMLDivElement>;
+  readonly contentRef?: React.Ref<HTMLDivElement>;
+  /** History/loading controls before the message rows, inside the same reading column. */
+  readonly before?: React.ReactNode;
+  readonly children?: React.ReactNode;
+}
+
+/** One ordinary conversation row using the same bubble/byline/Markdown/attachment presentation as Chat. */
+export interface ChatMessageProps extends Omit<React.HTMLAttributes<HTMLDivElement>, 'role' | 'children'> {
+  readonly identity: MessageIdentity;
+  readonly origin?: MessageOrigin;
+  readonly decisionOrigin?: MessageProps['decisionOrigin'];
+  readonly complete: boolean;
+  readonly bodyRef?: React.Ref<HTMLDivElement>;
+  readonly rowRef?: React.Ref<HTMLDivElement>;
+  readonly role: 'user' | 'assistant';
+  /** Epoch milliseconds; presentation only, not a native event identity. */
+  readonly timestamp: number;
+  readonly body: string;
+  readonly attachments?: readonly ReadonlyData<NativeAttachmentDescriptor>[];
+  /** Previous visible conversation row; owns date separators, speaker gaps and assistant timestamp grouping. */
+  readonly previous?: { readonly role: 'user' | 'assistant'; readonly timestamp: number };
+  readonly showTimestamp?: boolean;
+  /** Optional midnight epoch for deterministic date labels; defaults to the current local day. */
+  readonly today?: number;
+  /** Necessary choices/actions after the content. No implicit reply or native routing authority. */
+  readonly children?: React.ReactNode;
+  readonly [attribute: `data-${string}`]: string | number | boolean | undefined;
+}
+
 /** Browser-only presentation memory. Never use these fields to authorize actions. */
 export interface SessionActivityDisplay {
   readonly previous?: {
@@ -619,6 +651,8 @@ export interface SettingsProps extends React.HTMLAttributes<HTMLElement> {
 
 export interface ModuleComponentProps {
   message: MessageProps;
+  messageList: MessageListProps;
+  chatMessage: ChatMessageProps;
   sessionStatus: SessionStatusProps;
   composer: ComposerProps;
   composerEditor: ComposerEditorProps;
@@ -685,6 +719,8 @@ export interface ModuleFrontendContext {
   /** Web contract only. Module manifest, backend context and route API remain v1. */
   readonly apiVersion: 3;
   readonly publicComponentsVersion: 1;
+  /** Full conversation rows and the shared Chat reading viewport; independently capability-gated. */
+  readonly messagePresentationVersion: 1;
   readonly draftOwnerVersion: 1;
   readonly components: PublicComponents;
   /** Namespaced pages in the existing host SPA. Check independently of Web v3. */
@@ -799,7 +835,7 @@ export type LegacyMessageIdentity = {
 export interface LegacyMessageProps extends Omit<MessageProps, 'identity' | 'origin' | 'decisionOrigin'> {
   readonly identity: LegacyMessageIdentity;
 }
-export type LegacyModuleComponentProps = Omit<ModuleComponentProps, 'message' | 'button'> & { message: LegacyMessageProps };
+export type LegacyModuleComponentProps = Omit<ModuleComponentProps, 'message' | 'button' | 'messageList' | 'chatMessage'> & { message: LegacyMessageProps };
 export type LegacyModuleComponentMiddleware = {
   [Name in keyof LegacyModuleComponentProps]: {
     readonly id: string;
@@ -809,7 +845,7 @@ export type LegacyModuleComponentMiddleware = {
   };
 }[keyof LegacyModuleComponentProps];
 export interface LegacyModuleFrontendContext extends Omit<ModuleFrontendContext,
-  'apiVersion' | 'publicComponentsVersion' | 'draftOwnerVersion' | 'components' | 'draftSubmissionVersion' | 'state' | 'pageVersion' | 'navigation'> {
+  'apiVersion' | 'publicComponentsVersion' | 'messagePresentationVersion' | 'draftOwnerVersion' | 'components' | 'draftSubmissionVersion' | 'state' | 'pageVersion' | 'navigation'> {
   readonly apiVersion: 2;
   readonly draftSubmissionVersion: 1;
   readonly state: Omit<ModuleStateRegistry, 'createDraft'>;

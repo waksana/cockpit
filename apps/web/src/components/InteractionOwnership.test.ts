@@ -145,7 +145,7 @@ test('management does not move focus on entry or async detail changes and focus 
   assert.doesNotMatch(source('./ManagementShell.tsx'), /\.focus\(|autoFocus|tabIndex/);
   assert.match(source('../styles/primitives/public-ui.scss'), /:focus-visible \{ outline: 2px solid var\(--ck-color-accent\); outline-offset: -2px/);
   assert.match(source('../styles/components/chat-design.scss'), /\[tabindex\]\):focus-visible \{ outline: 2px solid var\(--chat-accent-ink\); outline-offset: -2px/);
-  assert.match(source('../styles/components/chat.scss'), /\.chat, \.chat-input-area \{ @include chat-design\.palette; \}/);
+  assert.match(source('../styles/components/chat.scss'), /\.chat, \.chat-input-area, \.chat-messages, \.chat-conversation-message \{ @include chat-design\.palette; \}/);
   assert.match(source('./threadScroll.ts'), /active.blur\(\)/);
 });
 

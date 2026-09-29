@@ -38,11 +38,10 @@
   --chat-gap-prose-section: 0.85em;
   --chat-inset-bottom: var(--host-space-xs);
 
-  row-gap: var(--chat-gap-region);
   @media (max-width: responsive.$phone-max) { --chat-gutter: var(--host-space-md); }
 }
 
-.chat { @include spacing; }
+.chat { @include spacing; row-gap: var(--chat-gap-region); }
 
 @mixin palette {
   --chat-placeholder-color: var(--host-color-placeholder-contrast);

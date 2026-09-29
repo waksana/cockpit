@@ -1,6 +1,6 @@
 # Module contract
 This document defines the current Cockpit module host contract. Version numbers in this file are API capability versions, not release pairings: manifest/backend API v1, Web API v3 (with native-only v2 compatibility), public UI v1, `menuVersion: 1`, `settingsVersion: 1`, `uiSurfaceVersion: 1`, `chatWindowVersion: 1`, `composerInputVersion: 1`, `draftLifecycleVersion: 1`,
-`draftSubmissionVersion: 2`, `publicComponentsVersion: 1`, `draftOwnerVersion: 1`, `pageVersion: 1`, and `context.serviceReadyVersion: 1`. Host/module release pairings belong in the [module catalog](modules.md) and GitHub Releases.
+`draftSubmissionVersion: 2`, `publicComponentsVersion: 1`, `messagePresentationVersion: 1`, `draftOwnerVersion: 1`, `pageVersion: 1`, and `context.serviceReadyVersion: 1`. Host/module release pairings belong in the [module catalog](modules.md) and GitHub Releases.
 
 Product boundaries are in [R1-R8](product-requirements.md). Business contracts for individual modules, such as File or Notification, stay in their own repositories; this document only defines host/module integration.
 
@@ -271,6 +271,7 @@ if (context.serviceReadyVersion !== 1) {
 | Menus | `menus`, `getState`, optional `subscribe`, `onSelect` | Global/session commands; native items remain first; no page/router registration. |
 | Pages | `pageVersion: 1`, `pages`, `context.navigation.path/navigate/home` | This module's namespaced SPA pages and explicit homepage navigation; no arbitrary router access. |
 | Components | `publicComponentsVersion: 1`, `context.components.get(name)`, `components`, `wrap(Base)` | Same public entry for host and module consumers; stable runtime/name identity and existing middleware. |
+| Conversation presentation | `messagePresentationVersion: 1`, `components.get('messageList'/'chatMessage')` | Shared native Chat reading width, ordinary message shell, Markdown, attachments, timestamps and gaps; no history authority or second chat engine. |
 | Shared settings | `settingsVersion: 1`, `SettingsProps`, `components` with `boundary: 'settings'` | Append module-owned sections to host preference content; no generic settings store, native action or page registration. |
 | Composer input | `composerInputVersion: 1`, `ComposerInputProps` | Actual controlled textarea; preserve value/onChange/events/ref and host submit gate. |
 | Markdown | `markdown`, `matches(node)`, `component` | Already-parsed link/image occurrences only; not attachments or full Markdown parsing. |
@@ -888,7 +889,7 @@ Each `ChatWindowMessage` projects only `id`, `origin`, `role`, `text`, `complete
 turn streaming or known-incomplete content into final content. `text` is existing message content only; thoughts, tool calls, attachments, private store, native session handles, and structured question bodies are not exported. Snapshots are frozen, stable by reference when unchanged, and subscriptions are revoked with
 the module scope.
 ### 6.2 Component middleware
-Boundaries are: `message`, `sessionStatus`, `composer`, `composerEditor`, `composerInput`, `button`, `attachment`, `managementHeader`, `managementDetailHeader`, and `settings`. They correspond to real existing host components: visible message body/current ask question; concurrent session activity summary; actual composer card; input row;
+Boundaries are: `message`, `messageList`, `chatMessage`, `sessionStatus`, `composer`, `composerEditor`, `composerInput`, `button`, `attachment`, `managementHeader`, `managementDetailHeader`, and `settings`. They correspond to real existing host components: visible message body/current ask question; reading viewport and complete ordinary conversation row; concurrent session activity summary; actual composer card; input row;
 controlled textarea; historical attachment row; management headers; and shared preference content.
 
 Middleware sorts by `(order ?? 0, moduleId, id)` with lower values outermost. The host composes only on registration/base changes, not every render. Enhancers must preserve inherited props, children, refs, actions, native identity, scroll and a11y anchors, and layout semantics. Composition and error boundaries add no
@@ -911,6 +912,58 @@ IDs, attribute a multisource summary to one message, or fabricate a native
 session for a generic message. Native-dependent legacy middleware is skipped
 where actual native attribution is absent; attachments still use their own
 descriptors and the same public attachment component.
+
+<a id="conversation-presentation"></a>
+#### Complete conversation presentation
+
+Check `context.messagePresentationVersion === 1` before using `messageList` or
+`chatMessage`. This additive Web v3 capability is advertised as
+`messagePresentation.v1` in the host deployment descriptor; legacy v2 receives
+neither the capability nor these new middleware boundaries.
+
+`components.get('messageList')` renders the same scroll viewport, reading column
+and message rows as native Chat. `viewportRef` addresses the actual scrollable
+element, `contentRef` its reading column, and normal div attributes such as
+`onScroll`, `aria-label` and `aria-busy` are preserved. Optional `before` content
+places history/loading/error controls before the rows in that column. Children
+are the message rows. The module still owns history retrieval, filtering,
+pagination, reading anchors and following; this is not a second chat controller
+or a subscription to the native chat store.
+Middleware activation/revocation can replace the viewport and content elements.
+Both refs accept callbacks: track their actual node values, release listeners
+and observers on the old nodes, then bind to their replacements. A mount-only
+effect over mutable object refs does not track that lifecycle. Native Thread
+uses the same node-driven ownership and retains its current reading anchor
+across middleware replacement, without carrying it into a different session.
+
+`components.get('chatMessage')` takes:
+
+- `identity`, optional real `origin` / `decisionOrigin`, `complete` and optional
+  `bodyRef`, with the unchanged body-boundary meanings above.
+- `role: 'user' | 'assistant'`, `timestamp` in epoch milliseconds, `body` as
+  Markdown text, and optional readonly `NativeAttachmentDescriptor[]` in
+  `attachments`. It uses native Chat's Markdown renderer and the public
+  attachment chain, including attachment-only content and unavailable blobs.
+- Optional `previous: { role, timestamp }` from the previous **visible** conversation
+  row, for shared speaker spacing, date separators and assistant timestamp
+  grouping. Omit it for the first visible row. `showTimestamp` overrides grouping;
+  optional `today` supplies a local-midnight epoch for deterministic date labels.
+- Optional `children` for necessary choices/actions after the message content.
+  These nodes confer no reply target, authorization or native routing behavior.
+- Optional `rowRef`, normal div attributes and `data-*` attributes on the outer
+  row, allowing a module to maintain its own stable reading anchors.
+
+User bubbles, assistant document bodies, timestamps, gaps, attachment groups,
+Markdown/code/table semantics and both theme palettes are shared with native
+Chat. Use these components directly rather than placing a second management
+card, bubble, byline or copied `.chat-*` styling around them. Their styles provide
+their own presentation tokens; a module needs no private Chat ancestor.
+The existing `message` boundary remains the visible body/current ask question,
+not a whole-row shell. `chatMessage` composes that boundary exactly once per
+visible body (also for attachment-only messages), preserving refs, identity and
+File/Speech enhancement. Native transcript framing retains its measurement,
+date/anchor ownership and process/decision rows without a duplicate shell.
+Merely displaying a message never creates native provenance or replays a message.
 
 `composerInput` requires `context.composerInputVersion === 1`. The `Base` is the controlled textarea and continues to own value, IME, Enter/Ctrl/Meta+Enter, and native `onKeyDown` behavior. Enhancers pass through value/onChange/native props, compose `editorRef` including callback cleanup, avoid private DOM queries, and
 may render siblings such as a microphone after `Base`. Full-width status panels belong around the existing composer, not inside the input row.

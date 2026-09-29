@@ -185,6 +185,18 @@ export class ThreadScroll {
     return { following: this.following, anchor: this.view.firstVisible() };
   }
 
+  // Detached nodes no longer have useful geometry; retain the last measured anchor.
+  snapshot(): ReadingPosition {
+    return { following: this.following, anchor: this.anchor };
+  }
+
+  restore(position: ReadingPosition) {
+    this.following = position.following;
+    this.anchor = position.anchor;
+    this.forced = true;
+    this.changed({ contentReady: true });
+  }
+
   private correct() {
     const now = this.view.measure();
     const currentOffset = this.anchor && this.view.offset(this.anchor.id);
@@ -236,7 +248,7 @@ export class ThreadScroll {
 }
 
 export function observeThreadScroll(el: HTMLDivElement, content: HTMLDivElement, onFollow: () => void,
-  onActivity?: (active: boolean) => void, onAwayChange?: (away: boolean) => void) {
+  onActivity?: (active: boolean) => void, onAwayChange?: (away: boolean) => void, position?: ReadingPosition) {
   const top = () => el.getBoundingClientRect().top + el.clientTop;
   let away = false;
   const reportDistance = () => {
@@ -347,7 +359,10 @@ export function observeThreadScroll(el: HTMLDivElement, content: HTMLDivElement,
   content.addEventListener('click', onClick, true);
   content.addEventListener('focusin', navigate);
   document.addEventListener('selectionchange', onSelection);
-  scroll.follow();
+  if (position) {
+    scroll.restore(position);
+    reportDistance();
+  } else scroll.follow();
   return {
     scroll,
     dispose() {
