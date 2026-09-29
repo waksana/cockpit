@@ -2,17 +2,16 @@
 // Desktop: sidebar + chat side-by-side. Mobile: list ↔ detail two-level nav.
 
 import { lazy, Suspense, useEffect, useLayoutEffect, useSyncExternalStore } from 'react';
-import { Link, Routes, Route, useLocation, useParams } from 'react-router-dom';
+import { Link, Routes, Route, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useCockpit } from './net/store';
 import { recordLocation } from './lib/nav';
 import { focusedSessionId, SESSION_PANELS } from './lib/routeOwnership';
 import { StateNotice } from './components/StateNotice';
 import { ManagementShell } from './components/ManagementShell';
-import { moduleRuntime } from './lib/moduleRuntime';
 import { observeModuleView } from './lib/moduleView';
 import { PHONE_QUERY } from './lib/layout';
 import { Workspace } from './features/workspace/Workspace';
-import { ModuleGlobalComponents } from './components/ModuleComponents';
+import { ModuleGlobalComponents, ModulePages, useModuleRuntime } from './components/ModuleComponents';
 
 const ManageWorkspace = lazy(() => import('./components/ManageWorkspace').then((m) => ({ default: m.ManageWorkspace })));
 
@@ -37,6 +36,9 @@ function subscribePhone(listener: () => void) {
 
 export default function App() {
   const location = useLocation();
+  const navigate = useNavigate();
+  const runtime = useModuleRuntime();
+  useLayoutEffect(() => runtime.connectNavigation(path => { void navigate(path); }), [runtime, navigate]);
   const phone = useSyncExternalStore(subscribePhone, phoneSnapshot, serverPhoneSnapshot);
   const activeId = useCockpit((s) => s.activeId);
   const setActiveId = useCockpit((s) => s.setActiveId);
@@ -46,7 +48,7 @@ export default function App() {
   useLayoutEffect(() => {
     if (activeId !== focusedId) setActiveId(focusedId);
   }, [activeId, focusedId, setActiveId]);
-  useLayoutEffect(() => observeModuleView(moduleRuntime, useCockpit, document), []);
+  useLayoutEffect(() => observeModuleView(runtime, useCockpit, document), [runtime]);
   useEffect(() => { document.title = 'cockpit'; }, []);
   // Single client lifecycle: connect the SSE stream once on mount.
   useEffect(() => useCockpit.getState().init(), []);
@@ -67,6 +69,7 @@ export default function App() {
         <Route path="/skills/module/:moduleId/:resourceId" element={<ManagementRoute />} />
         <Route path="/skills/:item" element={<ManagementRoute />} />
         <Route path="/session/:sessionId" element={<Workspace />} />
+        <Route path="/modules/:moduleId/:pageId" element={null} />
         {SESSION_PANELS.map(panel => (
           <Route key={panel} path={`/session/:sessionId/${panel}`} element={<Workspace />} />
         ))}
@@ -74,6 +77,7 @@ export default function App() {
           <div><p>页面不存在。</p><Link className="ck-button ck-primary" to="/">返回列表</Link></div>
         </div>} />
       </Routes>
+      <ModulePages />
       <ModuleGlobalComponents />
     </>
   );

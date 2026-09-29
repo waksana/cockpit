@@ -29,6 +29,7 @@ Current Web exposes these independent frontend capabilities:
 | `menuVersion: 1` | Declarative global/session menu actions. Check separately. |
 | `settingsVersion: 1` | Component middleware for module-owned sections in the shared Settings dialog. |
 | `globalComponentVersion: 1` | Session-independent components in the host React tree, including module-owned dialogs. |
+| `pageVersion: 1` | Declarative namespaced pages and narrow module/home navigation in the existing SPA (Web v3 only). |
 | `chatWindowVersion: 1` | Read-only current-window text projection; check before `state.chatWindow`. |
 | `composerInputVersion: 1` | Middleware around the actual controlled textarea. |
 | `uiVersion: 1` | Public base classes, variables and control behavior here. |
@@ -55,6 +56,18 @@ under the [public component contract](module-contract.md#62-component-middleware
 A module does not copy host bases, import private files or manufacture a native
 session to use Composer. Its owner draft supplies facts and business submission;
 File/Speech enhancements see the draft reference and editor, not that routing.
+The public Composer includes the same dock width/insets, card surface, typography,
+theme contrast, editor and send action as native Chat. Place it directly in the
+page's footer without copying padding, borders or private `.chat-*` classes.
+Native Chat embeds that same presentation around its own execution controls;
+it does not nest a second composer frame. Module-owned layout remains responsible
+for the page's reading area, not for restyling the input component.
+
+For full-page UI, use [module pages](module-contract.md#module-pages): register a
+page and navigate to it from an existing menu action. It replaces the current
+route rather than covering Chat with a modal, portal or second application.
+Use the same public components and CSS; the page owns its business layout, not
+another router or host shell.
 
 For UI that must exist on the empty homepage and survive navigation/menu closure,
 use [global components](module-contract.md#global-components), not a hidden menu icon,

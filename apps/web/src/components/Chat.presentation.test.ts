@@ -105,8 +105,8 @@ test('latest tool overview exposes explicit recorded failure and unknown states'
 
 test('Chat dark theme targets the mounted chat, not an impossible nested chat', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
-  assert.match(css, /@media \(prefers-color-scheme: dark\) \{\s*\.chat \{[^}]*--chat-danger-ink:/);
-  assert.match(css, /\.chat \{[^}]*--host-color-text: var\(--host-color-text-contrast\);/);
+  assert.match(css, /@media \(prefers-color-scheme: dark\) \{\s*\.chat,\s*\.chat-input-area \{[^}]*--chat-danger-ink:/);
+  assert.match(css, /\.chat,\s*\.chat-input-area \{[^}]*--host-color-text: var\(--host-color-text-contrast\);/);
   assert.doesNotMatch(css, /\.chat \.chat \{/);
   const tokens = compile(new URL('../styles/tokens.scss', import.meta.url).pathname).css;
   assert.match(tokens, /@media \(prefers-color-scheme: dark\) \{\s*:root \{[^}]*--host-color-text-contrast:/);
@@ -176,6 +176,10 @@ test('spacing tokens own visible boundaries and placeholder stays distinct on fo
   assert.doesNotMatch(css, /:focus(?:::placeholder|[^{}]*\{[^}]*--chat-placeholder-color)/);
   assert.equal((css.match(/--chat-placeholder-color:/g) ?? []).length, 1);
   assert.equal((foundations.match(/--host-color-placeholder-contrast:/g) ?? []).length, 2, 'light and dark');
+  assert.match(css, /\.chat-input-area \{[^}]*--chat-text-body: var\(--messages-text-size\)/,
+    'standalone public Composer owns the same typography without a Chat ancestor');
+  assert.match(css, /\.chat-input-area \{[^}]*--chat-gutter: clamp\(1rem, 4vw, 1\.5rem\)/,
+    'standalone public Composer owns the same dock insets');
 });
 
 test('all input states share one full-width unframed editor row inside the same card', () => {
@@ -612,7 +616,7 @@ test('host controls do not add decorative hover while selection and keyboard foc
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
   const all = compile(new URL('../styles/index.scss', import.meta.url).pathname).css;
   assert.doesNotMatch(all, /:hover/);
-  assert.match(css, /\.chat :is\(button, a, textarea, summary, \[tabindex\]\):focus-visible \{[^}]*outline: 2px/);
+  assert.match(css, /\.chat :is\(button, a, textarea, summary, \[tabindex\]\):focus-visible,\s*\.chat-input-area :is\(button, a, textarea, summary, \[tabindex\]\):focus-visible \{[^}]*outline: 2px/);
   const primitives = compile(new URL('../styles/primitives/public-ui.scss', import.meta.url).pathname).css;
   assert.match(primitives, /--ck-color-hover: var\(--host-color-hover\)/, 'retain the public token for module compatibility');
   assert.match(primitives, /:is\(\.ck-button, \.ck-icon-button, \.ck-input\):focus-visible \{[^}]*outline: 2px/);

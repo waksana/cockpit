@@ -11,7 +11,8 @@ import {
 } from './routeOwnership';
 
 test('list and every global route release chat attention ownership', () => {
-  for (const pathname of ['/', '/mcp', '/mcp/server', '/skills', '/skills/tool', '/trash', '/trash/id', '/flows/old', '/workers/old']) {
+  for (const pathname of ['/', '/mcp', '/mcp/server', '/skills', '/skills/tool', '/trash', '/trash/id', '/flows/old', '/workers/old',
+    '/modules/example/main', '/modules/missing/unknown']) {
     assert.deepEqual(sessionRoute(pathname), { sessionId: null, panel: null });
     assert.equal(focusedSessionId(pathname, false), null);
     assert.equal(focusedSessionId(pathname, true), null);

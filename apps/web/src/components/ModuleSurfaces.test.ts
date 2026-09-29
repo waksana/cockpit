@@ -118,5 +118,6 @@ test('middleware introduces no contribution-placeholder DOM or CSS and leaves sc
   assert.doesNotMatch(sidebar, /module-session-badges|module-global-actions/);
   assert.match(css, /\.message-speech,\s*\.chat-decision-body \{\s*position: relative;\s*\}/);
   const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
-  assert.equal((app.match(/observeModuleView\(moduleRuntime, useCockpit, document\)/g) ?? []).length, 1);
+  assert.equal((app.match(/observeModuleView\(runtime, useCockpit, document\)/g) ?? []).length, 1);
+  assert.match(app, /const runtime = useModuleRuntime\(\)/);
 });

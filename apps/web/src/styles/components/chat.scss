@@ -4,35 +4,12 @@
 @use 'chat-design';
 @use '../responsive';
 
+.chat, .chat-input-area {
+  @include chat-design.palette;
+}
 .chat {
-  --chat-placeholder-color: var(--host-color-placeholder-contrast);
-  // Keep Solarized's palette, but give small interactive text sufficient contrast.
-  --host-color-text: var(--host-color-text-contrast);
-  --host-color-muted: var(--host-color-muted-contrast);
-  --host-color-faint: var(--host-color-muted-contrast);
-  // Root aliases resolve at :root; re-resolve the legacy names for ported chat rules.
-  --primary-text-color: var(--host-color-text);
-  --secondary-text-color: var(--host-color-muted);
-  --tertiary-text-color: var(--host-color-faint);
-  --chat-accent-ink: color-mix(in srgb, var(--host-color-accent) 20%, var(--host-color-text));
-  --chat-link-ink: color-mix(in srgb, var(--host-color-link) 20%, var(--host-color-text));
-  --chat-danger-ink: color-mix(in srgb, var(--host-color-danger) 60%, var(--host-color-text));
-  --ck-color-text: var(--host-color-text);
-  --ck-color-muted: var(--host-color-muted);
-  --ck-color-accent: var(--chat-accent-ink);
-  --ck-color-danger: var(--chat-danger-ink);
-  --ck-color-on-accent: var(--host-color-surface);
-  color: var(--host-color-text);
   min-width: 0;
   position: relative;
-  :is(button, a, textarea, summary, [tabindex]):focus-visible {
-    outline: 2px solid var(--chat-accent-ink);
-    outline-offset: -2px;
-  }
-  @media (prefers-color-scheme: dark) {
-    --chat-danger-ink: color-mix(in srgb, var(--host-color-danger) 20%, var(--host-color-text));
-  }
-  button:disabled { cursor: default; }
 }
 .chat-history-retry { color: var(--ck-color-accent); }
 // ── Topbar (two-line: title + status/model subtitle, symmetric height) ──────
@@ -454,6 +431,8 @@ button.activity-head {
 
 // ── Composer ────────────────────────────────────────────────────────────────
 .chat-input-area {
+  @include chat-design.type-roles;
+  @include chat-design.spacing;
   @include chat-design.column;
   container: chat-dock / inline-size;
   display: flex; flex-direction: column; gap: var(--chat-gap-region);
@@ -583,6 +562,7 @@ button.activity-head {
 .chat .chat-input-message:focus-visible {
   outline: none;
 }
+.chat-input-area .chat-input-message:focus-visible { outline: none; }
 .chat-input-btn {
   width: var(--ck-control-size); height: var(--ck-control-size);
   position: relative; overflow: hidden;
@@ -591,6 +571,7 @@ button.activity-head {
   color: var(--ck-color-accent);
 }
 .chat .chat-input-btn:focus-visible { outline-offset: -3px; }
+.chat-input-area .chat-input-btn:focus-visible { outline-offset: -3px; }
 // Explicit native submission feedback; no extra outer frame.
 .chat-input-notice {
   flex: none;

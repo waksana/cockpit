@@ -4,6 +4,7 @@
 
 import type { ReactNode } from 'react';
 import { Composer } from './Composer';
+import { ComposerCard, ComposerSurface } from './ComposerSurface';
 import { SessionControlBar, SessionControlActionButton } from './SessionControlBar';
 import type { SessionControlAction } from '../lib/sessionControls';
 import type { ChatSession, ExitPlanModeAction } from '../net/types';
@@ -107,18 +108,18 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
         awayFromBottom={awayFromBottom} hasNewContent={hasNewContent}
         onFollow={follow} onRetryHistory={onRetryHistory} />
 
-      <div className="chat-input-area">
+      <ComposerSurface>
         <ThreadInputNotices session={session} readOnly={readOnly} authoritative={authoritative}
           activityRefreshing={activityRefreshing} execution={execution} draft={draft}
           onRetryControls={onRetryControls} onRetryHistory={onRetryHistory} />
-        <div className="chat-input-card" ref={cardRef} data-open={inputOpen}
+        <ComposerCard ref={cardRef} data-open={inputOpen}
           data-controls={!!controls || undefined} data-controls-open={controls ? controlsOpen : undefined}
-          data-header={hasInputHeader || undefined} data-decision={hasPendingDecision || undefined}>
-          <ExecutionHead hidden={!hasInputHeader} open={inputOpen} bodyId={bodyId} onToggle={toggleInput}
+          data-header={hasInputHeader || undefined} data-decision={hasPendingDecision || undefined}
+          bodyId={bodyId} bodyHidden={!inputOpen}
+          header={<ExecutionHead hidden={!hasInputHeader} open={inputOpen} bodyId={bodyId} onToggle={toggleInput}
             label={executionLabel} progress={executionProgress} activityItems={activityItems}
             foldedDraft={!readOnly && hasContent && !inputOpen} operationsActive={!!session.activeOperations}
-            execution={execution} controlRef={executionControlRef} onInterrupt={onInterrupt} onCancel={onCancel} />
-          <div id={bodyId} className="chat-input-card-body" hidden={!inputOpen}>
+            execution={execution} controlRef={executionControlRef} onInterrupt={onInterrupt} onCancel={onCancel} />}>
             {controls && onControlAction && <SessionControlBar session={session} controls={controls} connected={authoritative}
               expanded={controlsOpen} disabled={!authoritative || !session.loaded || !!session.loading || !!session.closing || activityRefreshing || !!session.controlsStale}
               controlRef={executionControlRef} onAction={onControlAction}
@@ -144,9 +145,8 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
                 sendBlocked={!connected || !snapshotReady || answer?.allowFreeform === false || operation === 'elicitation' || !onSend}
               />
             )}
-          </div>
-        </div>
-      </div>
+        </ComposerCard>
+      </ComposerSurface>
     </main></DisclosureChoices>
   );
 }

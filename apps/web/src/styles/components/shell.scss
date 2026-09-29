@@ -10,6 +10,17 @@
   background-color: var(--host-color-surface);
 }
 
+.module-page {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--host-color-surface);
+}
+
 .master-pane {
   display: flex;
   flex-direction: column;
