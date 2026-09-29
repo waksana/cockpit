@@ -79,6 +79,10 @@ function PageNotice({ loading = false }: { loading?: boolean }) {
   </div></div>;
 }
 
+function ModulePageFrame({ children }: { children: ReactNode }) {
+  return <div className="module-page">{children}</div>;
+}
+
 type PageLifetime = { module: LoadedModule; page: ModulePage; runtime: ModuleRuntime };
 function ModulePageLifetime({ entry, active, onRetired }: {
   entry: PageLifetime; active: boolean; onRetired(entry: PageLifetime): void;
@@ -93,9 +97,9 @@ function ModulePageLifetime({ entry, active, onRetired }: {
     else setUnmounted(true);
   }, [active, unmounted, entry, onRetired]);
   const Component = entry.page.component;
-  return <ModuleErrorBoundary fallback={active ? <PageNotice /> : null}
+  return <ModuleErrorBoundary fallback={active ? <ModulePageFrame><PageNotice /></ModulePageFrame> : null}
     onFailure={error => entry.runtime.fail(entry.module, error)}>
-    {active ? <Suspense fallback={<PageNotice loading />}><Component /></Suspense> : null}
+    {active ? <ModulePageFrame><Suspense fallback={<PageNotice loading />}><Component /></Suspense></ModulePageFrame> : null}
   </ModuleErrorBoundary>;
 }
 
@@ -116,7 +120,7 @@ export function ModulePages() {
     setRetained(entries => entries.filter(item => item !== entry));
   }, []);
   return <>
-    {match && !page && <PageNotice loading={status === 'idle' || status === 'loading'} />}
+    {match && !page && <ModulePageFrame><PageNotice loading={status === 'idle' || status === 'loading'} /></ModulePageFrame>}
     {retained.map(entry => <ModulePageLifetime
       key={JSON.stringify([entry.module.instanceId, entry.page.id])} entry={entry}
       active={entry.module === module && entry.page === page} onRetired={onRetired} />)}

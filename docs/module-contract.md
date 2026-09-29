@@ -672,7 +672,9 @@ a global component. Ordinary anchors can use `path` for direct URLs, while
 
 Only the current page mounts, after successful activation. Direct URL entry and
 refresh wait for asynchronous activation; the existing router owns history,
-back and forward. A module route replaces the current workspace/Chat, releasing
+back and forward. The host gives the page a viewport-bounded flex column; the
+module owns its layout and reading scroll area, not the root container or private
+host CSS. A module route replaces the current workspace/Chat, releasing
 visible session ownership and unmounting its editor, not covering it with an
 overlay. Leaving the route unmounts the page but does not revoke its module,
 dispose its services, clear an owner draft or cancel an already accepted write.

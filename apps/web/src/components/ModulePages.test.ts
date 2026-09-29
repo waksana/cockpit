@@ -2,6 +2,7 @@ import { act, render, screen, userEvent, waitFor } from '../test/dom';
 import assert from 'node:assert/strict';
 import { test, type TestContext } from 'node:test';
 import * as React from 'react';
+import { compile } from 'sass';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import type { ActivateFrontend, ModuleFrontendContext } from '@cockpit/module-api/frontend';
 import { ModuleRuntime, modulePagePath } from '../lib/moduleRuntime';
@@ -49,6 +50,11 @@ test('page paths are owned by the host and cannot escape either namespace', () =
   }
 });
 
+test('the host bounds the page flex column so module timelines own scrolling instead of growing the root', () => {
+  const css = compile(new URL('../styles/components/shell.scss', import.meta.url).pathname).css;
+  assert.match(css, /\.module-page \{[^}]*display: flex;[^}]*flex-direction: column;[^}]*height: 100%;[^}]*min-height: 0;[^}]*overflow: hidden;/);
+});
+
 test('module menu navigation uses real App history and releases Chat; globals keep their lifetime', async t => {
   let globalMounts = 0;
   function Global() {
@@ -72,12 +78,14 @@ test('module menu navigation uses real App history and releases Chat; globals ke
   await user.click(await screen.findByRole('menuitem', { name: 'Example page' }));
   assert.equal(router.state.location.pathname, '/modules/example/main');
   assert.ok(screen.getByRole('heading', { name: 'Example page' }));
+  assert.equal(document.querySelectorAll('.module-page').length, 1);
   assert.equal(useCockpit.getState().activeId, null);
   assert.equal(f.runtime.getViewSnapshot().sessionId, null);
   assert.equal(document.querySelector('textarea'), null, 'the old Chat editor is unmounted, not hidden');
   assert.equal(document.querySelector('dialog'), null);
   assert.equal(screen.queryByRole('menu'), null);
   await act(() => router.navigate(-1));
+  assert.equal(document.querySelector('.module-page'), null, 'the page frame unmounts rather than hiding the old editor');
   assert.equal(useCockpit.getState().activeId, 'demo-chat');
   assert.ok(document.querySelector('textarea'));
   await act(() => router.navigate(1));
@@ -146,7 +154,7 @@ test('unknown pages/modules and revocation offer an explicit homepage; captured 
   await act(() => router.navigate('/modules/example/missing'));
   assert.ok(screen.getByRole('link', { name: '返回主页' }));
   assert.ok(screen.getByRole('button', { name: '刷新页面' }));
-  act(() => context.navigation.navigate('main'));
+  await act(() => context.navigation.navigate('main'));
   assert.ok(screen.getByRole('heading', { name: 'Available' }));
   act(() => f.runtime.unregister(f.runtime.getSnapshot()[0]));
   assert.equal(screen.queryByRole('heading', { name: 'Available' }), null);
