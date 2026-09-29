@@ -199,15 +199,15 @@ test('generic composer recursively uses the public directory, preserving DOM ref
   assert.equal(refCalls, 1);
   assert.equal(wraps, beforeRender, 'render never creates middleware');
   const facts = { actionRevision: 0, capabilities: { attachments: false } };
-  act(() => draft.update({ ...facts, editable: false, submittable: false }));
+  await act(() => draft.update({ ...facts, editable: false, submittable: false }));
   assert.equal(textarea.disabled, true);
   assert.equal(button.disabled, true);
   fireEvent.keyDown(textarea, { key: 'Enter', ctrlKey: true });
   assert.equal(submits, 1);
-  act(() => draft.update({ ...facts, editable: true, submittable: false }));
+  await act(() => draft.update({ ...facts, editable: true, submittable: false }));
   assert.equal(textarea.disabled, false, 'non-submittable owner can retain editable input');
   assert.equal(button.disabled, true);
-  act(() => draft.update({ ...facts, editable: true, submittable: true }));
+  await act(() => draft.update({ ...facts, editable: true, submittable: true }));
   assert.equal(view.container.querySelector('textarea'), textarea);
   assert.equal(button.disabled, false);
   view.unmount();
