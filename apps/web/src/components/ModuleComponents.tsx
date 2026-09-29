@@ -1,56 +1,37 @@
-import { createContext, createElement, Suspense, useCallback, useContext, useEffect, useState, useSyncExternalStore, type Attributes, type ComponentType, type ReactNode } from 'react';
+import { createElement, Suspense, useCallback, useContext, useEffect, useState, useSyncExternalStore, type Attributes, type ReactNode } from 'react';
 import type {
   AttachmentProps, MarkdownNode, MessageProps, ModuleComponentProps, SessionStatusProps, SettingsProps,
 } from '@cockpit/module-api/frontend';
 import { ModuleErrorBoundary, moduleRuntime, type LoadedModule, type ModuleRuntime } from '../lib/moduleRuntime';
-import { sessionActivityIndicators } from '../lib/sessionActivity';
-import { SessionActivity } from './SessionActivity';
+import { PublicComponentRuntime } from '../lib/publicComponentContext';
 
-const RuntimeContext = createContext(moduleRuntime);
 export function ModuleRuntimeProvider({ runtime, children }: { runtime: ModuleRuntime; children: ReactNode }) {
-  return <RuntimeContext.Provider value={runtime}>{children}</RuntimeContext.Provider>;
+  return <PublicComponentRuntime.Provider value={runtime}>{children}</PublicComponentRuntime.Provider>;
 }
 // These hooks expose cached runtime-owned component types, not render-created HOCs.
 // eslint-disable-next-line react-refresh/only-export-components
-export function useModuleRuntime() { return useContext(RuntimeContext); }
+export function useModuleRuntime() { return useContext(PublicComponentRuntime) ?? moduleRuntime; }
 // eslint-disable-next-line react-refresh/only-export-components
 export function useModuleElement<Key extends keyof ModuleComponentProps>(
-  boundary: Key, Base: ComponentType<ModuleComponentProps[Key]>, props: ModuleComponentProps[Key],
+  boundary: Key, props: ModuleComponentProps[Key],
 ): ReactNode {
   const runtime = useModuleRuntime();
-  useSyncExternalStore(runtime.subscribe, runtime.getSnapshot, runtime.getSnapshot);
-  return createElement(runtime.compose(boundary, Base), props as Attributes & ModuleComponentProps[Key]);
-}
-
-function MessageBase({ identity: _identity, complete: _complete, bodyRef, adornment, children, ...props }: MessageProps) {
-  // Sibling adornments preserve the actual body's prose margins and measurement.
-  return <><div {...props} ref={bodyRef}>{children}</div>{adornment}</>;
+  return createElement(runtime.components.get(boundary), props as Attributes & ModuleComponentProps[Key]);
 }
 export function MessagePresentation(props: MessageProps) {
-  return useModuleElement('message', MessageBase, props);
+  return useModuleElement('message', props);
 }
 
-function SessionStatusBase({ status, needsDecision, activity, activityRefreshing, activityDisplay, compacting, error, loaded, connected = false, children }: SessionStatusProps) {
-  const items = sessionActivityIndicators({ status, needsDecision, activity, activityRefreshing, activityDisplay, compacting, error, loaded }, connected);
-  return <span className="dialog-meta">
-    <SessionActivity items={items} />
-    {children}
-  </span>;
-}
 export function SessionStatus(props: SessionStatusProps) {
-  return useModuleElement('sessionStatus', SessionStatusBase, props);
+  return useModuleElement('sessionStatus', props);
 }
 
-function AttachmentBase({ children, actions }: AttachmentProps) { return <>{children}{actions}</>; }
 export function Attachment(props: AttachmentProps) {
-  return useModuleElement('attachment', AttachmentBase, props);
+  return useModuleElement('attachment', props);
 }
 
-function SettingsBase({ children, ...props }: SettingsProps) {
-  return <section {...props}>{children}</section>;
-}
 export function SettingsContent(props: SettingsProps) {
-  return useModuleElement('settings', SettingsBase, props);
+  return useModuleElement('settings', props);
 }
 
 function GlobalModuleLifetime({ module, runtime, active, onRetired }: {

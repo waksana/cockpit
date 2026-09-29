@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import * as React from 'react';
 import { createPortal } from 'react-dom';
 import { Link, MemoryRouter } from 'react-router-dom';
-import type { ActivateFrontend, ModuleFrontendContext } from '@cockpit/module-api/frontend';
+import type { ActivateLegacyFrontend as ActivateFrontend, LegacyModuleFrontendContext as ModuleFrontendContext } from '@cockpit/module-api/frontend';
 import { ModuleRuntime } from '../lib/moduleRuntime';
 import { ModuleGlobalComponents, ModuleRuntimeProvider } from './ModuleComponents';
 import { installWorkspaceFixture } from '../dev/workspace-fixtures';

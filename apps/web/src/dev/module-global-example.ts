@@ -1,4 +1,4 @@
-import type { ActivateFrontend } from '@cockpit/module-api/frontend';
+import type { ActivateLegacyFrontend as ActivateFrontend } from '@cockpit/module-api/frontend';
 import type { ChangeEvent } from 'react';
 
 export const activate: ActivateFrontend = context => {

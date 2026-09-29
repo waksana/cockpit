@@ -6,22 +6,27 @@ import type {
   DraftSchemaRegistration, ModuleEventPayload, ModuleFrontend, ModuleFrontendContext, ModuleStateRegistration,
   ModuleMenuRegistration, ModuleMenuState, ModuleMenuTarget,
   DraftReference, DraftSendBlockReason,
+  LegacyModuleFrontend, LegacyModuleFrontendContext, MessageProps, LegacyMessageProps, PublicComponents,
+  DraftOwnerOptions, DraftOwner,
 } from '@cockpit/module-api/frontend';
-import { resolveDraft, type SessionDraft } from './textDraft';
+import { resolveDraft, SessionDraft, type DraftCore, type DraftStorage, createDraftOwner, browserDraftStorage } from './textDraft';
 import { RegisteredDraftSchema, type RuntimeDraftSchema } from './draftSchemas';
 import { describeReason, reportUxError } from './errorReporter';
 import { EMPTY_CHAT_WINDOW } from './moduleChatWindow';
 import { useCockpit } from '../net/store';
 import type { NativeDraftRequest } from './draft';
+import { publicComponentBases } from './publicComponents';
+import { PublicComponentRuntime } from './publicComponentContext';
 
 interface RuntimeOptions {
   baseUrl?: string;
   pageUrl?: string;
   fetch?: typeof fetch;
-  load?: (url: string) => Promise<{ activate?: unknown }>;
+  load?: (url: string) => Promise<{ activate?: unknown; frontendApiVersion?: unknown }>;
   style?: (url: string) => () => void;
   report?: (error: unknown) => void;
   activationTimeoutMs?: number;
+  draftStorage?: DraftStorage;
   draftSubmission?: {
     check(draft: SessionDraft): DraftSendBlockReason | undefined;
     send(request: NativeDraftRequest): Promise<boolean>;
@@ -30,16 +35,16 @@ interface RuntimeOptions {
 export interface LoadedModule {
   readonly instanceId: string;
   readonly asset: ModuleAsset;
-  readonly frontend: ModuleFrontend;
+  readonly frontend: ModuleFrontend | LegacyModuleFrontend;
   readonly signal: AbortSignal;
-  readonly bindings: Map<SessionDraft, ReturnType<SessionDraft['bindModule']>>;
+  readonly bindings: Map<DraftCore, ReturnType<DraftCore['bindModule']>>;
   readonly schemas: readonly RuntimeDraftSchema[];
   stop(): void;
 }
 export interface RegisteredRenderer { module: LoadedModule; renderer: MarkdownRenderer }
 type Boundary = keyof ModuleComponentProps;
 const BOUNDARIES = new Set<Boundary>(['message', 'sessionStatus', 'composer', 'composerEditor', 'composerInput', 'attachment',
-  'managementHeader', 'managementDetailHeader', 'settings']);
+  'managementHeader', 'managementDetailHeader', 'settings', 'button']);
 const EMPTY_VIEW: HostSnapshot = Object.freeze({ sessionId: null, visible: false, connected: false });
 let moduleSequence = 0;
 
@@ -122,8 +127,8 @@ function claimId(ids: Set<string>, id: unknown): void {
   if (!nonempty(id) || ids.has(id)) throw new Error(`Invalid or duplicate module registration ID: ${String(id)}`);
   ids.add(id);
 }
-function validateFrontend(input: unknown, ids: Set<string>): ModuleFrontend {
-  if (!record(input) || input.apiVersion !== 2) throw new Error('Module frontend API v2 is required');
+function validateFrontend(input: unknown, ids: Set<string>, version: 2 | 3): ModuleFrontend | LegacyModuleFrontend {
+  if (!record(input) || input.apiVersion !== version) throw new Error(`Module frontend API v${version} is required`);
   const allowed = new Set(['apiVersion', 'writes', 'sends', 'components', 'markdown', 'menus', 'globalComponents', 'dispose']);
   for (const key of Object.keys(input)) if (!allowed.has(key)) throw new Error(`Unsupported module frontend field: ${key}`);
   if (input.writes !== undefined && (!Array.isArray(input.writes)
@@ -142,7 +147,8 @@ function validateFrontend(input: unknown, ids: Set<string>): ModuleFrontend {
           : key === 'globalComponents' ? ['id', 'component'] : ['id', 'matches', 'component'];
       if (Object.keys(entry).some(field => !fields.includes(field))) throw new Error(`Unsupported module ${key} registration field`);
       if (key === 'components') {
-        if (!BOUNDARIES.has(entry.boundary as Boundary) || typeof entry.wrap !== 'function') throw new Error('Invalid component middleware');
+        if (!BOUNDARIES.has(entry.boundary as Boundary) || (version === 2 && entry.boundary === 'button')
+          || typeof entry.wrap !== 'function') throw new Error('Invalid component middleware');
         if (entry.order !== undefined && (typeof entry.order !== 'number' || !Number.isFinite(entry.order))) throw new Error('Invalid module order');
       } else if (key === 'menus') {
         if ((entry.menu !== 'global' && entry.menu !== 'session') || typeof entry.getState !== 'function'
@@ -209,7 +215,16 @@ export class ModuleRuntime {
   private controller?: AbortController;
   private readonly reports = new Set<string>();
   private readonly componentCache = new Map<object, { boundary: Boundary; entries: readonly object[]; component: unknown }>();
-  private readonly knownDrafts = new Set<SessionDraft>();
+  private readonly knownDrafts = new Set<DraftCore>();
+  private readonly publicProxies = new Map<Boundary, React.ComponentType<never>>();
+  private readonly publicComposed = new Map<Boundary, React.ComponentType<never>>();
+  readonly components: PublicComponents = Object.freeze({
+    get: <Name extends Boundary>(name: Name): React.ComponentType<ModuleComponentProps[Name]> => {
+      const proxy = this.publicProxies.get(name);
+      if (!proxy) throw new Error(`Unknown public component: ${name}`);
+      return proxy as React.ComponentType<ModuleComponentProps[Name]>;
+    },
+  });
   private readonly readOnlySessions = new Map<string, boolean>();
   private menuRevision = 0;
   private readonly menuListeners = new Set<() => void>();
@@ -218,6 +233,19 @@ export class ModuleRuntime {
     if (options.activationTimeoutMs !== undefined
       && (!Number.isFinite(options.activationTimeoutMs) || options.activationTimeoutMs <= 0)) throw new Error('Invalid module activation timeout');
     this.options = options;
+    for (const name of Object.keys(publicComponentBases) as Boundary[]) this.registerPublicComponent(name);
+  }
+  private registerPublicComponent<Name extends Boundary>(name: Name): void {
+    const Base = publicComponentBases[name];
+    this.publicComposed.set(name, Base as React.ComponentType<never>);
+    const PublicProxy = (props: ModuleComponentProps[Name]) => {
+      React.useSyncExternalStore(this.subscribe, this.getSnapshot, this.getSnapshot);
+      let Component = this.publicComposed.get(name) as React.ComponentType<ModuleComponentProps[Name]>;
+      if ('draft' in props && !this.isDraftPrepared(resolveDraft(props.draft))) Component = Base;
+      return React.createElement(PublicComponentRuntime.Provider, { value: this },
+        React.createElement(Component, props));
+    };
+    this.publicProxies.set(name, PublicProxy as React.ComponentType<never>);
   }
   getSnapshot = (): readonly LoadedModule[] => this.snapshot;
   getViewSnapshot = (): HostSnapshot => this.view;
@@ -251,12 +279,18 @@ export class ModuleRuntime {
   };
   private publish(modules: readonly LoadedModule[]) {
     this.snapshot = modules;
-    const registrations = new Set(modules.flatMap(module => module.frontend.components ?? []));
+    const registrations = new Set<object>(modules.flatMap(module => [...module.frontend.components ?? []]));
     for (const [base, cached] of this.componentCache) {
       if (cached.entries.some(entry => !registrations.has(entry as NonNullable<ModuleFrontend['components']>[number]))) this.componentCache.delete(base);
     }
+    for (const name of Object.keys(publicComponentBases) as Boundary[]) {
+      this.refreshPublicComponent(name);
+    }
     for (const listener of this.listeners) listener();
     this.menusChanged();
+  }
+  private refreshPublicComponent<Name extends Boundary>(name: Name): void {
+    this.publicComposed.set(name, this.compose(name, publicComponentBases[name]) as React.ComponentType<never>);
   }
   report = (error: unknown): void => {
     const message = describeReason(error, false);
@@ -265,7 +299,7 @@ export class ModuleRuntime {
     if (this.options.report) this.options.report(error);
     else reportUxError(`模块反馈：${message}。Copilot 聊天仍可使用。`);
   };
-  private batchDraftChanges(change: () => void, additional: Iterable<SessionDraft> = []): void {
+  private batchDraftChanges(change: () => void, additional: Iterable<DraftCore> = []): void {
     const drafts = new Set([...this.knownDrafts, ...additional,
       ...this.snapshot.flatMap(module => [...module.bindings.keys()])]);
     const releases = [...drafts].map(draft => draft.deferNotifications());
@@ -312,10 +346,13 @@ export class ModuleRuntime {
     const schemas: RuntimeDraftSchema[] = [];
     let registering = true;
     let registrationError: unknown;
-    let frontend: ModuleFrontend | undefined;
+    let frontend: ModuleFrontend | LegacyModuleFrontend | undefined;
+    const draftOwners = new Map<string, { owner: DraftOwner; core: DraftCore }>();
     let disposeFrontend: (() => unknown) | undefined;
     const stop = () => this.batchDraftChanges(() => {
       registering = false;
+      for (const { core } of draftOwners.values()) { core.suspend(); this.knownDrafts.delete(core); }
+      draftOwners.clear();
       for (const schema of schemas) schema.dispose();
       for (const binding of bindings.values()) binding.dispose();
       bindings.clear();
@@ -347,11 +384,38 @@ export class ModuleRuntime {
       return unsubscribe;
     };
     parentSignal.addEventListener('abort', stop, { once: true });
-    const context: ModuleFrontendContext = {
-      apiVersion: 2, uiVersion: 1, uiSurfaceVersion: 1, menuVersion: 1, settingsVersion: 1, globalComponentVersion: 1, chatWindowVersion: 1, composerInputVersion: 1, draftLifecycleVersion: 1, draftSubmissionVersion: 1,
+    const makeContext = (version: 2 | 3): ModuleFrontendContext | LegacyModuleFrontendContext => ({
+      uiVersion: 1, uiSurfaceVersion: 1, menuVersion: 1, settingsVersion: 1, globalComponentVersion: 1, chatWindowVersion: 1, composerInputVersion: 1, draftLifecycleVersion: 1,
+      ...(version === 3
+        ? { apiVersion: 3, draftSubmissionVersion: 2, publicComponentsVersion: 1, draftOwnerVersion: 1, components: this.components }
+        : { apiVersion: 2, draftSubmissionVersion: 1 }),
       moduleId: asset.id, react: React, createPortal, apiBase: asset.apiBase,
       config: asset.config, signal: controller.signal, report: this.report,
       state: Object.freeze({
+        ...(version === 3 ? {
+          createDraft: <Request, Receipt>(options: DraftOwnerOptions<Request, Receipt>) => {
+            controller.signal.throwIfAborted();
+            const existing = draftOwners.get(options.key);
+            if (existing && !existing.core.isRetired()) {
+              const purpose = existing.core.reference.purpose;
+              if (!record(options.purpose) || purpose.kind !== options.purpose.kind
+                || (purpose.kind !== 'prompt' && (options.purpose.kind === 'prompt'
+                  || purpose.requestId !== options.purpose.requestId))) {
+                throw new Error('An active draft owner key cannot change purpose');
+              }
+              return existing.owner;
+            }
+            if (existing) this.knownDrafts.delete(existing.core);
+            const storage = Object.hasOwn(this.options, 'draftStorage') ? this.options.draftStorage : browserDraftStorage();
+            const created = createDraftOwner(options, storage,
+              `cockpit:module-draft:${JSON.stringify([asset.id, options.key])}`, this.report);
+            draftOwners.set(options.key, created);
+            this.prepareDraft(created.core);
+            for (const schema of schemas) schema.prepare(created.core);
+            controller.signal.throwIfAborted();
+            return created.owner;
+          },
+        } : {}),
         host: Object.freeze({ getSnapshot: this.getViewSnapshot, subscribe: (listener: () => void) => subscribe(this.viewListeners, listener) }),
         chatWindow: Object.freeze({
           getSnapshot: () => {
@@ -387,7 +451,9 @@ export class ModuleRuntime {
           if (!registering || controller.signal.aborted) throw new Error('Draft schema registration is activation-only');
           try {
             claimId(ids, registration?.id);
-            const schema = new RegisteredDraftSchema(owner, asset.id, registration, this.report);
+            const schema = new RegisteredDraftSchema(owner, asset.id, registration, this.report,
+              draft => version === 3 || draft instanceof SessionDraft);
+            schema.setRecoveryAllowed(version === 3);
             schemas.push(schema);
             for (const draft of this.knownDrafts) schema.prepare(draft);
             return schema.handle;
@@ -399,17 +465,20 @@ export class ModuleRuntime {
         bindDraft: (reference: DraftReference) => {
           if (controller.signal.aborted || !frontend) throw new Error('Module draft binding is not active');
           const source = resolveDraft(reference);
+          if (version === 2 && !(source instanceof SessionDraft)) throw new Error('Legacy modules require a native session draft');
           let binding = bindings.get(source);
           if (!binding) {
             binding = source.bindModule(owner, frontend.writes ?? [], this.report,
               () => schemas.some(schema => schema.applies(source) && schema.ready(source)),
               frontend.sends?.includes('draft') ? {
                 check: () => {
-                  if (this.readOnlySessions.get(source.sessionId)) return 'read-only';
-                  if (!this.isDraftPrepared(source) || !this.knownDrafts.has(source) || !this.options.draftSubmission) return 'unavailable';
+                  if (source.sessionId && this.readOnlySessions.get(source.sessionId)) return 'read-only';
+                  if (!this.isDraftPrepared(source) || !this.knownDrafts.has(source)) return 'unavailable';
+                  if (!(source instanceof SessionDraft)) return undefined;
+                  if (!this.options.draftSubmission) return 'unavailable';
                   return this.options.draftSubmission.check(source);
                 },
-                send: request => this.options.draftSubmission!.send(request),
+                ...(source instanceof SessionDraft ? { send: (request: NativeDraftRequest) => this.options.draftSubmission!.send(request) } : {}),
               } : undefined);
             bindings.set(source, binding);
           }
@@ -440,12 +509,14 @@ export class ModuleRuntime {
         const signal = init.signal ? AbortSignal.any([controller.signal, init.signal]) : controller.signal;
         return fetcher(url, { ...init, headers, signal, credentials: 'include', redirect: 'error', mode: 'cors' });
       },
-    };
+    } as ModuleFrontendContext | LegacyModuleFrontendContext);
     const prepare = async () => {
       const imported = await (this.options.load ?? (url => import(/* @vite-ignore */ url)))(asset.entry);
       if (controller.signal.aborted || parentSignal.aborted) return;
       if (typeof imported.activate !== 'function') throw new Error(`Module ${asset.id} has no activate export`);
-      const activated: unknown = await imported.activate(context);
+      if (imported.frontendApiVersion !== undefined && imported.frontendApiVersion !== 3) throw new Error('Unsupported frontendApiVersion export');
+      const version = imported.frontendApiVersion === 3 ? 3 : 2;
+      const activated: unknown = await imported.activate(makeContext(version));
       if (record(activated) && typeof activated.dispose === 'function') {
         const dispose = activated.dispose;
         disposeFrontend = () => dispose.call(activated);
@@ -453,7 +524,7 @@ export class ModuleRuntime {
       if (controller.signal.aborted || parentSignal.aborted) { stop(); return; }
       registering = false;
       if (registrationError) throw registrationError;
-      frontend = validateFrontend(activated, ids);
+      frontend = validateFrontend(activated, ids, version);
       for (const entry of frontend.menus ?? []) {
         if (!entry.subscribe) continue;
         let active = true;
@@ -580,11 +651,11 @@ export class ModuleRuntime {
       this.reportMenu(module, entry, error);
     }
   }
-  isDraftPrepared(draft: SessionDraft): boolean {
+  isDraftPrepared(draft: DraftCore): boolean {
     return !draft.isRetired() && this.snapshot.every(module => module.schemas.every(schema => schema.ready(draft)));
   }
-  prepareDraft(draft: SessionDraft, readOnly?: boolean): void {
-    if (readOnly !== undefined) this.readOnlySessions.set(draft.sessionId, readOnly);
+  prepareDraft(draft: DraftCore, readOnly?: boolean): void {
+    if (readOnly !== undefined && draft.sessionId) this.readOnlySessions.set(draft.sessionId, readOnly);
     if (draft.isRetired()) return;
     this.knownDrafts.add(draft);
     for (const module of [...this.snapshot]) {
@@ -607,13 +678,44 @@ export class ModuleRuntime {
     for (const { module, entry } of entries.toReversed()) {
       const Next = Composed;
       try {
-        const Enhanced = (entry.wrap as unknown as ComponentMiddleware<ModuleComponentProps[Key]>)(Next);
+        const originalMessage = React.createContext<MessageProps | undefined>(undefined);
+        const LegacyBase = (props: LegacyMessageProps) => {
+          const original = React.useContext(originalMessage);
+          if (!original) throw new Error('Legacy message outside its native adapter');
+          const { identity, ...rest } = props;
+          const nativeId = original.identity.kind === 'message' ? original.origin?.messageId : original.decisionOrigin?.requestId;
+          return React.createElement(Next as React.ComponentType<MessageProps>, {
+            ...original, ...rest,
+            identity: { ...original.identity, id: identity.id === nativeId ? original.identity.id : identity.id, kind: identity.kind,
+              ...(identity.kind === 'message' ? { role: identity.role } : {}) } as MessageProps['identity'],
+          });
+        };
+        const legacyMessage = module.frontend.apiVersion === 2 && boundary === 'message';
+        const Enhanced = (entry.wrap as unknown as ComponentMiddleware<ModuleComponentProps[Key]>)(
+          legacyMessage ? LegacyBase as unknown as React.ComponentType<ModuleComponentProps[Key]> : Next);
         if (!component(Enhanced)) throw new Error('Middleware must return a React component');
         Composed = (props: ModuleComponentProps[Key]) => {
           const fallback = React.createElement(Next, props);
+          if (module.frontend.apiVersion === 2) {
+            if ('draft' in props && !(resolveDraft(props.draft) instanceof SessionDraft)) return fallback;
+            if (boundary === 'attachment' && !('origin' in props && props.origin)) return fallback;
+          }
+          let children: React.ReactNode = React.createElement(Enhanced, props);
+          if (legacyMessage) {
+            const message = props as MessageProps;
+            const native = message.identity.kind === 'message' ? message.origin : message.decisionOrigin;
+            if (!native || (message.identity.kind === 'message' && !message.identity.role)) return fallback;
+            const identity: LegacyMessageProps['identity'] = message.identity.kind === 'message'
+              ? { kind: 'message', role: message.identity.role!, sessionId: native.sessionId,
+                id: message.origin!.messageId, ...(message.origin!.agentId ? { agentId: message.origin!.agentId } : {}) }
+              : { kind: 'ask', sessionId: native.sessionId, id: message.decisionOrigin!.requestId };
+            const { origin: _origin, decisionOrigin: _decisionOrigin, ...legacyProps } = message;
+            children = React.createElement(originalMessage.Provider, { value: message },
+              React.createElement(Enhanced as unknown as React.ComponentType<LegacyMessageProps>, { ...legacyProps, identity }));
+          }
           return module.signal.aborted ? fallback : React.createElement(ModuleErrorBoundary, {
             fallback, onFailure: (error: unknown) => this.fail(module, error),
-            children: React.createElement(Enhanced, props),
+            children,
           });
         };
       } catch (error) {

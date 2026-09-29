@@ -75,16 +75,32 @@ const fixtures = [
   ` })),
   ...['frontend-18', 'frontend-19'].map(name => ({ name, types: ['react'], lib: ['ES2022', 'DOM'], source: `
     import type * as React from 'react';
-    import type { ModuleFrontend, ModuleGlobalComponent, ModuleFrontendContext, ModuleAsset, ComposerProps, SettingsProps, ModuleComponentMiddleware } from '@waksana/cockpit-module-sdk/frontend';
+    import type { ModuleFrontend, ModuleGlobalComponent, ModuleFrontendContext, ModuleAsset, ComposerProps, SettingsProps, ModuleComponentMiddleware, DraftOwnerOptions, DraftOwner, DraftTransportOutcome } from '@waksana/cockpit-module-sdk/frontend';
     declare const frontend: ModuleFrontendContext;
     declare const asset: ModuleAsset;
     declare const props: ComposerProps;
     const children: React.ReactNode = props.children;
-    const apiVersion: 2 = frontend.apiVersion;
+    const apiVersion: 3 = frontend.apiVersion;
+    const componentVersion: 1 = frontend.publicComponentsVersion;
+    const ownerVersion: 1 = frontend.draftOwnerVersion;
+    const submissionVersion: 2 = frontend.draftSubmissionVersion;
+    const Composer: React.ComponentType<ComposerProps> = frontend.components.get('composer');
+    // @ts-expect-error Component names remain a finite typed catalog.
+    frontend.components.get('invented-slot');
+    declare const ownerOptions: DraftOwnerOptions<{ requestId: string }, { accepted: true }>;
+    const owner: DraftOwner = frontend.state.createDraft(ownerOptions);
+    const noNativeTarget: string | undefined = owner.reference.sessionId;
+    const editable: boolean = owner.reference.getSnapshot().editable;
+    const actionRevision: number = owner.reference.getSnapshot().actionRevision;
+    const result: Promise<import('@waksana/cockpit-module-sdk/frontend').DraftSendResult> = owner.reconcile('original-submission');
+    const rejection: DraftTransportOutcome<{ accepted: true }> = { status: 'rejected', reason: 'Not accepted' };
+    // @ts-expect-error Enhancer draft bindings cannot settle an owner transaction.
+    frontend.state.bindDraft(owner.reference).reconcile('original-submission');
+    void [componentVersion, ownerVersion, submissionVersion, Composer, noNativeTarget, editable, actionRevision, result, rejection];
     const settingsVersion: 1 = frontend.settingsVersion;
     const globalVersion: 1 | undefined = frontend.globalComponentVersion;
     const globalComponent: ModuleGlobalComponent = { id: 'dialog', component: () => null };
-    const declaration: ModuleFrontend = { apiVersion: 2, globalComponents: [globalComponent] };
+    const declaration: ModuleFrontend = { apiVersion: 3, globalComponents: [globalComponent] };
     // @ts-expect-error Global components receive no host session props.
     const badGlobal: ModuleGlobalComponent = { id: 'bad', component: (props: { sessionId: string }) => null };
     void [globalVersion, declaration, badGlobal];

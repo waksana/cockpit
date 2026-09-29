@@ -22,7 +22,10 @@ Current Web exposes these independent frontend capabilities:
 
 | Capability | Meaning |
 | --- | --- |
-| `apiVersion: 2` | Web frontend declaration/activation. Module manifests, backend API and backend manifests remain v1. |
+| `apiVersion: 3` | Generic Web frontend declaration/activation; native-only v2 compatibility remains. Module manifests/backend remain v1. |
+| `publicComponentsVersion: 1` | Stable typed `components.get(name)` shared by host and module consumers. |
+| `draftOwnerVersion: 1` | Module-owned generic draft controllers and explicit durable receipt recovery. |
+| `draftSubmissionVersion: 2` | Owner-controlled submissions; legacy v2 keeps native-only submission version 1. |
 | `menuVersion: 1` | Declarative global/session menu actions. Check separately. |
 | `settingsVersion: 1` | Component middleware for module-owned sections in the shared Settings dialog. |
 | `globalComponentVersion: 1` | Session-independent components in the host React tree, including module-owned dialogs. |
@@ -46,6 +49,12 @@ Shared surfaces are CSS compositions, not a React component SDK. Modules own dia
 lifecycle, `showModal()`, `close()`, portal mounting and resource binding. Only `--ck-*`
 variables are module APIs; override them locally only for real surface/size variants, with
 foreground/background contrast preserved.
+
+Semantic components are separately available through `context.components.get`
+under the [public component contract](module-contract.md#62-component-middleware).
+A module does not copy host bases, import private files or manufacture a native
+session to use Composer. Its owner draft supplies facts and business submission;
+File/Speech enhancements see the draft reference and editor, not that routing.
 
 For UI that must exist on the empty homepage and survive navigation/menu closure,
 use [global components](module-contract.md#global-components), not a hidden menu icon,

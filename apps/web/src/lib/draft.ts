@@ -7,6 +7,7 @@ export type NativeDraftRequest = {
 }[DraftIntent];
 export const CORE_DRAFT_FIELDS = new Set([
   'sessionId', 'text', 'mode', 'requestId', 'answer', 'message', 'wasFreeform', 'action',
+  'target', 'request', 'decision', 'topic', 'topicId', 'reply', 'replyTo', 'actionRevision', 'submissionId',
 ]);
 
 export function nativeDraftRequest(draft: DraftReference, text: string, fields: DraftNativeFields): NativeDraftRequest {
@@ -14,6 +15,7 @@ export function nativeDraftRequest(draft: DraftReference, text: string, fields: 
     if (CORE_DRAFT_FIELDS.has(key)) throw new Error(`Draft schema cannot overwrite native field ${key}`);
   }
   const { sessionId, purpose } = draft;
+  if (!sessionId) throw new Error('A native draft requires its actual session identity');
   switch (purpose.kind) {
     case 'prompt':
       return { intent: 'prompt', body: Intents.prompt.body.strict().parse({ ...fields, sessionId, text }) };

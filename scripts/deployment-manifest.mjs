@@ -20,12 +20,18 @@ export function rollingIdentity(repository, sourceSha, sequence) {
     archive: { name: RELEASE_ASSETS[0] } };
 }
 
-function literalVersion(source, field) {
+function literalVersions(source, field) {
   const matches = [...source.matchAll(new RegExp(`\\b${field}: (\\d+)\\b`, 'g'))];
-  assert.equal(matches.length, 1, `Expected exactly one source declaration for ${field}`);
-  const version = Number(matches[0][1]);
-  assert.ok(Number.isSafeInteger(version) && version > 0);
-  return version;
+  assert.ok(matches.length > 0, `Expected a source declaration for ${field}`);
+  const versions = matches.map(match => Number(match[1]));
+  assert.ok(versions.every(version => Number.isSafeInteger(version) && version > 0));
+  assert.equal(new Set(versions).size, versions.length, `Duplicate source declarations for ${field}`);
+  return versions.sort((a, b) => a - b);
+}
+function literalVersion(source, field) {
+  const versions = literalVersions(source, field);
+  assert.equal(versions.length, 1, `Expected exactly one source declaration for ${field}`);
+  return versions[0];
 }
 
 // Read actual activation-context declarations, not a version-by-version deployment catalog.
@@ -37,8 +43,9 @@ export function hostProduct(repository) {
   for (const field of ['serviceReady', 'resourcePreparation', 'askResponse', 'chatRead', 'roleAssignment', 'sessionDirectory', 'sessionLoad']) {
     capabilities.push(`${field}.v${literalVersion(backend, `${field}Version`)}`);
   }
-  capabilities.push(`frontend-api.v${literalVersion(frontend, 'apiVersion')}`);
-  for (const field of ['ui', 'uiSurface', 'menu', 'settings', 'globalComponent', 'chatWindow', 'composerInput', 'draftLifecycle', 'draftSubmission']) {
+  capabilities.push(...literalVersions(frontend, 'apiVersion').map(version => `frontend-api.v${version}`));
+  capabilities.push(...literalVersions(frontend, 'draftSubmissionVersion').map(version => `draftSubmission.v${version}`));
+  for (const field of ['ui', 'uiSurface', 'menu', 'settings', 'globalComponent', 'chatWindow', 'composerInput', 'draftLifecycle', 'publicComponents', 'draftOwner']) {
     capabilities.push(`${field}.v${literalVersion(frontend, `${field}Version`)}`);
   }
   return { kind: 'host', api, capabilities };

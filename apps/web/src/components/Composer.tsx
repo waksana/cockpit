@@ -1,22 +1,38 @@
 // The text editor owns neither file transfer nor dictation. Per-session draft
 // revisions protect edits made while an earlier native send is settling.
-import { useCallback, useLayoutEffect, useRef, useSyncExternalStore } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { SessionDraft } from '../lib/textDraft';
-import { IconButton } from './Button';
-import type { ComposerProps as PublicComposerProps, ComposerEditorProps, ComposerInputProps } from '@cockpit/module-api/frontend';
+import { Button, IconButton } from './Button';
+import type { ComposerProps as PublicComposerProps } from '@cockpit/module-api/frontend';
 import { ModuleRuntimeProvider, useModuleElement, useModuleRuntime } from './ModuleComponents';
 import type { ModuleRuntime } from '../lib/moduleRuntime';
-import { resolveDraft } from '../lib/textDraft';
-
-function shouldSubmitOnEnter(): boolean {
-  return window.matchMedia?.('(hover: hover) and (pointer: fine)').matches ?? true;
-}
+import { describeReason, reportUxError } from '../lib/errorReporter';
 export function ComposerNotices({ draft }: { draft: SessionDraft }) {
-  const { unconfirmed } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
+  const { unconfirmed, pending, submissionId } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
+  const accepted = draft.hasAcceptedSubmission();
+  const [settling, setSettling] = useState<{ draft: SessionDraft; id: string } | undefined>(undefined);
+  const inFlight = useRef(new Set<SessionDraft>());
+  const recovering = settling?.draft === draft && settling.id === submissionId;
+  const busy = pending || recovering;
+  const reconcile = () => {
+    if (!submissionId || inFlight.current.has(draft) || !draft.hasAcceptedSubmission()
+      || draft.getSnapshot().submissionId !== submissionId) return;
+    const operation = { draft, id: submissionId };
+    inFlight.current.add(draft);
+    setSettling(operation);
+    void draft.reconcile(submissionId).catch(error => {
+      reportUxError(`草稿确认失败：${describeReason(error, false)}`);
+    }).finally(() => {
+      inFlight.current.delete(draft);
+      setSettling(current => current === operation ? undefined : current);
+    });
+  };
   return <>
-    {unconfirmed && <div className="chat-input-notice" role="alert" tabIndex={0}>
-      <span>发送或草稿确认尚未完整完成，重发前请先检查会话。</span>
-      <IconButton icon="close" iconSize={20} label="关闭发送提示" onClick={draft.dismissNotice} />
+    {(unconfirmed || (accepted && recovering)) && <div className="chat-input-notice" role="alert" tabIndex={0}>
+      <span>{accepted ? '提交已确认，但草稿清理尚未完成。完成确认不会再次发送。'
+        : '发送或草稿确认尚未完整完成，重发前请先检查会话。'}</span>
+      {accepted ? <Button disabled={busy || !submissionId} aria-busy={busy} onClick={reconcile}>完成草稿确认</Button>
+        : <IconButton icon="close" iconSize={20} label="关闭发送提示" onClick={draft.dismissNotice} />}
     </div>}
   </>;
 }
@@ -38,8 +54,7 @@ export function Composer({ runtime, ...props }: ComposerProps) {
 }
 function ComposerController({ disabled = false, busy = false, placeholder, submitLabel, draft, onSend, sendBlocked = false, statusInHeader, editorRef }: ComposerProps) {
   const runtime = useModuleRuntime();
-  const prepared = useSyncExternalStore(runtime.subscribe,
-    () => runtime.isDraftPrepared(draft), () => runtime.isDraftPrepared(draft));
+  const snapshot = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
   useLayoutEffect(() => { runtime.prepareDraft(draft); }, [runtime, draft]);
   const operation = draft.reference.purpose.kind;
   const active = useRef<SessionDraft | null>(null);
@@ -50,84 +65,22 @@ function ComposerController({ disabled = false, busy = false, placeholder, submi
   }, [draft]);
   useLayoutEffect(() => { current.current = { disabled, sendBlocked, operation, onSend }; });
   const update = useCallback((next: string) => {
-    if (active.current === draft && !current.current.disabled) draft.edit(next);
+    const state = draft.getSnapshot();
+    if (active.current === draft && !current.current.disabled && state.editable && !state.retired) draft.edit(next);
   }, [draft]);
   const submit = useCallback(() => {
     const options = current.current;
     const state = draft.getSnapshot();
     if (active.current !== draft || options.disabled || options.sendBlocked || state.pending || state.blocks.length
-      || draft.isRetired() || !state.hasContent) return;
+      || !state.editable || !state.submittable || state.unconfirmed || draft.isRetired() || !state.hasContent) return;
     void options.onSend();
   }, [draft]);
-  const props: PublicComposerProps = { draft: draft.reference, disabled, busy, placeholder, submitLabel,
-    sendBlocked, operation, statusInHeader, editorRef, onTextChange: update, onSubmit: submit,
+  const props: PublicComposerProps = { draft: draft.reference, disabled: disabled || !snapshot.editable || snapshot.retired,
+    busy, placeholder, submitLabel, sendBlocked: sendBlocked || !snapshot.submittable || snapshot.unconfirmed,
+    operation, statusInHeader, editorRef, onTextChange: update, onSubmit: submit,
   };
-  return prepared ? <ComposerPresentation {...props} /> : <ComposerBase {...props} />;
+  return <ComposerPresentation {...props} />;
 }
 function ComposerPresentation(props: PublicComposerProps) {
-  return useModuleElement('composer', ComposerBase, props);
-}
-
-function ComposerBase({ children, ...props }: PublicComposerProps) {
-  return <div className="chat-composer">
-    <div className="chat-composer-body">
-      <div className="chat-composer-context">{children}</div>
-      <ComposerEditor {...props} />
-    </div>
-  </div>;
-}
-
-function ComposerEditor(props: ComposerEditorProps) {
-  const runtime = useModuleRuntime();
-  const draft = resolveDraft(props.draft);
-  const prepared = useSyncExternalStore(runtime.subscribe,
-    () => runtime.isDraftPrepared(draft), () => runtime.isDraftPrepared(draft));
-  // Module content around the input row (status, file lists) stays with it when the card pins the editor.
-  return <div className="chat-composer-editor">
-    {prepared ? <EnhancedComposerEditor {...props} /> : <ComposerEditorBase {...props} />}
-  </div>;
-}
-function EnhancedComposerEditor(props: ComposerEditorProps) {
-  return useModuleElement('composerEditor', ComposerEditorBase, props);
-}
-
-function ComposerEditorBase({ draft, operation, disabled, busy, placeholder, submitLabel, sendBlocked, statusInHeader, editorRef,
-  onTextChange, onSubmit, children, className, ...domProps }: ComposerEditorProps) {
-  const { text, hasContent, blocks, pending } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
-  const blockedReason = blocks.map(block => block.reason).join('；');
-  const canSend = hasContent && !disabled && !sendBlocked && !pending && !blocks.length;
-  const submit = () => {
-    if (canSend) onSubmit();
-  };
-  return <div {...domProps} className={['chat-input', 'ck-input-row', className].filter(Boolean).join(' ')}>
-        {children}
-        <ComposerInput draft={draft} operation={operation} sendBlocked={sendBlocked} onSubmit={submit}
-          editorRef={editorRef} className="chat-input-message ck-input" aria-label="消息输入" value={text}
-          disabled={disabled} onChange={event => onTextChange(event.target.value)} placeholder={placeholder ?? '输入消息…'} rows={1}
-        />
-        <IconButton className="chat-input-btn send" disabled={!canSend} onClick={submit}
-          label={pending ? '正在提交' : submitLabel ?? (busy ? '排队发送' : '发送')} aria-busy={pending}
-          title={pending ? '正在提交，草稿仍可编辑' : blockedReason || (submitLabel ?? (busy ? '加入队列' : '发送'))}
-          icon={pending && !statusInHeader ? 'sending' : 'arrow_up'} />
-  </div>;
-}
-
-function ComposerInput(props: ComposerInputProps) {
-  const runtime = useModuleRuntime();
-  const draft = resolveDraft(props.draft);
-  const prepared = useSyncExternalStore(runtime.subscribe,
-    () => runtime.isDraftPrepared(draft), () => runtime.isDraftPrepared(draft));
-  return prepared ? <EnhancedComposerInput {...props} /> : <ComposerInputBase {...props} />;
-}
-function EnhancedComposerInput(props: ComposerInputProps) {
-  return useModuleElement('composerInput', ComposerInputBase, props);
-}
-function ComposerInputBase({ draft: _draft, operation: _operation, sendBlocked: _sendBlocked,
-  editorRef, onSubmit, onKeyDown, ...props }: ComposerInputProps) {
-  return <textarea {...props} ref={editorRef} onKeyDown={event => {
-    onKeyDown?.(event);
-    if (event.defaultPrevented || event.nativeEvent.isComposing || event.keyCode === 229) return;
-    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') { event.preventDefault(); onSubmit(); return; }
-    if (event.key === 'Enter' && !event.shiftKey && shouldSubmitOnEnter()) { event.preventDefault(); onSubmit(); }
-  }} />;
+  return useModuleElement('composer', props);
 }

@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, userEvent, waitFor } from '../test/dom'
 import assert from 'node:assert/strict';
 import { test, type TestContext } from 'node:test';
 import { createElement, Fragment, useState } from 'react';
-import type { ActivateFrontend } from '@cockpit/module-api/frontend';
+import type { ActivateLegacyFrontend as ActivateFrontend } from '@cockpit/module-api/frontend';
 import { cockpitApi } from '../net/api';
 import { useCockpit } from '../net/store';
 import { ModuleRuntime } from '../lib/moduleRuntime';

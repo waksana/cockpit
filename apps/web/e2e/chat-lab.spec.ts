@@ -523,13 +523,13 @@ test('ask_user multiline submission restores empty shared-composer geometry', as
   await expectHealthy(page, guard);
 });
 
-test('ask_user drafts retain text on rejection and size themselves independently when switching questions', async ({ page }) => {
+test('ask_user drafts retain unconfirmed text and size themselves independently when switching questions', async ({ page }) => {
   const guard = await open(page, 'scene=full-web&case=ask');
   const editor = page.getByRole('textbox', { name: '消息输入', exact: true });
   await expect(editor).toBeVisible();
   await settle(page);
   const emptyHeight = await editor.evaluate(element => element.getBoundingClientRect().height);
-  const text = '未接受的多行回答。\n第二行应保留。\n' + '中文换行'.repeat(100);
+  const text = '尚未确认的多行回答。\n第二行应保留。\n' + '中文换行'.repeat(100);
   await page.evaluate(async path => {
     const { useCockpit } = await import(path) as SyntheticStoreModule;
     useCockpit.setState({ sendDraft: async () => false });
@@ -537,6 +537,8 @@ test('ask_user drafts retain text on rejection and size themselves independently
   await editor.fill(text);
   await page.getByRole('button', { name: '提交回答', exact: true }).click();
   await expect(editor).toHaveValue(text);
+  await expect(page.getByRole('button', { name: '提交回答', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: '关闭发送提示', exact: true }).click();
   await expect(page.getByRole('button', { name: '提交回答', exact: true })).toBeEnabled();
   expect(await editor.evaluate(element => element.getBoundingClientRect().height)).toBeGreaterThan(emptyHeight);
 

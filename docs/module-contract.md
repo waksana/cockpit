@@ -1,6 +1,6 @@
 # Module contract
-This document defines the current Cockpit module host contract. Version numbers in this file are API capability versions, not release pairings: manifest/backend API v1, Web API v2, public UI v1, `menuVersion: 1`, `settingsVersion: 1`, `uiSurfaceVersion: 1`, `chatWindowVersion: 1`, `composerInputVersion: 1`, `draftLifecycleVersion: 1`,
-`draftSubmissionVersion: 1`, and `context.serviceReadyVersion: 1`. Host/module release pairings belong in the [module catalog](modules.md) and GitHub Releases.
+This document defines the current Cockpit module host contract. Version numbers in this file are API capability versions, not release pairings: manifest/backend API v1, Web API v3 (with native-only v2 compatibility), public UI v1, `menuVersion: 1`, `settingsVersion: 1`, `uiSurfaceVersion: 1`, `chatWindowVersion: 1`, `composerInputVersion: 1`, `draftLifecycleVersion: 1`,
+`draftSubmissionVersion: 2`, `publicComponentsVersion: 1`, `draftOwnerVersion: 1`, and `context.serviceReadyVersion: 1`. Host/module release pairings belong in the [module catalog](modules.md) and GitHub Releases.
 
 Product boundaries are in [R1-R8](product-requirements.md). Business contracts for individual modules, such as File or Notification, stay in their own repositories; this document only defines host/module integration.
 
@@ -114,7 +114,7 @@ The source of truth is the independently versioned
 [`backend.ts`](../packages/module-api/src/backend.ts) and
 [`manifest.ts`](../packages/module-api/src/manifest.ts) for backend/manifest types,
 and [`frontend.ts`](../packages/module-api/src/frontend.ts)
-for Web API v2. Modules should
+for Web API v3 and the explicit legacy v2 adapter. Modules should
 [install an available, exact package version](module-sdk.md#install-from-github-packages)
 and import its public types instead of copying declarations.
 The package contains compiled ESM and declarations, with no internal protocol or
@@ -256,7 +256,7 @@ if (context.serviceReadyVersion !== 1) {
 "Public API" means the contracts the host explicitly passes to modules. Native HTTP/MCP product intents are a separate interface discovered through `/capabilities` in [apps/mcp/README](../apps/mcp/README.md); an intent's existence does not imply that frontend module context exposes it.
 | Entry | Current contract | Scope |
 | --- | --- | --- |
-| Frontend runtime | `apiVersion: 2`, `menuVersion: 1`, `moduleId`, host `react`, `createPortal`, `signal`, `report` | Same module activation; no private DOM/store or separate React root. |
+| Frontend runtime | `apiVersion: 3`, `menuVersion: 1`, `moduleId`, host `react`, `createPortal`, `signal`, `report` | Same module activation; native-only v2 adapter; no private DOM/store or separate React root. |
 | UI capability | `uiVersion: 1`, `uiSurfaceVersion: 1` | Separate checks for public CSS classes/surfaces; not React/runtime or modal behavior. |
 | Frontend HTTP/config | `apiBase`, public `config`, `request(path, init)` | Authenticated, digest-bound requests scoped to this module API. |
 | Events | `onInvalidate(listener)`, `onEvent(listener)` | Same `/events` transport, scoped to this module; no replay or native chat subscription. |
@@ -265,10 +265,11 @@ if (context.serviceReadyVersion !== 1) {
 | Module service | `context.state.register({ id, create, dispose })` | Synchronous service creation; queries/actions are module-defined. |
 | Base draft | `context.state.bindDraft(reference)` | Stable draft lifecycle with text editing, blocks, guarded completion, and captured send only if declared. |
 | Draft lifecycle | `draftLifecycleVersion: 1`, `editTextIfRevision`, `retired` | Atomic revision-guarded background completion and permanent retirement. |
-| Captured send | `draftSubmissionVersion: 1`, `sends: ['draft']`, `captureSend().send(expectedRevision)` | One explicit user-consent checkpoint; no caller-selected target or payload. |
+| Draft owner | `draftOwnerVersion: 1`, `context.state.createDraft(options)` | Namespaced durable controller; business adapter owns request preparation, transport and receipt inspection. |
+| Captured send | `draftSubmissionVersion: 2`, `sends: ['draft']`, `captureSend().send(expectedRevision)` | Same owner transaction as the button; one user-consent checkpoint, no caller-selected target or payload. |
 | Draft schema | `context.state.registerDraft(...)` | Module owns validation, content test, projection, ACK, and optional persistence for its field only. |
 | Menus | `menus`, `getState`, optional `subscribe`, `onSelect` | Global/session commands; native items remain first; no page/router registration. |
-| Components | `components`, `wrap(Base)` | Middleware around real public components; preserve props, children, refs, identity, and accessibility. |
+| Components | `publicComponentsVersion: 1`, `context.components.get(name)`, `components`, `wrap(Base)` | Same public entry for host and module consumers; stable runtime/name identity and existing middleware. |
 | Shared settings | `settingsVersion: 1`, `SettingsProps`, `components` with `boundary: 'settings'` | Append module-owned sections to host preference content; no generic settings store, native action or page registration. |
 | Composer input | `composerInputVersion: 1`, `ComposerInputProps` | Actual controlled textarea; preserve value/onChange/events/ref and host submit gate. |
 | Markdown | `markdown`, `matches(node)`, `component` | Already-parsed link/image occurrences only; not attachments or full Markdown parsing. |
@@ -283,10 +284,13 @@ Calling `serviceHandle.get().getSnapshot()` first retrieves a module-created ser
 | Loaded window text | `ChatWindowSnapshot.messages` with `text/origin/complete/subtype/children` | Not full history; `ready` is not completeness; unknown origin is not guessed. |
 | Draft text | `DraftReference` and `ModuleDraftSnapshot` | Snapshot is draft state, not chat history; attachments are module schema fields. |
 | Current input operation | Composer `draft/operation/disabled/busy/sendBlocked`, editor ref, guarded callbacks | `purpose` identifies prompt/ask/plan/elicitation; ask context cannot bypass native free-text limits. |
-| Rendered message | `MessageProps.identity/complete/bodyRef/children/adornment` | No raw transcript string or global ordering; DOM order is not a latest-reply API. |
+| Rendered message | `MessageProps.identity/origin/complete/bodyRef/children/adornment` | Display identity is not native provenance; no raw transcript string or global ordering. |
 | Markdown reference or attachment | `MarkdownNode` or `AttachmentProps` | No complete file library or automatic resource loading. |
 | Backend native output/control fact | `events` `NativeObservation`, `controlEvents` `ServerEvent` | Not the browser's loaded window and not automatically forwarded to frontend. |
-The host provides current-window reading, not speech context or `getLatestReply()`. Current ask question/choices are exposed only through the matching draft's `askContext`. Modules must not use window reading to import private stores, query private DOM, read native home directories, or scan all history. A module may
+The host provides current-window reading, not `getLatestReply()`. A draft owner
+may additionally supply bounded `referenceText` from already-visible eligible
+content; it grants no history or routing access. Current ask question/choices
+are exposed only through the matching draft's `askContext`. Modules must not use window reading to import private stores, query private DOM, read native home directories, or scan all history. A module may
 use backend observation to maintain its own state, but that state is not equivalent to the public current-window contract.
 <a id="window-context-proposal"></a>
 ### 4.3 Module-built context
@@ -603,7 +607,7 @@ currently loaded package that declares `worker` is served; each read verifies pa
 offline cleanup boundaries themselves.
 <a id="frontend-registration"></a>
 ## 6. Frontend registration, state, and drafts
-Frontend entry also exports `activate(context)`, with frontend context and return value requiring `apiVersion: 2`. This does not change manifest, backend context, or route API v1. The context supplies host React, `createPortal`, state, `apiBase`, public config, `request`, `signal`, `onInvalidate`, `onEvent`, optional
+New frontend entries export `frontendApiVersion = 3` and `activate(context)`, with frontend context and return value requiring `apiVersion: 3`. This does not change manifest, backend context, or route API v1. The context supplies host React, `createPortal`, state, `components`, `apiBase`, public config, `request`, `signal`, `onInvalidate`, `onEvent`, optional
 `worker`, and `report`. Modules must not create their own root or depend on private DOM/store. The host initializes frontend modules independently; timeout/error in one module does not block others, and late results cannot republish revoked contributions.
 
 `context.uiVersion: 1` declares public semantic CSS and icon basics. `context.uiSurfaceVersion: 1` separately declares shared surface, heading, actions, badge, and modal CSS. Exact classes and patterns are maintained in the [module UI guide](module-ui-guide.md). `context.menuVersion: 1` separately declares menu
@@ -619,7 +623,17 @@ Module UI follows the interaction and structure rules in [development](developme
 | Markdown renderers | Replace parsed link/image rendering only. |
 `context.createPortal(children, container)` is the host ReactDOM `createPortal`. It is not page registration or dialog management. Native dialogs may portal to `document.body`; modules must close/unmount on component unmount or scope revocation and must not mutate private host DOM.
 
-`ModuleFrontend` fields: `apiVersion: 2`; optional `writes: ['text']`; optional `sends: ['draft']`; optional `menus`, `globalComponents`, `components`, `markdown`; optional `dispose`. Text writes never grant send permission. Menus sort after native items. Markdown handles link/image only. State disposers are managed by the state system.
+`ModuleFrontend` fields: `apiVersion: 3`; optional `writes: ['text']`; optional `sends: ['draft']`; optional `menus`, `globalComponents`, `components`, `markdown`; optional `dispose`. Text writes never grant send permission. Menus sort after native items. Markdown handles link/image only. State disposers are managed by the state system.
+
+An entry without the version export is activated exactly once against the legacy
+v2 context (`draftSubmissionVersion: 1`), without `components.get` or
+`state.createDraft`. Its returned API version must match. Legacy composer and
+schema contributions see only actual native-session drafts; message middleware
+receives its original native identity only where that provenance exists.
+Generic owners never fabricate a session to activate an old enhancement.
+This is an activation/props adapter, not a second component library or a second
+File/Speech activation. New consumers must explicitly check the v3 capabilities;
+an SDK dependency alone does not establish host support.
 
 <a id="global-components"></a>
 ### Session-independent global components
@@ -669,17 +683,139 @@ module responsibilities. `create` must not return a Promise.
 `context.state.host` exposes only `sessionId`, `visible`, and `connected`. `context.state.chatWindow` is the separate current-window reader. `onInvalidate` and `onEvent` are module-scoped signals and cannot be injected into native stores. Module projections may extend views but must not overwrite native authority or
 turn unloaded/read failures into false/zero facts.
 
-Base draft state contains text, revision, pending, unconfirmed, blocks, `hasContent`, `retired`, and optional `askContext`. `DraftReference` identifies a stable lifetime with `id`, `sessionId`, and `purpose` (`prompt`, `ask`, `plan`, or `elicitation`). `bindDraft(reference)` exposes text edit, guarded completion, block
-leases, and optional captured send; it does not expose private stores, attachments, arbitrary native patches, reset, ACK, or generic submit.
+Base draft state contains text, revision, pending, unconfirmed, blocks,
+`hasContent`, `retired`, owner facts (`editable`, `submittable`,
+`capabilities.attachments`, `actionRevision`), optional `submissionId`,
+`askContext`, and `referenceText`. `DraftReference` identifies a host-issued
+runtime lifetime with `id` and `purpose` (`prompt`, `ask`, `plan`, or
+`elicitation`). Only the native compatibility adapter adds a real `sessionId`.
+`bindDraft(reference)` exposes text edit, guarded completion, block leases, and
+independently authorized captured send; never owner routing, reset, ACK or
+arbitrary payload submission. An unavailable owner cannot be enabled by changing
+presentation props. Reference text is a copied, read-only last 1,000 Unicode code
+points of owner-supplied already-visible context, not a history/network reader.
 
 `askContext?: { question: string; choices?: readonly string[] }` is a read-only, deep-frozen copy for the exact live ask draft when an authoritative current ask request with a question exists. It is undefined for prompt/plan/elicitation, ended/replaced asks, retired sessions, unloaded state, or unconfirmed connection.
 No choices and empty choices are distinct. It is not persisted, restored, or a reply capability. Modules should capture it synchronously at operation start.
 
 `registerDraft` adds a module schema with `id`, applicable `purposes`, `create`, `validate`, `hasContent`, `project`, `acknowledge`, and optional `persistence`. `forDraft(reference)` returns a stable field scope or `undefined` if purpose does not apply. The scope exposes immutable snapshot, subscription, and validated
-updates only for that schema. Projection adds explicit fields to existing native routes; core fields such as `sessionId`, `text`, `mode`, `requestId`, `answer`, `message`, `wasFreeform`, and `action` are reserved. Unknown native route fields and cross-schema collisions are errors.
+updates only for that schema. Projection adds explicit content fields, not the
+whole schema store. Core and business-control keys (`sessionId`, `text`, `mode`,
+`requestId`, `answer`, `message`, `wasFreeform`, `action`, `target`, `request`,
+`decision`, `topic`, `topicId`, `reply`, `replyTo`, `actionRevision`,
+`submissionId`) are reserved. Cross-schema collisions and unknown adapter fields
+are errors; adapters must strictly validate and never silently strip fields.
 
 Unregistered serialized namespaces and legacy records remain opaque. They do not count as current content, render fallback UI, or get cleared by core. Unclaimed persisted data blocks native draft submission, including decision actions, with an explicit error rather than silently sending only the recognized fields.
 Matching loaded schemas own restoration and migration; namespace ownership is rechecked before dispatch. Core does not enable missing modules or retry the submission automatically. Modules own restore, migration, tombstones after ACK, upload/file resources, and schema-specific persistence conflict checks.
+
+<a id="draft-owners"></a>
+#### Generic owners and durable submission
+
+Check `draftOwnerVersion === 1`. In a service lifecycle, call
+`state.createDraft<Request, Receipt>({key, purpose, facts, prepare,
+validateRequest, validateReceipt, send, inspect, settle?})`. Do not create owners
+in render. Active keys reuse one owner in the module namespace; use
+`owner.update(facts)` for changing availability/target checkpoints, not new
+closures. The owner exposes `reference`, `editText`, `update`, `submit`,
+`reconcile(submissionId)` and `retire`. Module stop revokes runtime authority
+without destroying the logical occurrence; explicit retirement permanently
+ends it and preserves its evidence separately before same-key recreation.
+Closing a dialog is neither module stop nor retirement.
+
+`prepare` synchronously validates projected fields and captures the complete
+immutable business request, stable request ID and action revision. `send` is the
+only initial transport; `inspect` is an explicit query of that exact saved
+request. Both return `accepted` with a receipt, `rejected` with a reason, or
+`unknown` with a reason. Inspect must prove the entire request/content identity,
+not merely find an ID or treat one 404 as safe to resend. `validateRequest` and
+`validateReceipt` strictly validate stored JSON data without changing or dropping
+fields. Synchronous, idempotent `settle` handles only business state captured in
+the request (for example clearing a still-matching reply/action revision), never
+network I/O or text/field ACK.
+
+Before send, one storage write contains the logical occurrence, submission ID,
+immutable request, captured text/revision/actionRevision, participating schema
+encodings and settlement checkpoints. Missing storage, encoding or storage
+failure prevents dispatch. Generic projected schemas require persistence.
+Text/schema/target changes during prepare or pending publication invalidate that
+capture. Button submission and `captureSend` use this same transaction.
+
+Owner requests and receipts are not enhancer state. Generic schema restoration
+receives only its encoded namespace plus legacy extension data; `legacyRecord`
+does not expose the host-private transaction journal or business routing.
+This read projection never removes unknown stored fields.
+
+Accepted transport is persisted before settlement. Each schema ACK and its
+encoded new state are stored with that field's checkpoint; text and owner
+settlement have independent checkpoints. New text/fields/actions survive old
+ACKs. A failed ACK remains `unconfirmed/settlement-failed`, never a reason to
+resend an accepted request. Schema `acknowledge` must compare persistent item
+identity/version, not JavaScript object identity; it must be idempotent.
+
+Reload creates and persists a new runtime reference/generation claim, fencing
+old callbacks even before the restored user edits anything. It restores unresolved transactions as unknown and sends/inspects
+nothing automatically. `reconcile` validates the original request, explicitly
+inspects it, and grants new settlement authority only for its same live logical
+occurrence. Each participating schema restores its captured encoding through
+its current validator, with an exact serialization round trip, before a new ACK
+closure is created. Missing/incompatible schemas, retired occurrences, changed
+storage and unproven receipts retain data and report uncertainty. Native Chat
+keeps its existing storage keys and decision lifetimes. Its explicit local
+reconciliation can finish an already-persisted native acceptance receipt, but
+cannot invent acceptance for an unknown native request or resend it.
+Legacy v2 schema callbacks did not promise persistent item identity and therefore
+cannot receive reconstructed captured ACK objects; their live in-flight ACK
+behavior is unchanged. Restored field settlement requires a compatible v3 schema.
+
+Minimal text-owner adapter shape (business callbacks are supplied by the caller;
+they must durably accept/query the exact request, not a current target):
+
+```ts
+import type {
+  DraftOwnerOptions, DraftTransportOutcome, ModuleFrontendContext,
+} from '@waksana/cockpit-module-sdk/frontend';
+
+type Request = { requestId: string; text: string; actionRevision: number };
+type Receipt = { requestId: string };
+export const frontendApiVersion = 3;
+
+export function createTextOwner(
+  context: ModuleFrontendContext,
+  business: Pick<DraftOwnerOptions<Request, Receipt>,
+    'validateRequest' | 'validateReceipt' | 'send' | 'inspect' | 'settle'>,
+) {
+  if (context.apiVersion !== 3 || context.draftOwnerVersion !== 1
+    || context.publicComponentsVersion !== 1) throw new Error('Web v3 is required');
+  const checkReceipt = async (
+    request: Request, invoke: typeof business.send,
+  ): Promise<DraftTransportOutcome<Receipt>> => {
+    const outcome = await invoke(request);
+    if (outcome.status === 'accepted'
+      && business.validateReceipt(outcome.receipt).requestId !== request.requestId) {
+      throw new Error('Receipt does not identify this request');
+    }
+    return outcome;
+  };
+  return context.state.createDraft<Request, Receipt>({
+    ...business, key: 'input', purpose: { kind: 'prompt' },
+    facts: { editable: true, submittable: true, actionRevision: 0,
+      capabilities: { attachments: false } },
+    prepare(snapshot) {
+      if (Object.keys(snapshot.fields).length) throw new Error('Text only');
+      return { requestId: snapshot.id, text: snapshot.text,
+        actionRevision: snapshot.base.actionRevision };
+    },
+    send: request => checkReceipt(request, business.send),
+    inspect: request => checkReceipt(request, business.inspect),
+  });
+}
+```
+
+Use `context.components.get('composer')` with the owner's reference, ordinary
+presentation props, `onTextChange: owner.editText`, and an `onSubmit` callback
+that handles `owner.submit()`'s result. Enhancements bind the reference rather
+than seeing `business`, the request, a topic or a final native session.
 <a id="chat-window-state"></a>
 #### Current-window read-only data
 Use only after checking `context.chatWindowVersion === 1`. Read through `context.state.chatWindow.getSnapshot()` and `subscribe(listener)`. There is no session parameter, history loading, pagination API, refresh action, write action, extra HTTP/SSE channel, or SDK read. Only the currently active session is visible;
@@ -692,30 +828,55 @@ Each `ChatWindowMessage` projects only `id`, `origin`, `role`, `text`, `complete
 turn streaming or known-incomplete content into final content. `text` is existing message content only; thoughts, tool calls, attachments, private store, native session handles, and structured question bodies are not exported. Snapshots are frozen, stable by reference when unchanged, and subscriptions are revoked with
 the module scope.
 ### 6.2 Component middleware
-Boundaries are: `message`, `sessionStatus`, `composer`, `composerEditor`, `composerInput`, `attachment`, `managementHeader`, `managementDetailHeader`, and `settings`. They correspond to real existing host components: visible message body/current ask question; concurrent session activity summary; actual composer card; input row;
+Boundaries are: `message`, `sessionStatus`, `composer`, `composerEditor`, `composerInput`, `button`, `attachment`, `managementHeader`, `managementDetailHeader`, and `settings`. They correspond to real existing host components: visible message body/current ask question; concurrent session activity summary; actual composer card; input row;
 controlled textarea; historical attachment row; management headers; and shared preference content.
 
 Middleware sorts by `(order ?? 0, moduleId, id)` with lower values outermost. The host composes only on registration/base changes, not every render. Enhancers must preserve inherited props, children, refs, actions, native identity, scroll and a11y anchors, and layout semantics. Composition and error boundaries add no
 HTML. Empty production boundaries, fake slots, hidden dispatchers, or components that only return children are not allowed.
 
+`components.get(name)` returns a stable typed proxy per runtime/name. Host and
+module consumers use the same centrally defined bases and sorted enhancement
+chain, including Composer's editor, input and button. Lookup never fetches,
+activates a service or creates another React root. A base obtains semantic child
+components through the same lookup; middleware calls its received `Base`, never
+recursively looks up its own boundary. Unrelated rerenders do not call `wrap`.
+An actual chain change can still remount its affected subtree; durable draft and
+upload/recording state belongs in controllers/services, not middleware hooks.
+
+Message display identity belongs to its owner/local ID; optional `origin`
+identifies a real native source. `decisionOrigin` separately carries a real
+native pending question's session and request ID, not a message origin.
+Do not pass publication IDs as native message
+IDs, attribute a multisource summary to one message, or fabricate a native
+session for a generic message. Native-dependent legacy middleware is skipped
+where actual native attribution is absent; attachments still use their own
+descriptors and the same public attachment component.
+
 `composerInput` requires `context.composerInputVersion === 1`. The `Base` is the controlled textarea and continues to own value, IME, Enter/Ctrl/Meta+Enter, and native `onKeyDown` behavior. Enhancers pass through value/onChange/native props, compose `editorRef` including callback cleanup, avoid private DOM queries, and
 may render siblings such as a microphone after `Base`. Full-width status panels belong around the existing composer, not inside the input row.
 
-`disabled` is native edit disabled; `sendBlocked`, pending, and draft blocks gate submit but should not disable the textarea. Routes without free-text ask/elicited answers keep normal editing while module controls disable their own actions. Async input must capture exact draft id/revision/lease and never write a reused
+`disabled` is native edit disabled; `sendBlocked`, pending, and draft blocks gate submit but should not disable an otherwise editable textarea. `sendBlocked` is the owner's gate, not empty-content or a module's own recording block. Choice-only asks and elicitation expose no editable text route; their native choice controls remain usable. Async input must capture exact draft id/revision/lease and never write a reused
 request ID or new lifecycle. Background completion uses `editTextIfRevision(text, revision)`: it returns `false` without mutation on revision mismatch, pending/unconfirmed send, or any remaining block; throws on retirement, revocation, missing text permission, or persistence failure; `true` means text was synchronously
 persisted and a new revision published.
 
 Draft lifetimes are not component lifetimes. Session switch, hidden page, disconnect, unload, or temporary ask overlay does not retire the prompt. Decision end/replacement retires that decision snapshot permanently. Authoritative session deletion retires prompt and decisions. Late ACKs for retired prompts do not write
 storage for a future same session ID. Modules release resources on retirement; temporary invisibility is not destruction.
 #### One-time captured draft submission
-Use only after checking `context.draftSubmissionVersion === 1` and declaring `sends: ['draft']`. Capture `draft.captureSend()` at explicit user send consent, not after asynchronous work. The captured intent has no session ID, request ID, attachments, or arbitrary payload parameter. Text write permission and send
+Use only after checking `context.draftSubmissionVersion === 2` and declaring `sends: ['draft']` (legacy native-only v2 keeps version 1). Capture `draft.captureSend()` at explicit user send consent, not after asynchronous work. The captured intent has no session ID, request ID, attachments, or arbitrary payload parameter. Text write permission and send
 permission are independent.
 
 A module may stream text with its own `editText`, then release its own block, write final text with `editTextIfRevision`, and call `intent.send(expectedRevision)`. Any other writer's text change, schema addition/removal/update, or schema generation change since capture invalidates consent, including ABA changes; pure
-release of this module's block and this module's expected streaming writes do not. The host checks again at final dispatch.
+release of this module's block and this module's expected streaming writes do not.
+Owner actionRevision changes also invalidate consent. The host checks again at final dispatch.
 
 The first `send()` consumes the intent even if blocked; later calls return the same promise/result. `cancel()` works only before dispatch. Results are `acknowledged`, `blocked` with a safe code (`revoked`, `retired`, `cancelled`, `revision-mismatch`, `draft-changed`, `pending`, `unconfirmed`, `peer-blocked`, `empty`,
-`unavailable`, `read-only`, `decision-changed`, `unsupported`, `persistence-failed`, `projection-failed`), or `unconfirmed` with `native-unconfirmed`/`settlement-failed`. Blocked guarantees no native dispatch; unconfirmed may have sent and must not be retried automatically or replaced with fresh consent.
+`unavailable`, `read-only`, `decision-changed`, `unsupported`, `persistence-failed`,
+`projection-failed`), `rejected` with an explicit business rejection, or
+`unconfirmed` with `transport-unconfirmed`/`native-unconfirmed`/`settlement-failed`.
+Acknowledged means business acceptance plus complete local settlement, not model
+execution or reading. Blocked guarantees no dispatch; rejection does not make
+that claim. Unconfirmed may have sent and must not be retried automatically or
+replaced with fresh consent.
 
 Dispatch uses the existing `SessionDraft` projection, native route construction, pending token, and schema ACK transaction. Prompt sends to the original session's prompt/enqueue route even if an ask later appears. Ask sends only to the original live free-text ask with `wasFreeform: true`; plan sends feedback;
 elicitation has no text route. Retired decisions never turn into prompts. Module unload mid-send does not prove no send happened.
