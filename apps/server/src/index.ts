@@ -615,7 +615,10 @@ async function boot(): Promise<void> {
   }
   const native = new OfficialRuntime();
   const runtime = new Engine({ runtime: native, sessionDefaults: new HostSessionDefaults() });
-  runtime.log = (msg, data) => app.log.warn(data ?? {}, msg);
+  runtime.log = (msg, data) => {
+    if (msg === 'session.diagnostic') app.log.info(data ?? {}, msg);
+    else app.log.warn(data ?? {}, msg);
+  };
   engine = runtime;
   const stop = () => {
     try { requestShutdown(); }

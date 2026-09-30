@@ -51,6 +51,7 @@ export class SessionHandle {
   sendReceipts = new Set<string>();
   revision = 0;
   activityRevision = 0;
+  diagnosticSampleAfterSequence?: number;
   scheduleGate: Promise<void> = Promise.resolve();
   resourceWrites = new Map<SessionResource, number>();
   pendingInvalidations = new Set<SessionResource>();

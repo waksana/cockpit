@@ -5,6 +5,7 @@ import { messageOf, settled } from './async.ts';
 import type { SessionKernel } from './kernel.ts';
 import type { DecisionBroker } from './decisions.ts';
 import type { ResourceReader } from './resource-reader.ts';
+import type { DiagnosticTrace } from './session-diagnostics.ts';
 
 /**
  * Turn input and Stop/Interrupt controls. Prompt acceptance and controls share
@@ -22,6 +23,10 @@ export class SessionControlService {
   }
 
   async prompt(id: string, text: string, mode: 'enqueue' | 'immediate' = 'enqueue', attachments?: RuntimeAttachment[]): Promise<IntentResult<'prompt'>> {
+    return this.k.diagnostics.operation(id, 'prompt', { mode }, trace => this.sendPrompt(id, text, mode, attachments, trace));
+  }
+
+  private async sendPrompt(id: string, text: string, mode: 'enqueue' | 'immediate', attachments: RuntimeAttachment[] | undefined, trace: DiagnosticTrace): Promise<IntentResult<'prompt'>> {
     if (!text.trim() && !attachments?.length) throw invalid('Prompt must not be empty');
     return this.k.operation(id, (sdk, st) => st.serialize('controlGate', async () => {
       const before = await this.k.readControl(st, sdk);
@@ -29,10 +34,10 @@ export class SessionControlService {
       st.sends++;
       this.k.patch(st, { status: 'running', error: null });
       try {
-        const accepted = await this.k.withSession(st, sdk, () => sdk.send({
+        const accepted = await this.k.withSession(st, sdk, () => this.k.diagnostics.native(id, trace, sdk, 'session.send', () => sdk.send({
           prompt: text, mode,
           attachments,
-        }));
+        })));
         if (typeof accepted !== 'string' || !accepted) throw new Error('Native message acceptance receipt is missing; delivery is unconfirmed');
         if (st.sdk !== sdk) throw new Error('Native session closed during send; delivery is uncertain');
         if (!st.sendReceipts.has(accepted)) {
@@ -52,6 +57,10 @@ export class SessionControlService {
   }
 
   async cancel(id: string): Promise<void> {
+    return this.k.diagnostics.operation(id, 'cancel', {}, trace => this.cancelSession(id, trace));
+  }
+
+  private async cancelSession(id: string, trace: DiagnosticTrace): Promise<void> {
     const st = await this.k.state(id);
     this.k.assertAdmission(st);
     if (st.cancelling) return st.cancelling;
@@ -60,8 +69,8 @@ export class SessionControlService {
     st.cancelling = this.k.untilFatal(async () => {
       const sdk = await this.k.liveSession(st);
       if (!sdk) return;
-      await this.k.withSession(st, sdk, () => sdk.rpc.queue.clear());
-      await this.k.withSession(st, sdk, () => sdk.abort());
+      await this.k.withSession(st, sdk, () => this.k.diagnostics.native(id, trace, sdk, 'queue.clear', () => sdk.rpc.queue.clear()));
+      await this.k.withSession(st, sdk, () => this.k.diagnostics.native(id, trace, sdk, 'session.abort', () => sdk.abort()));
       for (const decision of st.decisions.values()) decision.reject(new Error('Native request cancelled'));
       st.decisions.clear();
       st.accepted.clear();
@@ -84,13 +93,18 @@ export class SessionControlService {
   }
 
   async interrupt(id: string): Promise<IntentResult<'session/interrupt'>> {
+    return this.k.diagnostics.operation(id, 'interrupt', {}, trace => this.interruptSession(id, trace));
+  }
+
+  private async interruptSession(id: string, trace: DiagnosticTrace): Promise<IntentResult<'session/interrupt'>> {
     const st = await this.k.state(id);
     if (st.interrupting) return st.interrupting;
     if (st.load || st.activeOperations() || st.cancelling) return Promise.reject(busy('Session operation is still in progress'));
     const pending = this.k.operation(id, async (sdk) => {
       const target = { epoch: st.turnEpoch, interactionId: st.interactionId, decisions: new Map(st.decisions) };
       st.interruptTurn = target;
-      const result = await sdk.rpc.interruptMainTurn({ flushQueued: true });
+      const result = await this.k.diagnostics.native(id, trace, sdk, 'session.interruptMainTurn',
+        () => sdk.rpc.interruptMainTurn({ flushQueued: true }), undefined, target);
       if (st.sdk !== sdk || this.k.failure) throw new Error('Native session closed during interrupt; outcome is uncertain');
       if (result.interrupted) this.decisions.clearInterruptedTurn(st, target);
       if (st.interruptTurn === target) st.interruptTurn = undefined;
@@ -104,10 +118,15 @@ export class SessionControlService {
   }
 
   async removeQueued(id: string, itemId: string): Promise<void> {
+    return this.k.diagnostics.operation(id, 'queue/remove', { targetId: itemId }, trace => this.removeQueueItem(id, itemId, trace));
+  }
+
+  private async removeQueueItem(id: string, itemId: string, trace: DiagnosticTrace): Promise<void> {
     await this.k.operation(id, async (sdk, st) => {
       const { items } = await this.k.withSession(st, sdk, () => sdk.rpc.queue.pendingItems());
       const removedIds = items.filter(item => item.id === itemId).flatMap(item => item.messageId ? [item.messageId] : []);
-      const result = await this.k.withSession(st, sdk, () => sdk.rpc.queue.removeAt({ id: itemId }));
+      const result = await this.k.withSession(st, sdk, () => this.k.diagnostics.native(id, trace, sdk, 'queue.removeAt',
+        () => sdk.rpc.queue.removeAt({ id: itemId })));
       if (!result.removed) throw new CockpitError('QUEUE_ITEM_NOT_FOUND', 'Queued item is no longer addressable');
       for (const messageId of removedIds) st.accepted.delete(messageId);
       await this.k.syncNative(st);
@@ -115,6 +134,14 @@ export class SessionControlService {
   }
 
   async control(id: string, token: string, action: SessionControlAction): Promise<SessionControlResult> {
+    return this.k.diagnostics.operation(id, action.type, {
+      ...(action.type === 'cancel-decision' ? { decisionKind: action.kind, requestId: action.requestId } : {}),
+      ...('id' in action ? { targetId: action.id } : {}),
+      ...(action.type === 'clear-tasks' ? { targetCount: action.ids.length } : {}),
+    }, trace => this.applyControl(id, token, action, trace));
+  }
+
+  private async applyControl(id: string, token: string, action: SessionControlAction, trace: DiagnosticTrace): Promise<SessionControlResult> {
     if (action.type === 'clear-tasks') {
       if (!action.ids.length || new Set(action.ids).size !== action.ids.length) {
         throw invalid('Clear tasks requires nonempty unique native task IDs');
@@ -168,7 +195,9 @@ export class SessionControlService {
             await work(outcome, async work => {
               assertOwner();
               dispatched = true;
-              const result = await work();
+              const result = await this.k.diagnostics.native(id, trace, sdk,
+                operation === 'decision.ask' ? 'session.interruptMainTurn' : operation, work, targetId,
+                operation === 'decision.ask' || operation === 'session.abort' ? st.interruptTurn : undefined);
               if (result && typeof result === 'object') outcome.result = { ...result };
               if (st.sdk !== sdk || this.k.failure) throw new Error('Native handle closed during control; outcome is uncertain');
               return result;
@@ -176,6 +205,8 @@ export class SessionControlService {
           } catch (error) {
             outcome.state = dispatched ? 'unconfirmed' : 'failed';
             outcome.error = messageOf(error);
+          } finally {
+            this.k.diagnostics.step(id, trace, operation, targetId, outcome.state);
           }
         };
         const taskById = async (taskId: string, kind?: 'agent' | 'shell', allowMissing = false) => {

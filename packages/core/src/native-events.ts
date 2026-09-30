@@ -102,6 +102,7 @@ export class NativeEvents {
     st.revision++;
     const data = event.data;
     const root = !event.agentId && !event.parentToolCallId && !data.parentToolCallId && !data.agentId;
+    this.k.diagnostics.observe(st, event, root);
     if (root && event.type === 'user.message') {
       for (const id of [native.id, data.messageId]) {
         if (typeof id !== 'string') continue;

@@ -16,11 +16,21 @@ export class DecisionBroker {
     if (this.k.failure) return Promise.reject(this.k.failure);
     if (st.closing || st.cancelling || this.k.lifecycle) return Promise.reject(new Error('Session is closing or cancelling'));
     const requestId = randomUUID();
+    const epoch = st.turnEpoch;
+    const interactionId = st.interactionId;
+    this.k.diagnostics.decision(st, kind, requestId, 'pending', epoch, interactionId);
     return new Promise<T>((answer, reject) => {
       st.decisions.set(requestId, {
         kind, epoch: st.turnEpoch, interactionId: st.interactionId,
         value: { ...fields, requestId } as Decision['value'],
-        answer: value => answer(value as T), reject,
+        answer: value => {
+          this.k.diagnostics.decision(st, kind, requestId, 'answered', epoch, interactionId);
+          answer(value as T);
+        },
+        reject: error => {
+          this.k.diagnostics.decision(st, kind, requestId, 'rejected', epoch, interactionId);
+          reject(error);
+        },
         validate: validate ? value => validate(value as T) : undefined,
       });
       this.k.projectDecisions(st);
