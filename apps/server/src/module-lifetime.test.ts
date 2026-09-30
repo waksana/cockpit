@@ -47,6 +47,9 @@ for (const platform of ['darwin', 'win32'] as const) {
       const sdk = `data:text/javascript,${encodeURIComponent(`
 export const approveAll = () => ({kind:'approved'});
 export const RuntimeConnection = {forStdio: () => ({kind:'stdio'})};
+export class ToolSet {
+  constructor() { throw new Error('Unexpected scoped session in lifecycle fixture'); }
+}
 export class CopilotClient {
   constructor() { console.error('SYNTHETIC_NATIVE_CONSTRUCTED'); }
   rpc = {};

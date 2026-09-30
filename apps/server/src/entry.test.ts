@@ -12,6 +12,9 @@ import { serviceIdentity } from './identity.ts';
 const mockSdk = `data:text/javascript,${encodeURIComponent(`
 export const approveAll = () => ({kind:'approved'});
 export const RuntimeConnection = {forStdio: () => ({kind:'stdio'})};
+export class ToolSet {
+  constructor() { throw new Error('Unexpected scoped session in lifecycle fixture'); }
+}
 export class CopilotClient {
   rpc = {};
   async start() {
