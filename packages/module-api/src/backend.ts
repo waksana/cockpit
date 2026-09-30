@@ -20,6 +20,8 @@ export interface ModuleHostApi {
   readonly sessionLoadVersion?: 1;
   /** Check before resource-aware creation/preparation; absent on older hosts. */
   readonly resourcePreparationVersion?: 1;
+  /** Immutable native tool allowlist at creation and passive actual tool metadata. */
+  readonly toolScopeVersion?: 1;
   /** Native respondAsk bridge; check before opening persistent module data. */
   readonly askResponseVersion?: 1;
   /** Bounded native session/chat reads; absent on older hosts. */

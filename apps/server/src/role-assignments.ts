@@ -56,7 +56,7 @@ export class RoleAssignments {
   }
 
   assertHostCallAllowed(name: string): void {
-    if (this.callbacks.getStore() && !['session/get', 'session/directory', 'roles/readiness', 'session/chat'].includes(name)) {
+    if (this.callbacks.getStore() && !['session/get', 'session/directory', 'roles/readiness', 'session/chat', 'session/tool-scope'].includes(name)) {
       throw Object.assign(new Error('Role assignment callbacks may only make read-only host calls'), {
         code: 'ROLE_ASSIGNMENT_REENTRANT', statusCode: 409,
       });

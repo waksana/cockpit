@@ -1,5 +1,5 @@
 import type { CopilotSession } from '@github/copilot-sdk';
-import type { IntentResult, PendingDecision, SessionMeta, SessionResource } from '@cockpit/protocol';
+import type { IntentResult, PendingDecision, SessionMeta, SessionResource, ToolScope } from '@cockpit/protocol';
 import type { RoleAssembly, SessionInstructions } from './roles.ts';
 
 export type DecisionKind = 'ask' | 'planRequest' | 'elicitation';
@@ -22,8 +22,10 @@ export type MutationGate = 'scheduleGate' | 'modelGate' | 'controlGate';
 export class SessionHandle {
   readonly id: string;
   roleAssembly?: RoleAssembly;
+  toolScope?: ToolScope;
   instructionSources?: SessionInstructions['sources'];
   creationSubmitted?: boolean;
+  creationConfirmed?: boolean;
   observedCwd?: string | null;
   sdk: CopilotSession | null = null;
   controlToken?: string;

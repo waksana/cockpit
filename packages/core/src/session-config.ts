@@ -8,6 +8,7 @@ import type { RoleService } from './role-service.ts';
 import type { SkillsService } from './skills-service.ts';
 import type { DecisionBroker } from './decisions.ts';
 import { moduleMcpInvocationHook, SubagentNames } from './mcp-invocation.ts';
+import { assertScopeServerIdentities, nativeToolScope } from './tool-scope.ts';
 
 type UserInputResponse = Awaited<ReturnType<NonNullable<SessionConfig['onUserInputRequest']>>>;
 const planActions = new Set<string>(['exit_only', 'interactive', 'autopilot', 'autopilot_fleet']);
@@ -31,10 +32,12 @@ export class SessionConfigurator {
 
   async config(st: SessionHandle, cwd?: string): Promise<{
     config: SessionConfig; assembly?: RoleAssembly; instructions?: SessionInstructions; subagents?: SubagentNames;
+    toolScope?: import('@cockpit/protocol').ToolScope;
   }> {
     const disabled = await this.skills.globalDisabledSkills();
     const selected = await this.roleService.savedRoles(st.id);
     const assembly = selected.length ? await this.k.roles!.assemble(st.id, selected) : undefined;
+    const toolScope = await this.k.roles?.readToolScope?.(st.id);
     if (assembly?.skills.length) {
       const existing = await this.skills.discoverSkills(cwd ?? st.observedCwd ?? undefined);
       const names = new Map(existing.skills.map(skill => [skill.name, skill.path]));
@@ -54,23 +57,28 @@ export class SessionConfigurator {
         }
       }
     }
-    if (assembly) {
+    if (assembly || toolScope) {
       const [configured, discovered] = await this.k.untilFatal(() => settled([
         this.k.runtime.rpc.mcp.config.list(),
         this.k.runtime.rpc.mcp.discover({ workingDirectory: cwd ?? st.observedCwd ?? undefined }),
       ] as const));
-      for (const name of Object.keys(assembly.config.mcpServers ?? {})) {
+      for (const name of Object.keys(assembly?.config.mcpServers ?? {})) {
         if (Object.hasOwn(configured.servers, name) || discovered.servers.some(server => server.name === name)) {
           throw new Error(`Role MCP conflicts with native configuration: ${name}`);
         }
       }
+      if (toolScope) assertScopeServerIdentities(toolScope, [
+        ...Object.keys(configured.servers), ...discovered.servers.map(server => server.name),
+        ...Object.keys(assembly?.config.mcpServers ?? {}),
+      ]);
     }
     const instructions = await this.k.roles?.sessionInstructions?.(st.id, assembly);
     const systemMessage = instructions ? { mode: 'append' as const, content: instructions.content } : assembly?.config.systemMessage;
     const moduleServers = new Set(Object.keys(assembly?.config.mcpServers ?? {}));
     const subagents = moduleServers.size ? new SubagentNames() : undefined;
-    return { assembly, instructions, subagents, config: {
+    return { assembly, instructions, subagents, toolScope, config: {
       ...assembly?.config, ...(systemMessage ? { systemMessage } : {}),
+      ...(toolScope ? { availableTools: nativeToolScope(toolScope) } : {}),
       ...(subagents ? { hooks: { onPreMcpToolCall: moduleMcpInvocationHook(moduleServers, subagents) } } : {}),
       sessionId: st.id, ...(cwd ? { workingDirectory: cwd } : {}), streaming: true,
       enableConfigDiscovery: true,

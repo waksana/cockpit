@@ -293,7 +293,9 @@ test('permission and notification callbacks allow reads but reject reentrant rol
   const check = async () => {
     await read();
     service.assertHostCallAllowed('session/directory');
+    service.assertHostCallAllowed('session/tool-scope');
     assert.throws(() => service.assertHostCallAllowed('session/load'), { code: 'ROLE_ASSIGNMENT_REENTRANT' });
+    assert.throws(() => service.assertHostCallAllowed('session/tools-initialize'), { code: 'ROLE_ASSIGNMENT_REENTRANT' });
     await assert.rejects(service.run(assignment('nested'), async () => {}), { code: 'ROLE_ASSIGNMENT_REENTRANT' });
   };
   const h = handler({ permit: async () => { await check(); return { allowed: true }; }, saved: check });

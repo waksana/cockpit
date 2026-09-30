@@ -16,6 +16,11 @@ isolated package snapshot, never committed back to source.
 - The global menu now opens one Settings dialog for the default new-session model,
   module-owned preference sections and About. Model saves are explicit and stay
   in place; global MCP and Skills remain separate pages.
+- Backend modules can check `toolScopeVersion: 1` for an immutable native creation
+  tool allowlist and passive configured/applied/actual evidence. Explicit empty
+  selections remove tools, ambiguous MCP identities fail closed, and cold load
+  preserves scope without changing the allow-all permission policy. See
+  [native session tool scope](module-contract.md#session-tool-scope).
 - The independently versioned [module SDK](module-sdk.md) adds `settingsVersion: 1`
   and `settings` component middleware. Modules keep their own configuration and
   operations; the host supplies only the shared presentation boundary.

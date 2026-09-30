@@ -1,5 +1,5 @@
 import type { SessionConfig } from '@github/copilot-sdk';
-import type { ModuleRoleResources, ModuleRoleSkill, ModuleSkillSource, ModuleSource, RoleSelection, SessionRole, RoleAssignmentNotificationResult } from '@cockpit/protocol';
+import type { ModuleRoleResources, ModuleRoleSkill, ModuleSkillSource, ModuleSource, RoleSelection, SessionRole, RoleAssignmentNotificationResult, ToolScope } from '@cockpit/protocol';
 
 export interface RoleAssembly {
   roles: SessionRole[];
@@ -33,6 +33,8 @@ export interface RoleProvider {
   readSkill?(moduleId: string, resourceId: string): Promise<ModuleRoleSkill>;
   read(sessionId: string): SessionRole[] | Promise<SessionRole[]>;
   save(sessionId: string, roles: SessionRole[]): void;
+  readToolScope?(sessionId: string): Promise<ToolScope | undefined>;
+  saveToolScope?(sessionId: string, scope: ToolScope): void;
   assemble(sessionId: string, roles: RoleSelection[]): Promise<RoleAssembly>;
   /** Compose module defaults, the applied role instructions and user instructions. */
   sessionInstructions?(sessionId: string, assembly?: RoleAssembly): Promise<SessionInstructions | undefined>;

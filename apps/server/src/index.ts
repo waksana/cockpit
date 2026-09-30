@@ -55,7 +55,7 @@ export type ServerEngine = Pick<Engine,
   | 'listGlobalSkills' | 'setGlobalSkill' | 'readSkillBody' | 'listSessionSkills' | 'toggleSessionSkill' | 'refreshSkills'
   | 'addSchedule' | 'stopSchedule' | 'listSchedules' | 'listDir'
   | 'listRoles' | 'listRoleResources' | 'readRoleSkill' | 'roleReadiness' | 'addRoles'
-  | 'getSessionDefaults' | 'setSessionDefaults'
+  | 'getSessionDefaults' | 'setSessionDefaults' | 'getSessionToolScope'
 >;
 let engine: ServerEngine;
 let moduleHost: ModuleHost | undefined;
@@ -320,7 +320,10 @@ const handlers: IntentHandlers = {
   'runtime/snapshot': async () => engine.snapshot(),
   'settings/session-defaults': async () => engine.getSessionDefaults(),
   'settings/session-defaults-set': async b => engine.setSessionDefaults(b.modelId),
-  'session/new': async (b) => ({ sessionId: await (b.roles ? engine.newSession(b.cwd, b.roles) : engine.newSession(b.cwd)) }),
+  'session/new': async (b) => ({ sessionId: await (b.toolScope !== undefined
+    ? engine.newSession(b.cwd, b.roles, b.toolScope)
+    : b.roles ? engine.newSession(b.cwd, b.roles) : engine.newSession(b.cwd)) }),
+  'session/tool-scope': async (b) => engine.getSessionToolScope(b.sessionId),
   'roles/list': async () => ({ roles: engine.listRoles() }),
   'roles/resources': async () => ({ modules: await engine.listRoleResources() }),
   'roles/skill-read': async (b) => await engine.readRoleSkill(b.moduleId, b.resourceId),

@@ -7,6 +7,7 @@ import { messageOf, settled } from './async.ts';
 import { describeMcpServer, mcpConnection, redactMcpConfig } from './mcp-config.ts';
 import type { ResourceValues, SessionKernel } from './kernel.ts';
 import type { SessionHandle } from './session-handle.ts';
+import { assertSessionScopeNamespaces } from './tool-scope.ts';
 
 /** Native global MCP configuration and per-session MCP connections. */
 export class McpService {
@@ -105,6 +106,7 @@ export class McpService {
         const previous = before.servers.find(server => server.name === name);
         if (!previous) throw new CockpitError('MCP_NOT_FOUND', `Unknown native MCP server: ${name}`);
         this.mcpServerState(before, name, previous);
+        if (enabled) await assertSessionScopeNamespaces(this.k, st, sdk);
         submitted = true;
         await this.k.withSession(st, sdk, () => sdk.rpc.mcp[enabled ? 'enable' : 'disable']({ serverName: name }));
         const result = await this.k.readResource(st, sdk, 'mcp');
@@ -158,6 +160,7 @@ export class McpService {
       const sdk = st.sdk;
       if (!sdk) throw new SessionUnloadedError();
       await this.k.untilFatal(() => this.k.runtime.rpc.mcp.config.reload());
+      await assertSessionScopeNamespaces(this.k, st, sdk);
       st.mcpOperations++;
       this.patchMcpPending(st);
       try {

@@ -5,6 +5,7 @@ import type { SkillSession } from '@cockpit/protocol';
 import { SkillNotFoundError, unsupported } from './errors.ts';
 import { settled } from './async.ts';
 import type { SessionKernel } from './kernel.ts';
+import { assertSessionScopeNamespaces } from './tool-scope.ts';
 
 /** Native global skill discovery/configuration and per-session skill state. */
 export class SkillsService {
@@ -76,6 +77,7 @@ export class SkillsService {
 
   async toggleSessionSkill(id: string, name: string, enabled: boolean): Promise<void> {
     await this.k.operation(id, async (sdk, st) => {
+      if (enabled) await assertSessionScopeNamespaces(this.k, st, sdk);
       await this.k.withSession(st, sdk, () => sdk.rpc.skills[enabled ? 'enable' : 'disable']({ name }));
       const skill = (await this.k.withSession(st, sdk, () => sdk.rpc.skills.list())).skills.find(skill => skill.name === name);
       if (!skill || skill.enabled !== enabled) throw new Error('Native skill state did not confirm the requested change');
@@ -90,7 +92,8 @@ export class SkillsService {
       return;
     }
     for (const st of loaded) {
-      await this.k.operation(st.id, async sdk => {
+      await this.k.operation(st.id, async (sdk, st) => {
+        await assertSessionScopeNamespaces(this.k, st, sdk);
         const result = await sdk.rpc.skills.reload();
         const diagnostics = [...result.errors, ...result.warnings];
         if (diagnostics.length) throw new Error(`Native skill reload diagnostics: ${diagnostics.join('; ')}`);

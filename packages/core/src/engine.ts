@@ -9,7 +9,7 @@ import type {
   ScheduleEntry, ServerEvent, SessionBrief, SessionControlAction, SessionControlResult, SessionMeta, SessionPanels,
   SessionPlan, SessionProjection, SessionResourcesPrepare, SessionUsage, SkillSession, Snapshot,
 } from '@cockpit/protocol';
-import { NativeChatRead, NativeRewindResult } from '@cockpit/protocol';
+import { NativeChatRead, NativeRewindResult, ToolScope, SessionToolScope } from '@cockpit/protocol';
 import { OfficialRuntime } from './runtime.ts';
 import type { RuntimeAttachment } from './sdk-types.ts';
 import { readNativeChat } from './native-chat.ts';
@@ -34,6 +34,7 @@ import { SessionControlService } from './session-controls.ts';
 import { SessionSettings } from './session-settings.ts';
 import { SessionDefaults, type SessionDefaultsStore } from './session-defaults.ts';
 import { listDir } from './list-dir.ts';
+import { assertScopeToolMetadata } from './tool-scope.ts';
 
 export { boundedMap } from './async.ts';
 export type { EngineRuntime } from './kernel.ts';
@@ -41,6 +42,7 @@ export type { NativeObservation } from './native-events.ts';
 
 // Parent transports can expose these limits without inventing runtime support.
 export const coreCapabilities = {
+  toolScopeVersion: 1,
   forkSession: {
     native: true, source: 'loaded-idle', boundary: 'before-root-user-event',
     schedules: false, workspaceIsolation: false, childLoaded: false,
@@ -167,7 +169,11 @@ export class Engine {
   getSessionDefaults() { return this.defaults.read(); }
   setSessionDefaults(modelId: string) { return this.defaults.set(modelId); }
 
-  async newSession(cwd: string, roles: RoleSelection[] = []): Promise<string> {
+  async newSession(cwd: string, roles: RoleSelection[] = [], toolScope?: ToolScope): Promise<string> {
+    if (toolScope !== undefined) {
+      toolScope = ToolScope.parse(toolScope);
+      if (!this.k.roles?.saveToolScope || !this.k.roles.readToolScope) throw unavailable('Persistent session tool scope is unavailable');
+    }
     this.k.roles?.assertAssignmentAllowed?.();
     this.k.assertAvailable();
     if (this.k.stopped) throw engineStopped('Engine is stopped; start it before creating sessions');
@@ -188,6 +194,7 @@ export class Engine {
           const assembly = await this.k.roles.assemble(id, roles);
           this.k.roles.save(id, assembly.roles);
         }
+        if (toolScope !== undefined) this.k.roles!.saveToolScope!(id, toolScope);
         await this.ensureLoaded(st, true, directory, model);
         return id;
       };
@@ -197,7 +204,7 @@ export class Engine {
         : await create();
     } catch (error) {
       if (error && typeof error === 'object' && 'roleAssignment' in error) throw error;
-      if (st.sdk?.sessionId === id) {
+      if (st.creationConfirmed || st.sdk?.sessionId === id) {
         throw new CockpitError('SESSION_CREATION_INCOMPLETE', `Native session ${id} was created, but readiness readback failed: ${messageOf(error)}. Inspect this session; do not create a replacement automatically.`,
           { cause: error, sessionId: id });
       }
@@ -217,6 +224,9 @@ export class Engine {
   async forkSession(id: string, toEventId?: string, name?: string): Promise<{ sessionId: string }> {
     const st = await this.k.state(id);
     return this.k.transition(st, async () => {
+      if (await this.k.roles?.readToolScope?.(id)) {
+        throw new CockpitError('UNSUPPORTED', 'Forking a tool-scoped session is unsupported; scope must not be silently widened');
+      }
       const sdk = st.sdk;
       if (!sdk) throw new SessionUnloadedError();
       await this.k.withSession(st, sdk, () => validateForkHistory(sdk.rpc.eventLog.read, toEventId));
@@ -271,8 +281,8 @@ export class Engine {
       } };
       if (create) st.creationSubmitted = true;
       const sdk = await this.k.untilFatal(() => create
-        ? this.k.runtime.createSession(config)
-        : this.k.runtime.resumeSession(st.id, config));
+        ? this.k.runtime.createSession(config, assembled.toolScope)
+        : this.k.runtime.resumeSession(st.id, config, assembled.toolScope));
       this.k.assertAvailable();
       if (sdk.sessionId !== st.id) {
         const action = create ? 'creation' : 'resume';
@@ -280,8 +290,10 @@ export class Engine {
       }
       if (st.eventOwner !== owner) throw new Error('Native session closed while loading; explicitly resume to continue');
       st.sdk = sdk;
+      if (create) st.creationConfirmed = true;
       st.controlToken = randomUUID();
       st.roleAssembly = assembled.assembly;
+      st.toolScope = assembled.toolScope;
       st.instructionSources = assembled.instructions?.sources;
       this.sessions.set(sdk.sessionId, st);
       if (owner.closed?.has(sdk) || (create && !await this.k.liveSession(st))) {
@@ -289,7 +301,17 @@ export class Engine {
         throw new Error('Native session closed while loading; explicitly resume to continue');
       }
       delete owner.closed;
-      if (st.roleAssembly) await this.k.withSession(st, sdk, () => sdk.rpc.tools.initializeAndValidate());
+      if (st.roleAssembly || st.toolScope) await this.k.withSession(st, sdk, () => sdk.rpc.tools.initializeAndValidate());
+      if (st.toolScope) {
+        try {
+          const { tools } = await this.k.withSession(st, sdk, () => sdk.rpc.tools.getCurrentMetadata());
+          assertScopeToolMetadata(st.toolScope, tools);
+        } catch (error) {
+          try { await this.k.close(st); }
+          catch (closeError) { throw new AggregateError([error, closeError], 'Tool scope validation and native close failed', { cause: closeError }); }
+          throw error;
+        }
+      }
       const meta = await this.reader.getResources(st.id, summaryResources);
       if (!meta) throw new Error('Native session metadata is unavailable after loading');
       if (create && meta.currentModelId !== model) {
@@ -316,6 +338,23 @@ export class Engine {
     let count = 0;
     for (const st of this.sessions.values()) if (await this.k.busy(st)) count++;
     return count;
+  }
+
+  async getSessionToolScope(id: string): Promise<SessionToolScope> {
+    const st = await this.k.state(id);
+    this.k.assertReadable(st);
+    st.operations++;
+    st.readLeases++;
+    try {
+      const configured = await this.k.roles?.readToolScope?.(id) ?? null;
+      const sdk = await this.k.liveSession(st);
+      this.k.assertReadable(st);
+      if (!sdk) return { sessionId: id, loaded: false, configured, applied: null, tools: null };
+      const metadata = await this.k.withSession(st, sdk, () => sdk.rpc.tools.getCurrentMetadata());
+      return SessionToolScope.parse({ sessionId: id, loaded: true, configured, applied: st.toolScope ?? null,
+        tools: metadata.tools?.map(({ name, namespacedName, mcpServerName, mcpToolName }) =>
+          ({ name, namespacedName, mcpServerName, mcpToolName })) ?? null });
+    } finally { st.operations--; st.readLeases--; this.k.release(st); }
   }
 
   async unload(id: string): Promise<void> {
