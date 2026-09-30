@@ -312,6 +312,13 @@ export type ModuleHostIntentMap = {
                 moduleId: string;
                 roleId: string;
             }[] | undefined;
+            toolScope?: {
+                builtins: string[];
+                mcpServers: {
+                    name: string;
+                    tools: string[];
+                }[];
+            } | undefined;
         };
         result: {
             sessionId: string;
@@ -353,6 +360,35 @@ export type ModuleHostIntentMap = {
                 name: string;
             }[];
             tools: "initialized" | "not_attempted" | "unchanged" | "unconfirmed";
+        };
+    };
+    "session/tool-scope": {
+        body: {
+            sessionId: string;
+        };
+        result: {
+            applied: {
+                builtins: string[];
+                mcpServers: {
+                    name: string;
+                    tools: string[];
+                }[];
+            } | null;
+            configured: {
+                builtins: string[];
+                mcpServers: {
+                    name: string;
+                    tools: string[];
+                }[];
+            } | null;
+            loaded: boolean;
+            sessionId: string;
+            tools: {
+                mcpServerName?: string | undefined;
+                mcpToolName?: string | undefined;
+                name: string;
+                namespacedName?: string | undefined;
+            }[] | null;
         };
     };
     prompt: {
@@ -1298,6 +1334,30 @@ export type SessionRole = {
     roleId: string;
 };
 export type SessionStatus = "error" | "idle" | "running" | "unloaded";
+export type SessionToolScope = {
+    applied: {
+        builtins: string[];
+        mcpServers: {
+            name: string;
+            tools: string[];
+        }[];
+    } | null;
+    configured: {
+        builtins: string[];
+        mcpServers: {
+            name: string;
+            tools: string[];
+        }[];
+    } | null;
+    loaded: boolean;
+    sessionId: string;
+    tools: {
+        mcpServerName?: string | undefined;
+        mcpToolName?: string | undefined;
+        name: string;
+        namespacedName?: string | undefined;
+    }[] | null;
+};
 export type Snapshot = {
     agentStatus: "failed" | "starting" | "stopping" | "up";
     models: {
@@ -1451,4 +1511,11 @@ export type TodoProgress = {
     done: number;
     intent: null | string;
     total: number;
+};
+export type ToolScope = {
+    builtins: string[];
+    mcpServers: {
+        name: string;
+        tools: string[];
+    }[];
 };

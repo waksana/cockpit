@@ -177,11 +177,11 @@ export class ModuleHost {
         const installation = await readModuleInstallation(id, selected, hostRoot);
         const apiBase = `/_modules/${id}/${installation.digest}/api`;
         const context: ModuleBackendContext = Object.freeze({
-          host: Object.freeze({ resourcePreparationVersion: 1, askResponseVersion: 1, chatReadVersion: 1, promptReceiptVersion: 1,
+          host: Object.freeze({ resourcePreparationVersion: 1, toolScopeVersion: 1, askResponseVersion: 1, chatReadVersion: 1, promptReceiptVersion: 1,
             roleAssignmentVersion: 1, sessionDirectoryVersion: 1, sessionLoadVersion: 1, call: (name, body) => {
             if (controller.signal.aborted || this.closed) throw new Error('Module is stopped');
             if (!this.loaded.some(module => module.controller === controller)) throw new Error('Module host intents are not active');
-            if (!['session/new', 'session/get', 'session/rename', 'roles/readiness', 'session/resources-prepare', 'prompt', 'respondAsk', 'session/chat', 'session/directory', 'session/load', 'roles/notify'].includes(name)) throw new Error('Module host intent is not allowed');
+            if (!['session/new', 'session/get', 'session/rename', 'roles/readiness', 'session/resources-prepare', 'prompt', 'respondAsk', 'session/chat', 'session/directory', 'session/load', 'roles/notify', 'session/tool-scope'].includes(name)) throw new Error('Module host intent is not allowed');
             if (!this.options.host) throw new Error('Module host intents are unavailable');
             this.roles.assertCallbackHostCall(name);
             return this.options.host.call(name, body);

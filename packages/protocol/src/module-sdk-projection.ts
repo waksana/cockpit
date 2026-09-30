@@ -7,12 +7,13 @@ export type {
   TodoProgress, SessionActivity, SessionControls, RoleSelection, SessionRole,
   SessionMeta, SessionResource, Snapshot, ServerEvent,
   SessionResourcesPrepare, ResourcePreparationResult,
+  ToolScope, SessionToolScope,
   RoleAssignmentFailure, RoleAssignmentFailureDetails, RoleAssignmentMutationResult,
 } from './index.ts';
 
 type AllowedIntent =
   'session/new' | 'session/get' | 'session/rename' | 'roles/readiness' | 'session/resources-prepare' | 'prompt'
-  | 'respondAsk' | 'session/chat' | 'session/directory' | 'session/load' | 'roles/notify';
+  | 'respondAsk' | 'session/chat' | 'session/directory' | 'session/load' | 'roles/notify' | 'session/tool-scope';
 
 export type ModuleHostIntentMap = {
   [Name in AllowedIntent]: { body: IntentBody<Name>; result: IntentResult<Name> };

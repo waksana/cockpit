@@ -152,6 +152,15 @@ for [exact tool-request attribution](module-contract.md#mcp-invocation-meta).
 Require the field on the actual call; an SDK version cannot manufacture missing
 native evidence.
 
+Backend creation tool filtering is independently gated by `toolScopeVersion: 1`,
+advertised as `toolScope.v1` in the host deployment descriptor. `session/new`
+accepts an optional immutable explicit `ToolScope`; `session/tool-scope` returns
+saved/applied configuration and actual native metadata without loading or
+initializing. See [native session tool scope](module-contract.md#session-tool-scope)
+for supported identity syntax, collision rejection, role intersection, native deny,
+cold-load/fork limits and the unchanged allow-all permission policy. SDK types or
+enabled MCP connections alone are not native filtering evidence.
+
 Complete ordinary conversation presentation is separately gated by
 `messagePresentationVersion: 1`. The `messageList` and `chatMessage` component
 types extend the same public directory while keeping `message` as the original

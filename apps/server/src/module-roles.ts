@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { closeSync, constants, fsyncSync, mkdirSync, openSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile, realpath, stat } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 import {
-  MODULE_SKILL_NOT_FOUND, SessionRole,
+  MODULE_SKILL_NOT_FOUND, SessionRole, ToolScope,
   type ModuleRoleResources, type ModuleRoleSkill, type ModuleSkillSource, type ModuleSource, type RoleSelection, type RoleAssignmentNotificationResult,
 } from '@cockpit/protocol';
 import type { RoleAssembly, RoleProvider, SessionInstructions } from '@cockpit/core';
@@ -11,6 +11,7 @@ import type { RoleAssignment } from '@cockpit/module-api/backend';
 import { RoleAssignments, type AssignmentHandler } from './role-assignments.ts';
 import type { ModuleInstallation } from './module-install.ts';
 import { MODULE_INSTRUCTIONS_LIMIT, safeModulePath } from './module-install.ts';
+import { metadataRoles, SessionRoleMetadata } from './session-role-metadata.ts';
 
 export const USER_INSTRUCTIONS_FILE = 'instructions.md';
 export const USER_INSTRUCTIONS_LIMIT = 16 * 1024;
@@ -263,7 +264,7 @@ export class ModuleRoles implements RoleProvider {
 
   async read(sessionId: string): Promise<SessionRole[]> {
     try {
-      return SessionRole.array().parse(JSON.parse(await readFile(this.file(sessionId), 'utf8'))).map(selection => {
+      return metadataRoles(SessionRoleMetadata.parse(JSON.parse(await readFile(this.file(sessionId), 'utf8')))).map(selection => {
         const manifest = this.installations().find(value => value.manifest.id === selection.moduleId)?.manifest;
         const role = manifest?.roles?.find(value => value.id === selection.roleId);
         return { ...selection, ...(manifest ? { moduleName: manifest.name } : {}), ...(role ? { name: role.name } : {}) };
@@ -276,11 +277,35 @@ export class ModuleRoles implements RoleProvider {
   }
 
   save(sessionId: string, roles: SessionRole[]): void {
+    const previous = this.readMetadataSync(sessionId);
+    this.saveMetadata(sessionId, Array.isArray(previous) ? roles : { ...previous, roles });
+  }
+
+  async readToolScope(sessionId: string): Promise<ToolScope | undefined> {
+    const metadata = this.readMetadataSync(sessionId);
+    return Array.isArray(metadata) ? undefined : metadata.toolScope;
+  }
+
+  saveToolScope(sessionId: string, scope: ToolScope): void {
+    const previous = this.readMetadataSync(sessionId);
+    if (!Array.isArray(previous)) throw new Error('Session tool scope is immutable');
+    this.saveMetadata(sessionId, { roles: previous, toolScope: ToolScope.parse(scope) });
+  }
+
+  private readMetadataSync(sessionId: string): SessionRoleMetadata {
+    try { return SessionRoleMetadata.parse(JSON.parse(readFileSync(this.file(sessionId), 'utf8'))); }
+    catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return [];
+      throw error;
+    }
+  }
+
+  private saveMetadata(sessionId: string, metadata: SessionRoleMetadata): void {
     const file = this.file(sessionId);
     const directory = join(this.root, 'session-roles');
     const created = mkdirSync(directory, { recursive: true, mode: 0o700 });
     const pending = `${file}.${randomUUID()}.pending`;
-    const bytes = JSON.stringify(SessionRole.array().parse(roles));
+    const bytes = JSON.stringify(SessionRoleMetadata.parse(metadata));
     try {
       const handle = openSync(pending, 'wx', 0o600);
       try {

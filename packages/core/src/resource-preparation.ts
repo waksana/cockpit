@@ -7,6 +7,7 @@ import type { ResourceValues, SessionKernel } from './kernel.ts';
 import type { SessionHandle } from './session-handle.ts';
 import type { RoleService } from './role-service.ts';
 import type { McpService } from './mcp-service.ts';
+import { assertScopeToolMetadata, assertSessionScopeNamespaces } from './tool-scope.ts';
 
 /** Explicit tool initialization and selected skill/MCP preparation on a loaded idle handle. */
 export class ResourcePreparation {
@@ -31,10 +32,12 @@ export class ResourcePreparation {
   }
 
   private async initializeTools(st: SessionHandle, sdk: CopilotSession) {
+    await assertSessionScopeNamespaces(this.k, st, sdk);
     await this.k.withSession(st, sdk, () => sdk.rpc.tools.initializeAndValidate());
     // Configuration changes can invalidate the native table without removing tools.
     const metadata = await this.k.withSession(st, sdk, () => sdk.rpc.tools.getCurrentMetadata());
     if (!Array.isArray(metadata.tools)) throw new Error('Native tool initialization is unconfirmed; metadata is unavailable');
+    if (st.toolScope) assertScopeToolMetadata(st.toolScope, metadata.tools);
     return metadata.tools;
   }
 
@@ -62,6 +65,7 @@ export class ResourcePreparation {
         const sdk = st.sdk;
         try {
           if (!sdk) throw new SessionUnloadedError();
+          await assertSessionScopeNamespaces(this.k, st, sdk);
           const roleState = this.roleService.roleState(st, await this.roleService.savedRoles(st.id));
           if (roleState.rolesNeedReload) {
             throw conflict('Saved roles differ from this native handle; explicitly reload when idle before resource preparation');
@@ -157,6 +161,7 @@ export class ResourcePreparation {
             || result.mcpServers.some(item => item.effect === 'enabled');
           const tools = initialize ? await this.initializeTools(st, sdk) : metadata.tools;
           if (!Array.isArray(tools)) throw new Error('Native tool metadata is unconfirmed');
+          if (st.toolScope) assertScopeToolMetadata(st.toolScope, tools);
           result.tools = initialize ? 'initialized' : 'unchanged';
           for (const [index, item] of result.mcpServers.entries()) {
             const requested = selection.mcpServers![index]!.tools;

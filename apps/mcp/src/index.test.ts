@@ -160,6 +160,12 @@ mockHttp((res, req) => {
       });
     }
     if (name === 'session/new') return send({ sessionId: 'new-id' });
+    if (name === 'session/tool-scope') return send({
+      sessionId: 'new-id', loaded: true,
+      configured: { builtins: [], mcpServers: [{ name: 'service', tools: ['read'] }] },
+      applied: { builtins: [], mcpServers: [{ name: 'service', tools: ['read'] }] },
+      tools: [{ name: 'service-read', mcpServerName: 'service', mcpToolName: 'read' }],
+    });
     if (name === 'session/fork') return send({ sessionId: 'forked-id' });
     if (name === 'session/interrupt') return send({ ok: true, interrupted: Intents['session/interrupt'].body.parse(body).sessionId === 'running' });
     if (name === 'future/operation') return send({ echoed: parsed.data });
@@ -432,6 +438,21 @@ test('role tools route exactly once with public camelCase bodies', async () => {
   assert.deepEqual(requests.at(-1)!.body, { sessionId: 'B', roles });
 });
 
+test('MCP creation maps explicit tool scope once and passive scope evidence uses the public generic intent', async () => {
+  const toolScope = { builtins: [], mcpServers: [{ name: 'service', tools: ['read'] }] };
+  assert.equal((await call('cockpit_new_session', { cwd: '/fixture', tool_scope: toolScope })).isError, false);
+  assert.deepEqual(requests.map(({ path, body }) => ({ path, body })),
+    [{ path: '/intent/session/new', body: { cwd: '/fixture', toolScope } }]);
+  const evidence = await json('cockpit_call_intent', { name: 'session/tool-scope', body: { sessionId: 'new-id' } });
+  assert.deepEqual(evidence, { sessionId: 'new-id', loaded: true, configured: toolScope, applied: toolScope,
+    tools: [{ name: 'service-read', mcpServerName: 'service', mcpToolName: 'read' }] });
+  assert.equal(requests.length, 2);
+  const invalid = await call('cockpit_new_session', {
+    cwd: '/fixture', tool_scope: { builtins: [], mcpServers: [{ name: 'service', tools: ['read-thing'] }] },
+  });
+  assert.equal(invalid.isError, true); assert.equal(requests.length, 2);
+});
+
 test('ordinary MCP session reads retain selected roles without a readiness check or status', async () => {
   meta.roles = [{ moduleId: 'board', roleId: 'owner', moduleName: 'Board', name: 'Owner' }];
   try {
@@ -510,7 +531,7 @@ test('registry exposes native controls without parked file, organization or rest
   assert.equal(new Set(names).size, names.length);
   assert.equal(names.some((name) => /hook|flow|gate|spawned/.test(name)), false);
   const newSession = tools.find(({ name }) => name === 'cockpit_new_session');
-  assert.deepEqual(Object.keys(newSession?.inputSchema.properties ?? {}), ['cwd', 'roles']);
+  assert.deepEqual(Object.keys(newSession?.inputSchema.properties ?? {}), ['cwd', 'roles', 'tool_scope']);
   assert.deepEqual(newSession?.inputSchema.required, ['cwd']);
   assert.equal(requests.length, 0, 'registry construction must not read HTTP or local state');
 });

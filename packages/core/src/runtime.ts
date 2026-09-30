@@ -7,7 +7,8 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type { ChildProcess } from 'node:child_process';
 import { channel } from 'node:diagnostics_channel';
 import { EventEmitter } from 'node:events';
-import type { ModelOption } from '@cockpit/protocol';
+import { ToolScope, type ModelOption } from '@cockpit/protocol';
+import { assertScopeServerIdentities, nativeToolScope, toolScopeHook } from './tool-scope.ts';
 
 export type RuntimeSession = CopilotSession;
 export type RuntimeClient = Pick<CopilotClient,
@@ -255,7 +256,7 @@ export class OfficialRuntime {
     }));
   }
 
-  private sessionOptions(config: SessionConfig | ResumeSessionConfig): SessionConfig {
+  private sessionOptions(config: SessionConfig | ResumeSessionConfig, scope?: ToolScope, session?: () => RuntimeSession | undefined): SessionConfig {
     const base = this.config.sessionConfig;
     for (const name of Object.keys(config.mcpServers ?? {})) {
       if (base?.mcpServers && Object.hasOwn(base.mcpServers, name)) {
@@ -265,10 +266,19 @@ export class OfficialRuntime {
     if (base?.systemMessage && config.systemMessage && base.systemMessage.mode !== 'append') {
       throw new Error('Role instructions cannot replace a custom base system message');
     }
+    if (scope) assertScopeServerIdentities(scope, [
+      ...Object.keys(base?.mcpServers ?? {}), ...Object.keys(config.mcpServers ?? {}),
+      ...scope.mcpServers.map(server => server.name),
+    ]);
     return {
       streaming: true, includeSubAgentStreamingEvents: true,
       enableFileChangeTracking: true, manageScheduleEnabled: true,
       ...this.config.sessionConfig, ...config,
+      ...(scope ? { availableTools: nativeToolScope(scope) } : {}),
+      ...(scope && session ? { hooks: {
+        ...base?.hooks, ...config.hooks,
+        onPreToolUse: toolScopeHook(scope, session, config.hooks?.onPreToolUse ?? base?.hooks?.onPreToolUse),
+      } } : {}),
       mcpServers: { ...base?.mcpServers, ...config.mcpServers },
       ...(base?.systemMessage && config.systemMessage && base.systemMessage.mode === 'append'
         && config.systemMessage.mode === 'append' ? { systemMessage: {
@@ -284,19 +294,21 @@ export class OfficialRuntime {
     };
   }
 
-  createSession(config: SessionConfig): Promise<RuntimeSession> {
+  createSession(config: SessionConfig, scope?: ToolScope): Promise<RuntimeSession> {
+    if (scope !== undefined) scope = ToolScope.parse(scope);
     return this.shared(() => this.perSession(config.sessionId, async () => {
       if (config.sessionId && this.live.has(config.sessionId)) throw new Error('Session is already owned by this runtime');
-      const session = await this.client!.createSession(this.sessionOptions(config));
+      const session: RuntimeSession = await this.client!.createSession(this.sessionOptions(config, scope, () => session));
       this.own(session);
       return session;
     }));
   }
 
-  resumeSession(id: string, config: ResumeSessionConfig): Promise<RuntimeSession> {
+  resumeSession(id: string, config: ResumeSessionConfig, scope?: ToolScope): Promise<RuntimeSession> {
+    if (scope !== undefined) scope = ToolScope.parse(scope);
     return this.shared(() => this.perSession(id, async () => {
       if (this.live.has(id)) throw new Error('Session is already owned by this runtime');
-      const session = await this.client!.resumeSession(id, this.sessionOptions(config));
+      const session: RuntimeSession = await this.client!.resumeSession(id, this.sessionOptions(config, scope, () => session));
       this.own(session);
       return session;
     }));

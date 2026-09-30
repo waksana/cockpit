@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { EventEmitter } from 'node:events';
 import { channel } from 'node:diagnostics_channel';
-import { RuntimeConnection, approveAll, type CopilotClientOptions, type CopilotSession, type GetAuthStatusResponse, type ModelInfo, type SessionConfig, type SessionEvent } from '@github/copilot-sdk';
+import { RuntimeConnection, ToolSet, approveAll, type CopilotClientOptions, type CopilotSession, type GetAuthStatusResponse, type ModelInfo, type SessionConfig, type SessionEvent } from '@github/copilot-sdk';
 import { OfficialRuntime, sessionModelOptions, type RuntimeClient } from './runtime.ts';
 
 function fixture(options: { clientOptions?: CopilotClientOptions; sessionConfig?: Partial<SessionConfig>; child?: boolean } = {}) {
@@ -73,6 +73,30 @@ function fixture(options: { clientOptions?: CopilotClientOptions; sessionConfig?
     detachError(error?: Error) { detachError = error; },
   };
 }
+
+test('scope replaces broad embedding filters at create/resume without changing permission policy', async () => {
+  const f = fixture({ sessionConfig: { availableTools: new ToolSet().addBuiltIn('*').addMcp('*').addCustom('*') } });
+  const scope = { builtins: [], mcpServers: [] };
+  const created = await f.runtime.createSession({}, scope);
+  await f.runtime.closeSession(created);
+  const resumed = await f.runtime.resumeSession(created.sessionId, {}, scope);
+  for (const config of f.configs) {
+    assert.ok(config.availableTools instanceof ToolSet);
+    assert.deepEqual(config.availableTools.toArray(), []);
+    assert.equal(config.onPermissionRequest, approveAll);
+  }
+  await f.runtime.closeSession(resumed); await f.runtime.stop();
+});
+
+test('scope detects an ambiguous embedding MCP namespace before native creation', async () => {
+  const f = fixture({ sessionConfig: { mcpServers: {
+    alpha: { type: 'http', url: 'http://127.0.0.1:1/mcp', tools: ['beta-read'] },
+  } } });
+  await assert.rejects(f.runtime.createSession({}, {
+    builtins: [], mcpServers: [{ name: 'alpha-beta', tools: ['read'] }],
+  }), /Conflicting.*namespace/);
+  assert.equal(f.configs.length, 0); await f.runtime.stop();
+});
 
 test('explicit stdio and official approveAll are enforced at both create and resume', async () => {
   const f = fixture();

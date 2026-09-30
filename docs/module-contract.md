@@ -96,7 +96,7 @@ boot. Different roots are independent. The CLI rejects non-Linux migration befor
     config.json                    next-start selection and per-module config
     installed/<id>/<version>/<digest>/package/
     data/<id>/                     module business data
-  session-roles/<sessionId>.json    saved role selection; not a native capability cache
+  session-roles/<sessionId>.json    saved roles and optional immutable tool scope
   instructions.md                  optional user-written Cockpit user instructions
 ```
 Native Copilot data is outside that tree. The host does not override native `baseDirectory` or `configDirectory`; `~/.copilot` and native configuration keep their ordinary ownership. Authentication and service setup are documented in [install](install.md).
@@ -401,7 +401,8 @@ reject such manifests, because the manifest schema is strict.
 | `roles/list {}` | `{ roles: [{ moduleId, roleId, moduleName, name, description? }] }` |
 | `roles/resources {}` | `{ modules: [{ id, name, roles: [{ id, name }], skills: [{ id, name, description?, roles }], mcpServers: [{ name, tools, roles }] }] }`; see below. |
 | `roles/skill-read { moduleId, resourceId }` | Reads one verified packaged `SKILL.md` by the opaque identity from `roles/resources`; returns `{ id, name, description?, body, module }`. |
-| `session/new { cwd, roles? }` | Creates one native session; result `{ sessionId }`. |
+| `session/new { cwd, roles?, toolScope? }` | Creates one native session; result `{ sessionId }`; optional [immutable native tool scope](#session-tool-scope). |
+| `session/tool-scope { sessionId }` | Passive `{ sessionId, loaded, configured, applied, tools }` evidence; see below. |
 | `roles/readiness { sessionId, roles? }` | Passive readiness: `sessionId`, `loaded`, `ready`, `roles`, `reasons`, optional `appliedRoles`, `rolesNeedReload`. |
 | `session/tools-initialize { sessionId }` | Initializes native tool table on a loaded idle session; `{ ok: true }`. |
 | `session/resources-prepare { sessionId, skills?, mcpServers? }` | Narrow resource preparation; see below. |
@@ -409,11 +410,96 @@ reject such manifests, because the manifest schema is strict.
 
 `context.host.call(name, body)` is limited to `session/new`, `session/get`,
 `session/rename`, `roles/readiness`, `session/resources-prepare`, `prompt`,
-`respondAsk`, and `session/chat`,
+`respondAsk`, `session/chat`, `session/directory`, `session/load`, `roles/notify`,
+and `session/tool-scope`,
 with `@cockpit/protocol` validation and shutdown admission. It exposes no Engine,
 SDK objects, persistent stores, `session/tools-initialize`, resource toggles or
 arbitrary intent passthrough. Creation failure may include a confirmed
 `sessionId`; inspect before retrying and never blindly recreate.
+
+<a id="session-tool-scope"></a>
+#### Immutable native session tool scope
+
+Check `context.host.toolScopeVersion === 1` before using creation `toolScope` or
+`session/tool-scope`. The deployment descriptor advertises `toolScope.v1`.
+
+```ts
+const created = await context.host.call('session/new', {
+  cwd: '/workspace',
+  roles: [{ moduleId: 'example-module', roleId: 'foreground' }],
+  toolScope: {
+    builtins: [],
+    mcpServers: [{ name: 'example-service', tools: ['chat_read', 'chat_send'] }],
+  },
+});
+const evidence = await context.host.call('session/tool-scope', {
+  sessionId: created.sessionId,
+});
+```
+
+This is a native **tool availability/callability** boundary, not an OS sandbox,
+authorization for module business operations or a permission policy. The runtime
+still uses `approveAll` and the host still reports `permissionPolicy: 'allow-all'`.
+SDK source-qualified `ToolSet` filters remove undeclared builtins, custom tools
+and MCP tools from the native tool set; this is not UI/description hiding.
+Selected MCP tools remain intersected with the role server's existing raw `tools`
+subset. Neither scope nor resource preparation enlarges that subset. Module/role
+instructions continue to append at create/resume even with no Skill/view builtin.
+
+Selections are explicit and unique. `builtins: []` allows no builtin tools;
+`mcpServers: []` allows no MCP tools; an explicit empty scope allows no tools.
+Server `tools: []` selects no tools from that server. No `'*'`, patterns or
+implicit full selection are supported. Omission of the entire scope preserves
+ordinary native/global behavior, including existing sessions. Selecting a server
+does not configure, connect or enable it: it must exist in current native
+configuration/discovery or the selected role assembly.
+
+**Supported identities are deliberately narrower than the SDK:** builtin and
+server names contain only ASCII letters, digits, underscores and hyphens; raw
+MCP tool names contain only ASCII letters, digits and underscores. Hyphenated or
+punctuated raw tool selections are rejected before native creation, because
+`read-thing` can alias native-normalized `read.thing`. When selecting any MCP tools,
+unsupported names in *any* configured/discovered/current server, including
+disabled unrelated servers, fail closed. A shorter server namespace that could
+produce the same `server-tool` wire identity is also rejected. The host never
+normalizes a requested identity into a different server or rewrites global
+configuration to make a selection fit.
+
+Create/resume and explicit initialization check actual native
+`mcpServerName` + `mcpToolName` pairs, not only concatenated wire names. A mismatch
+invalidates the whole scope; a newly loaded handle is closed instead of returned
+as ready. A native pre-tool-use hook additionally denies calls when metadata is
+missing, ambiguous, outside the selection or not from that handle. Native deny
+is used, not a thrown MCP hook or a new permission dialog. Scoped subagent tool
+invocations fail closed; v1 does not infer a child's tools from parent metadata.
+MCP/Skill enable, reload and resource preparation retain the filter and check
+namespace invariants. Native model-specific tool initialization retains it too.
+
+`session/tool-scope` is passive and returns:
+
+- `configured`: saved `ToolScope`, or `null` for an unscoped session.
+- `applied`: scope sent when constructing the current loaded handle, otherwise
+  `null`. This is configuration provenance, **not enforcement/readiness proof**.
+- `tools`: actual native descriptors with `name`, optional `namespacedName`,
+  `mcpServerName` and `mcpToolName`. `null` means unloaded/uninitialized; `[]`
+  means an initialized empty offered set.
+- `sessionId` and `loaded`.
+
+Reads do not load, initialize, enable or repair. Verify the exact expected raw
+pairs in non-null metadata and use `roles/readiness` for role resources; enabled
+servers or saved/applied scope labels alone establish neither readiness nor
+actual tool identity.
+
+Scope is immutable in v1, stored alongside roles in the existing
+`session-roles/<sessionId>.json` metadata. Old array records remain readable;
+scoped records use `{ roles, toolScope }`. Role additions preserve it. Cold load,
+explicit reload and Host restart reapply the saved scope without widening;
+module upgrades and new role tools do not automatically enter it. A different
+selection requires a new session. Scoped native history forks are rejected rather
+than producing a broad child. Older hosts do not understand scoped metadata.
+There is no global configuration change, existing-session migration or mass reload.
+Creation `skills`/`mcpServers` resource fields are unsupported; persistent role
+assembly and temporary `session/resources-prepare` choices remain distinct.
 
 <a id="native-conversation-bridge"></a>
 #### Native ask responses and chat reads

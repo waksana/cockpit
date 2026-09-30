@@ -3,6 +3,7 @@ import { CockpitError, invalid, transition, unavailable } from './errors.ts';
 import { messageOf, settled } from './async.ts';
 import type { SessionKernel } from './kernel.ts';
 import type { SessionHandle } from './session-handle.ts';
+import { assertScopeToolMetadata, assertSessionScopeNamespaces } from './tool-scope.ts';
 
 /** Saved module-role selection, its comparison with the applied handle assembly and readiness checks. */
 export class RoleService {
@@ -60,6 +61,7 @@ export class RoleService {
         }
       }
       const applied = st.roleAssembly;
+      if (st.toolScope) await assertSessionScopeNamespaces(this.k, st, sdk);
       if (!this.k.roles || !applied) result.reasons.push('Role assembly was not applied to this native handle');
       if (result.reasons.length) return result;
       const assembly = await this.k.roles!.assemble(id, roles);
@@ -71,6 +73,7 @@ export class RoleService {
       if (tools.tools === null) {
         result.reasons.push('Native tool metadata is uninitialized; explicitly call session/tools-initialize when idle, then check readiness again');
       }
+      if (st.toolScope && tools.tools !== null) assertScopeToolMetadata(st.toolScope, tools.tools);
       for (const skill of required.skills) {
         const expected = applied!.skills.find(value => value.path === skill.path);
         if (!skills.skills.some(value => value.name === expected?.name && value.enabled && value.path === skill.path)) {

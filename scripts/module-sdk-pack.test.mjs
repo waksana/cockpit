@@ -31,6 +31,13 @@ const fixtures = [
     const askVersion: 1 | undefined = host.askResponseVersion;
     const chatVersion: 1 | undefined = host.chatReadVersion;
     const promptVersion: 1 | undefined = host.promptReceiptVersion;
+    const toolScopeVersion: 1 | undefined = host.toolScopeVersion;
+    const scoped: ModuleHostIntentBody<'session/new'> = { cwd: '/workspace',
+      toolScope: { builtins: [], mcpServers: [{ name: 'service', tools: ['read'] }] } };
+    host.call('session/new', scoped);
+    const scopeRead: Promise<import('@waksana/cockpit-module-sdk/backend').SessionToolScope> =
+      host.call('session/tool-scope', { sessionId: 's' });
+    void [toolScopeVersion, scopeRead];
     const delivered = host.call('prompt', { sessionId: 'native-session', text: 'fixture' }).then(result => {
       const messageId: string | undefined = result.messageId;
       return messageId;

@@ -54,6 +54,9 @@ const engine: ServerEngine = {
   setSessionDefaults: async (...args) => record('setSessionDefaults', args, { modelId: args[0] }),
   busyCount: async () => sessions.filter(sessionMetaBusy).length,
   newSession: async (...args) => record('newSession', args, 'created'),
+  getSessionToolScope: async (...args) => record('getSessionToolScope', args, {
+    sessionId: args[0], loaded: false, configured: null, applied: null, tools: null,
+  }),
   sessionDirectory: async (...args) => record('sessionDirectory', args, { sessions: [] }),
   replayRoleAssignment: async (...args) => record('replayRoleAssignment', args, { notificationId: args[0], sessionId: 's', status: 'notified' as const }),
   listRoles: (...args) => record('listRoles', args, []),
@@ -141,6 +144,20 @@ beforeEach(() => {
 });
 afterEach(() => { setTestDependencies({ engine }); });
 
+test('HTTP creation accepts validated tool scope and passive scope read uses the same canonical intent', async () => {
+  const scope = { builtins: [], mcpServers: [{ name: 'service', tools: ['read'] }] };
+  const created = await app.inject({ method: 'POST', url: '/intent/session/new', payload: { cwd: '/fixture', toolScope: scope } });
+  assert.equal(created.statusCode, 200, created.body);
+  assert.deepEqual(calls, [{ method: 'newSession', args: ['/fixture', undefined, scope] }]);
+  const read = await app.inject({ method: 'POST', url: '/intent/session/tool-scope', payload: { sessionId: 'created' } });
+  assert.equal(read.statusCode, 200);
+  assert.deepEqual(read.json(), { sessionId: 'created', loaded: false, configured: null, applied: null, tools: null });
+  const invalid = await app.inject({ method: 'POST', url: '/intent/session/new', payload: {
+    cwd: '/fixture', toolScope: { builtins: ['*'], mcpServers: [] },
+  } });
+  assert.equal(invalid.statusCode, 400);
+});
+
 test('global resource HTTP list and detail preserve verified module metadata without adding provenance', async () => {
   const module = { id: 'fixture', name: 'Fixture' };
   const servers = [
@@ -175,6 +192,7 @@ const cases = {
   'settings/session-defaults': { body: {}, method: 'getSessionDefaults', args: [] },
   'settings/session-defaults-set': { body: { modelId: 'gpt-6-astra' }, method: 'setSessionDefaults', args: ['gpt-6-astra'] },
   'session/new': { body: { cwd: '/fixture' }, method: 'newSession', args: ['/fixture'] },
+  'session/tool-scope': { body: { sessionId: 's' }, method: 'getSessionToolScope', args: ['s'] },
   'session/directory': { body: { limit: 50 }, method: 'sessionDirectory', args: [50, undefined] },
   'roles/notify': { body: { notificationId: 'a'.repeat(64) }, method: 'replayRoleAssignment', args: ['a'.repeat(64)] },
   'roles/list': { body: {}, method: 'listRoles', args: [] },

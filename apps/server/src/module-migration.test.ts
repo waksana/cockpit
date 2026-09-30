@@ -90,6 +90,19 @@ test('migration CLI defaults to a secret-free plan without persistent mutation; 
   await release();
 });
 
+test('module migration preserves immutable scope in the existing role metadata envelope', async t => {
+  const f = await fixture(t);
+  const toolScope = { builtins: [], mcpServers: [{ name: 'service', tools: ['read'] }] };
+  await writeFile(f.roleFile, JSON.stringify({ roles: f.roles, toolScope }));
+  const unmodified = await readFile(f.unchanged, 'utf8');
+  await migrateModuleId({ ...f.options, mode: 'apply' });
+  assert.deepEqual(JSON.parse(await readFile(f.roleFile, 'utf8')), {
+    roles: [{ moduleId: 'new-module', moduleName: 'New module', roleId: 'worker', name: 'New worker' }, f.roles[1]],
+    toolScope,
+  });
+  assert.equal(await readFile(f.unchanged, 'utf8'), unmodified);
+});
+
 test('absent source data is explicit and disabled/config/unrelated selections are preserved', async t => {
   const f = await fixture(t);
   await rm(f.data, { recursive: true });
@@ -239,6 +252,7 @@ test('server entry refuses pending migration before constructing native runtime'
   const mockSdk = `data:text/javascript,${encodeURIComponent(`
 export const approveAll = () => ({kind:'approved'});
 export const RuntimeConnection = {forStdio: () => ({kind:'stdio'})};
+export class ToolSet { constructor() { throw new Error('NATIVE_MUST_NOT_BE_CONSTRUCTED'); } }
 export class CopilotClient { constructor() { throw new Error('NATIVE_MUST_NOT_BE_CONSTRUCTED'); } }
 `)}`;
   const preload = `data:text/javascript,${encodeURIComponent(`

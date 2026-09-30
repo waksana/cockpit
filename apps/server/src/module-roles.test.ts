@@ -377,13 +377,30 @@ test('conflicting resources and unsafe manifest paths fail instead of overriding
   assert.equal(manifestSchema.safeParse(manifest).success, false);
 });
 
+test('scope persists in existing role metadata, survives fresh providers and role additions, and is immutable', async t => {
+  const f = await moduleFixture(t);
+  const roles = new ModuleRoles(f.hostRoot, 'http://127.0.0.1', () => []);
+  const scope = { builtins: [], mcpServers: [{ name: 'service', tools: ['read'] }] };
+  roles.saveToolScope('scoped', scope);
+  assert.deepEqual(await roles.read('scoped'), []);
+  const role = { moduleId: 'fixture', moduleName: 'Fixture', roleId: 'extra', name: 'Extra' };
+  roles.save('scoped', [role]);
+  const cold = new ModuleRoles(f.hostRoot, 'http://127.0.0.1', () => []);
+  assert.deepEqual(await cold.readToolScope('scoped'), scope);
+  assert.deepEqual(await cold.read('scoped'), [role]);
+  assert.throws(() => cold.saveToolScope('scoped', { builtins: ['bash'], mcpServers: [] }), /immutable/);
+  roles.save('ordinary', [role]);
+  assert.equal(await cold.readToolScope('ordinary'), undefined);
+  assert.equal(await cold.readToolScope('absent'), undefined);
+});
+
 test('module host bridge is allowlisted, lifecycle bound and preserves public call results', async t => {
   const f = await moduleFixture(t);
   const installed = await installLocalModule(await f.package(moduleEntries('bridge', `
     let ctx;
     export function activate(value) { ctx = value; return { routes: [{method: 'POST', path: '/call',
       handler: async req => ({body: req.body.name === 'capability'
-        ? { version: ctx.host.resourcePreparationVersion, frozen: Object.isFrozen(ctx.host) }
+        ? { version: ctx.host.resourcePreparationVersion, toolScopeVersion: ctx.host.toolScopeVersion, frozen: Object.isFrozen(ctx.host) }
         : await ctx.host.call(req.body.name, req.body.body)})}] }; }
   `)), { trustLocalCode: true, enable: true });
   const calls: unknown[] = [];
@@ -394,13 +411,14 @@ test('module host bridge is allowlisted, lifecycle bound and preserves public ca
   await host.register(app);
   const url = `/_modules/bridge/${installed.digest}/api/call`;
   const headers = { 'x-cockpit-module-digest': installed.digest };
-  const body = { cwd: '/workspace', roles: [{ moduleId: 'bridge', roleId: 'executor' }] };
+  const body = { cwd: '/workspace', roles: [{ moduleId: 'bridge', roleId: 'executor' }],
+    toolScope: { builtins: [], mcpServers: [{ name: 'bridge', tools: ['read'] }] } };
   const response = await app.inject({ method: 'POST', url, headers, payload: { name: 'session/new', body } });
   assert.equal(response.statusCode, 200, response.body);
   assert.deepEqual(response.json(), { sessionId: 'actual-native-id' });
   assert.deepEqual(calls, [{ name: 'session/new', body }]);
   assert.deepEqual((await app.inject({ method: 'POST', url, headers, payload: { name: 'capability' } })).json(),
-    { version: 1, frozen: true });
+    { version: 1, toolScopeVersion: 1, frozen: true });
   const preparation = { sessionId: 'x', skills: ['optional'], mcpServers: [{ name: 'tools', tools: ['read'] }] };
   assert.equal((await app.inject({ method: 'POST', url, headers, payload: { name: 'session/resources-prepare', body: preparation } })).statusCode, 200);
   assert.deepEqual(calls[1], { name: 'session/resources-prepare', body: preparation });
@@ -411,5 +429,9 @@ test('module host bridge is allowlisted, lifecycle bound and preserves public ca
     assert.equal((await app.inject({ method: 'POST', url, headers, payload: { name, body: { sessionId: 'x' } } })).statusCode, 500);
   }
   assert.equal(calls.length, 3);
+  const scopeRead = { sessionId: 'actual-native-id' };
+  assert.equal((await app.inject({ method: 'POST', url, headers,
+    payload: { name: 'session/tool-scope', body: scopeRead } })).statusCode, 200);
+  assert.deepEqual(calls[3], { name: 'session/tool-scope', body: scopeRead });
   assert.equal((await app.inject({ method: 'POST', url, payload: { name: 'session/get', body: {} } })).statusCode, 409);
 });

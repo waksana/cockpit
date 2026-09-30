@@ -2,18 +2,17 @@ import { randomUUID } from 'node:crypto';
 import { lstat, readdir, rename, rm, rmdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { cockpitHome } from '@cockpit/core';
-import { SessionRole } from '@cockpit/protocol';
 import { z } from 'zod';
 import {
   assertNoModuleMigration, directory, manifestSchema, modulePaths, readModuleInstallation,
   regularBytes, settingsSchema, syncModuleDirectory, withStorageLock, writeModuleBytes,
 } from './module-install.ts';
 import { acquireModuleLease } from './module-lifetime.ts';
+import { metadataRoles, SessionRoleMetadata } from './session-role-metadata.ts';
 
 const METADATA_LIMIT = 1024 * 1024;
 const JOURNAL_LIMIT = 16 * 1024 * 1024;
 const ROLE_FILES_LIMIT = 2048;
-const rolesSchema = SessionRole.strict().array().max(64);
 const identitySchema = z.object({
   from: manifestSchema.shape.id, to: manifestSchema.shape.id,
   version: manifestSchema.shape.version, digest: z.string().regex(/^[a-f0-9]{64}$/),
@@ -77,7 +76,8 @@ async function transform(identity: Identity, before: string, roles: Array<{ file
   settings.selected[identity.to] = { ...source, version: identity.version, digest: identity.digest };
   delete settings.selected[identity.from];
   const converted = roles.map(record => {
-    const values = metadata(rolesSchema, record.before);
+    const saved = metadata(SessionRoleMetadata, record.before);
+    const values = metadataRoles(saved);
     const seen = new Set<string>();
     for (const value of values) {
       manifestSchema.shape.id.parse(value.moduleId);
@@ -94,7 +94,7 @@ async function transform(identity: Identity, before: string, roles: Array<{ file
       if (!definition) throw new Error('Destination module lacks a referenced source role ID');
       return { ...role, moduleId: identity.to, moduleName: target.manifest.name, name: definition.name };
     });
-    return { ...record, after: changed ? JSON.stringify(next) : record.before };
+    return { ...record, after: changed ? JSON.stringify(Array.isArray(saved) ? next : { ...saved, roles: next }) : record.before };
   });
   const after = `${JSON.stringify(settings, null, 2)}\n`;
   if ([after, ...converted.map(role => role.after)].some(value => Buffer.byteLength(value) > METADATA_LIMIT)) {

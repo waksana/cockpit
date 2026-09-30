@@ -357,6 +357,29 @@ const ResourceName = z.string().min(1).max(200).refine(value => value.trim().len
 const ResourceNames = z.array(ResourceName).max(64).refine(values => new Set(values).size === values.length, 'Names must be unique');
 const PreparationToolNames = z.array(ResourceName.refine(value => value !== '*', 'Wildcard tools are not supported'))
   .max(256).refine(values => new Set(values).size === values.length, 'Tools must be unique');
+const ScopedToolName = z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/);
+const ScopedToolNames = z.array(ScopedToolName).max(256)
+  .refine(values => new Set(values).size === values.length, 'Tools must be unique');
+const ScopedMcpToolNames = z.array(z.string().min(1).max(200).regex(/^[A-Za-z0-9_]+$/,
+  'Scoped raw MCP tool names support only ASCII letters, digits and underscores; native-normalized aliases are unsupported'))
+  .max(256).refine(values => new Set(values).size === values.length, 'Tools must be unique');
+export const ToolScope = z.object({
+  builtins: ScopedToolNames,
+  mcpServers: z.array(z.object({ name: ScopedToolName, tools: ScopedMcpToolNames }).strict()).max(64)
+    .refine(values => new Set(values.map(value => value.name)).size === values.length, 'Servers must be unique'),
+}).strict();
+export type ToolScope = z.infer<typeof ToolScope>;
+export const SessionToolScope = z.object({
+  sessionId: z.string().min(1),
+  loaded: z.boolean(),
+  configured: ToolScope.nullable(),
+  applied: ToolScope.nullable(),
+  tools: z.array(z.object({
+    name: z.string(), namespacedName: z.string().optional(),
+    mcpServerName: z.string().optional(), mcpToolName: z.string().optional(),
+  }).strict()).nullable().describe('Actual native offered metadata, or null when unloaded/uninitialized; never an inferred allowlist.'),
+}).strict();
+export type SessionToolScope = z.infer<typeof SessionToolScope>;
 export const SessionResourcesPrepare = z.object({
   sessionId: ResourceName,
   skills: ResourceNames.optional(),
@@ -771,9 +794,14 @@ export const Intents = {
     result: Snapshot,
   },
   'session/new': {
-    description: 'Create one native session using the Cockpit default new-session model, with optional module roles, combined instructions, skills and HTTP MCP tool subsets. The default is captured once; an unavailable model fails without substitution. No startup message or Copilot global/project config writes. Role selection is not live readiness. Never recreate on an uncertain result.',
-    body: z.object({ cwd: z.string().min(1), roles: z.array(RoleSelection).max(64).optional() }).strict(),
+    description: 'Create one native session using the Cockpit default new-session model, with optional module roles and immutable toolScope. Scope is an explicit native builtin/MCP allowlist, not permissions: empty selections allow no tools; omission preserves native/global defaults. Raw scoped MCP tools support ASCII letters/digits/underscores only, no wildcards; unsupported/ambiguous namespaces fail closed. Saved scope is reapplied at cold load/reload and forbids native history forks. Role MCP subsets still apply. The default model is captured once; an unavailable model fails without substitution. No startup message, global/project config writes or automatic recreation. Role selection and applied scope are not actual readiness evidence.',
+    body: z.object({ cwd: z.string().min(1), roles: z.array(RoleSelection).max(64).optional(), toolScope: ToolScope.optional() }).strict(),
     result: z.object({ sessionId: z.string() }),
+  },
+  'session/tool-scope': {
+    description: 'Passively read immutable configured/applied native tool scope and actual offered metadata. Never loads, initializes, reloads or changes permissions. Null tools means unloaded/uninitialized, not an empty offered set. Omitted creation scope preserves native defaults; explicit empty selections permit no tools. Scoped history forks are unsupported.',
+    body: z.object({ sessionId: z.string().min(1) }).strict(),
+    result: SessionToolScope,
   },
   'settings/session-defaults': {
     description: 'Read the persistent Cockpit default model for new sessions (initially gpt-6-astra) and the current native model catalog. The saved modelId is retained when unavailable; modelError explains catalog failures or unavailable models. Does not read or modify existing sessions.',

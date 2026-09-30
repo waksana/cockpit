@@ -1,5 +1,10 @@
 [
   {
+    "version": "0.12.0",
+    "kind": "additive",
+    "summary": "Add backend toolScopeVersion: 1, immutable explicit native tool scope on session/new and passive session/tool-scope configured/applied/actual metadata; retain allow-all permissions and unscoped native defaults."
+  },
+  {
     "version": "0.11.1",
     "kind": "fix",
     "summary": "Preserve the shared Chat reading anchor when scrollend precedes the final scroll event, allowing topic-header and asynchronous layout changes to reconcile before paint without reopening an ended gesture. No public API changes."

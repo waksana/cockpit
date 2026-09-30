@@ -252,6 +252,21 @@ Skill fails, real filtering after known config changes, and no speculative rebui
 for untouched resources. Module result persistence and Task consistency must be
 verified by the real module.
 
+**Immutable tool scope.** Synthetic:
+`pnpm --filter @cockpit/core exec node --import tsx --test src/tool-scope.test.ts src/runtime.test.ts`,
+plus `apps/server/src/intents.test.ts`, `module-roles.test.ts`, `module-migration.test.ts`
+and `apps/mcp/src/index.test.ts` on their existing package runners.
+Native: `COCKPIT_NATIVE_TOOL_SCOPE=1 pnpm --filter @cockpit/server exec node --import tsx --test src/session-tool-scope-native.test.ts`.
+The credential-free loopback fixture covers empty builtins/full empty scope,
+exact role MCP subsets with unrelated/global servers, actual descriptors and
+direct allowed/denied calls, model initialization, MCP enable/reload, appended
+instructions/Actor metadata, role additions, unload/reload and fresh Host/native
+runtime instances reading existing role metadata. It proves raw `read-thing` /
+`read.thing` and server normalization collisions, native pre-tool deny with no
+MCP call, conservative unsupported-name failures before mutation and unchanged
+unscoped behavior. CI opts into this fixture; its own homes, cwd, listeners and
+package artifacts are synthetic and cleaned up.
+
 **Files and fork.** File-input tests pass synthetic native files through the Engine
 and read them via the native view; the four attachment schemas do not prove each
 media type/model is readable. The full MCP/native fork test is in the

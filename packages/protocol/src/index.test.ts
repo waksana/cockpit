@@ -563,6 +563,7 @@ const intentFixtures = {
   } },
   'settings/session-defaults-set': { body: { modelId: 'gpt-6-astra' }, result: { modelId: 'gpt-6-astra' } },
   'session/new': { body: { cwd: minimalMeta.cwd }, result: sid },
+  'session/tool-scope': { body: sid, result: { ...sid, loaded: false, configured: null, applied: null, tools: null } },
   'roles/list': { body: {}, result: { roles: [] } },
   'roles/resources': { body: {}, result: { modules: [{ id: 'fixture', name: 'Fixture',
     roles: [{ id: 'owner', name: 'Owner' }],
@@ -697,7 +698,15 @@ test('session/fork uses strict native fields and never accepts cwd or blank boun
 
 test('session/new accepts cwd and explicit roles while rejecting retired module or hidden launch inputs', () => {
   const schema = Intents['session/new'].body;
-  assert.deepEqual(Object.keys(schema.shape), ['cwd', 'roles']);
+  assert.deepEqual(Object.keys(schema.shape), ['cwd', 'roles', 'toolScope']);
+  roundTrip(schema, { cwd: '/workspace', toolScope: {
+    builtins: [], mcpServers: [{ name: 'service', tools: ['read_thing'] }],
+  } });
+  for (const tools of [['*'], ['read-thing'], ['read.thing'], ['read', 'read']]) {
+    assert.equal(schema.safeParse({ cwd: '/workspace', toolScope: {
+      builtins: [], mcpServers: [{ name: 'service', tools }],
+    } }).success, false);
+  }
   roundTrip(schema, { cwd: '/workspace', roles: [{ moduleId: 'board', roleId: 'owner' }, { moduleId: 'board', roleId: 'executor' }] });
   assert.equal(schema.safeParse({ cwd: '/workspace', roles: [{ moduleId: 'board', roleId: '../escape' }] }).success, false);
   assert.equal(schema.safeParse({ cwd: '/workspace/project', modules: [] }).success, false);
@@ -1120,7 +1129,8 @@ type _SlimContractGuards = [
   Expect<Equal<Extract<keyof SessionMeta, RemovedMetaField>, never>>,
   Expect<Equal<Extract<keyof SessionBrief, RemovedMetaField>, never>>,
   Expect<Equal<Extract<keyof Extract<Protocol.ServerEvent, { type: 'session/patch' }>, RemovedMetaField>, never>>,
-  Expect<Equal<IntentBody<'session/new'>, { cwd: string; roles?: Array<{ moduleId: string; roleId: string }> }>>,
+  Expect<Equal<IntentBody<'session/new'>, { cwd: string; roles?: Array<{ moduleId: string; roleId: string }>; toolScope?: Protocol.ToolScope }>>,
+  Expect<Equal<IntentResult<'session/tool-scope'>, Protocol.SessionToolScope>>,
   Expect<Equal<IntentBody<'session/delete'>, { sessionId: string }>>,
   Expect<Equal<IntentBody<'session/chat'>, Protocol.NativeChatRead>>,
   Expect<Equal<IntentBody<'skills/global'>, { cwd?: string }>>,
