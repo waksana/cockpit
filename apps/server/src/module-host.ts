@@ -177,7 +177,7 @@ export class ModuleHost {
         const installation = await readModuleInstallation(id, selected, hostRoot);
         const apiBase = `/_modules/${id}/${installation.digest}/api`;
         const context: ModuleBackendContext = Object.freeze({
-          host: Object.freeze({ resourcePreparationVersion: 1, askResponseVersion: 1, chatReadVersion: 1,
+          host: Object.freeze({ resourcePreparationVersion: 1, askResponseVersion: 1, chatReadVersion: 1, promptReceiptVersion: 1,
             roleAssignmentVersion: 1, sessionDirectoryVersion: 1, sessionLoadVersion: 1, call: (name, body) => {
             if (controller.signal.aborted || this.closed) throw new Error('Module is stopped');
             if (!this.loaded.some(module => module.controller === controller)) throw new Error('Module host intents are not active');

@@ -16,6 +16,8 @@ export interface McpInvocationMeta {
   readonly runtimeSessionId: string;
   readonly subagent: boolean;
   readonly agentName?: string;
+  /** Exact native MCP hook tool-call identity; absent when native identity is unavailable. */
+  readonly toolCallId?: string;
 }
 
 export type PublicSessionMeta = SessionMeta;

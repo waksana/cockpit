@@ -2,6 +2,15 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Intents, NativeAttachment, SessionMeta, Snapshot, ServerEvent } from './index.ts';
 
+test('prompt result preserves the optional native acceptance receipt without changing older success or failure results', () => {
+  for (const result of [
+    { ok: true }, { ok: false }, { ok: true, queued: true, messageId: 'native-acceptance' },
+  ]) assert.deepEqual(Intents.prompt.result.parse(result), result);
+  for (const messageId of ['', null, 123]) {
+    assert.equal(Intents.prompt.result.safeParse({ ok: true, messageId }).success, false);
+  }
+});
+
 test('native attachment input exposes SDK shapes without a managed-file protocol', () => {
   const attachments = [
     { type: 'file', path: '/fixture/report.txt', displayName: 'Report' },

@@ -11,11 +11,13 @@ const sdkRoot = join(repository, 'packages/module-api');
 const npmOptions = ['--ignore-scripts', '--no-audit', '--no-fund'];
 const fixtures = [
   { name: 'common', types: [], lib: ['ES2022'], source: `
-    import { MAX_MODULE_EVENT_BYTES, type SessionMeta } from '@waksana/cockpit-module-sdk';
+    import { MAX_MODULE_EVENT_BYTES, type SessionMeta, type McpInvocationMeta } from '@waksana/cockpit-module-sdk';
     import { MCP_INVOCATION_META_KEY } from '@waksana/cockpit-module-sdk/runtime';
     declare const session: SessionMeta;
     const id: string = session.sessionId;
-    void [id, MAX_MODULE_EVENT_BYTES, MCP_INVOCATION_META_KEY];
+    declare const invocation: McpInvocationMeta;
+    const toolCallId: string | undefined = invocation.toolCallId;
+    void [id, toolCallId, MAX_MODULE_EVENT_BYTES, MCP_INVOCATION_META_KEY];
   ` },
   ...['backend', 'backend-current'].map(name => ({ name, types: ['node'], lib: ['ES2022'], source: `
     import { Readable } from 'node:stream';
@@ -28,6 +30,11 @@ const fixtures = [
     declare const host: ModuleHostApi;
     const askVersion: 1 | undefined = host.askResponseVersion;
     const chatVersion: 1 | undefined = host.chatReadVersion;
+    const promptVersion: 1 | undefined = host.promptReceiptVersion;
+    const delivered = host.call('prompt', { sessionId: 'native-session', text: 'fixture' }).then(result => {
+      const messageId: string | undefined = result.messageId;
+      return messageId;
+    });
     const roleVersion: 1 | undefined = host.roleAssignmentVersion;
     const directoryVersion: 1 | undefined = host.sessionDirectoryVersion;
     const loadVersion: 1 | undefined = host.sessionLoadVersion;
@@ -70,7 +77,7 @@ const fixtures = [
     host.call('respondPlan', { sessionId: 's', requestId: 'r', action: 'interactive' });
     // @ts-expect-error Expiry cannot be represented as an invented success status.
     const invalidStatus: typeof page.cursorStatus = 'unknown';
-    void [askVersion, chatVersion, answered, reading, invalidStatus];
+    void [askVersion, chatVersion, promptVersion, delivered, answered, reading, invalidStatus];
     void [backend, response, created, invalid];
   ` })),
   ...['frontend-18', 'frontend-19'].map(name => ({ name, types: ['react'], lib: ['ES2022', 'DOM'], source: `

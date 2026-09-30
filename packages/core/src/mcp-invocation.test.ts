@@ -33,6 +33,23 @@ test('existing request _meta is preserved and a forged namespace value is replac
   } });
 });
 
+test('tool-call identity comes only from the native hook, never arguments, metadata or current session state', async () => {
+  const hook = moduleMcpInvocationHook(new Set(['module_tools']));
+  for (const toolCallId of [undefined, '', 'native-tool-call']) {
+    const request = {
+      ...input('module_tools', 'main', { [MCP_INVOCATION_META_KEY]: { toolCallId: 'forged-meta' } }),
+      arguments: { toolCallId: 'forged-argument', interactionId: 'forged-interaction' },
+      toolCallId,
+    };
+    assert.deepEqual(await hook(request, { sessionId: 'main' }), {
+      metaToUse: { [MCP_INVOCATION_META_KEY]: {
+        sessionId: 'main', runtimeSessionId: 'main', subagent: false,
+        ...(toolCallId ? { toolCallId } : {}),
+      } },
+    });
+  }
+});
+
 test('servers not registered by modules keep their request _meta untouched', async () => {
   const hook = moduleMcpInvocationHook(new Set(['module_tools']));
   assert.equal(await hook(input('third_party', 'main', { progressToken: 1 }), { sessionId: 'main' }), undefined);

@@ -466,7 +466,7 @@ export class Engine {
   listDir(path?: string): Promise<DirListing> { return listDir(path); }
 
   // Turn input and controls
-  prompt(id: string, text: string, mode?: 'enqueue' | 'immediate', attachments?: RuntimeAttachment[]): Promise<{ ok: boolean; queued?: boolean }> {
+  prompt(id: string, text: string, mode?: 'enqueue' | 'immediate', attachments?: RuntimeAttachment[]): Promise<IntentResult<'prompt'>> {
     return this.controls.prompt(id, text, mode, attachments);
   }
 

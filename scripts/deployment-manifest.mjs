@@ -40,7 +40,7 @@ export function hostProduct(repository) {
   const frontend = readFileSync(join(repository, 'apps/web/src/lib/moduleRuntime.ts'), 'utf8');
   const api = literalVersion(backend, 'apiVersion');
   const capabilities = [`module-api.v${api}`];
-  for (const field of ['serviceReady', 'resourcePreparation', 'askResponse', 'chatRead', 'roleAssignment', 'sessionDirectory', 'sessionLoad']) {
+  for (const field of ['serviceReady', 'resourcePreparation', 'askResponse', 'chatRead', 'promptReceipt', 'roleAssignment', 'sessionDirectory', 'sessionLoad']) {
     capabilities.push(`${field}.v${literalVersion(backend, `${field}Version`)}`);
   }
   capabilities.push(...literalVersions(frontend, 'apiVersion').map(version => `frontend-api.v${version}`));

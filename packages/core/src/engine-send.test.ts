@@ -32,7 +32,7 @@ test('send acceptance does not invent a message, complete a turn, or permit tear
   assert.equal(serverChatEvents(h).length, 0);
   await assert.rejects(h.engine.unload(s.id), protectedWork);
   acceptance.resolve('native-accepted-id');
-  assert.deepEqual(await result, { ok: true });
+  assert.deepEqual(await result, { ok: true, messageId: 'native-accepted-id' });
   await nextTurn();
   assert.deepEqual(s.sdk.send.mock.calls[0]!.arguments, [{ prompt: 'queued instruction', mode: 'enqueue', attachments: undefined }]);
   assert.equal(serverChatEvents(h).length, 0);
@@ -68,7 +68,8 @@ for (const separateEventId of [false, true]) {
       s.emit(event('user.message', { content: 'native user message', messageId: 'accepted-before-return' }, eventId));
       return 'accepted-before-return';
     });
-    await h.engine.prompt(s.id, 'native synchronous acceptance');
+    assert.deepEqual(await h.engine.prompt(s.id, 'native synchronous acceptance'),
+      { ok: true, messageId: 'accepted-before-return' });
     s.emit(event('session.idle', {}));
     await nextTurn();
     assert.equal(serverChatEvents(h).length, 0);
@@ -87,6 +88,29 @@ test('send rejection surfaces native failure without an optimistic user message'
   assert.equal(serverChatEvents(h).length, 0);
   assert.equal((await h.engine.getMeta(s.id))?.status, 'idle');
   visibleError(h, s.id, /native send rejected/);
+});
+
+test('queued duplicate prompts return distinct native receipts without deriving identity from text or current turn', async t => {
+  const h = harness(t);
+  const s = await h.load();
+  s.state.processing = true;
+  s.emit(event('user.message', { content: 'same', messageId: 'ordinary', interactionId: 'ordinary-interaction' }));
+  s.sdk.send.mock.mockImplementationOnce(async () => 'first-receipt');
+  assert.deepEqual(await h.engine.prompt(s.id, 'same'),
+    { ok: true, queued: true, messageId: 'first-receipt' });
+  s.sdk.send.mock.mockImplementationOnce(async () => 'second-receipt');
+  assert.deepEqual(await h.engine.prompt(s.id, 'same'),
+    { ok: true, queued: true, messageId: 'second-receipt' });
+  assert.equal(s.sdk.send.mock.callCount(), 2);
+});
+
+test('missing native receipt is an unconfirmed delivery, not invented success or a retry', async t => {
+  const h = harness(t);
+  const s = await h.load();
+  s.sdk.send.mock.mockImplementationOnce(async () => '');
+  await assert.rejects(h.engine.prompt(s.id, 'same'), /receipt is missing.*unconfirmed/);
+  assert.equal(s.sdk.send.mock.callCount(), 1);
+  assert.equal(serverChatEvents(h).length, 0);
 });
 
 test('attachment-only sends preserve file descriptors without reading the attachment', async t => {

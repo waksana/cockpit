@@ -832,12 +832,12 @@ export const Intents = {
     result: z.object({ sessionId: z.string().min(1) }),
   },
   prompt: {
-    description: 'Send text and optional SDK-native file, directory, selection or blob attachments. Paths refer to the native runtime filesystem, not this client. No upload, module file-reference resolution or file association is performed. Retired attachment/parts and managed URL shapes are rejected. Acceptance does not mean attachment content was read, and model format support is separate.',
+    description: 'Send text and optional SDK-native file, directory, selection or blob attachments. Paths refer to the native runtime filesystem, not this client. No upload, module file-reference resolution or file association is performed. Retired attachment/parts and managed URL shapes are rejected. Acceptance does not mean attachment content was read, and model format support is separate. Successful messageId is the native acceptance receipt matching user.message.data.messageId, not event.id or completion; uncertain delivery must not be automatically retried.',
     body: z.object({
       sessionId: z.string(), text: z.string(), mode: z.enum(['enqueue', 'immediate']).optional(),
       attachments: z.array(NativeAttachment).max(20).optional(),
     }).strict(),
-    result: z.object({ ok: z.boolean(), queued: z.boolean().optional() }),
+    result: z.object({ ok: z.boolean(), queued: z.boolean().optional(), messageId: z.string().min(1).optional() }),
   },
   cancel: {
     body: z.object({ sessionId: z.string() }).strict(),

@@ -337,7 +337,7 @@ For every `tools/call` sent to a module role MCP server, the host adds its nativ
 observation of the caller to the request `_meta` under the key `cockpit/invocation`
 (exported as `MCP_INVOCATION_META_KEY`, value type `McpInvocationMeta` in
 `@cockpit/module-api`). The values come from the native runtime hook, not from tool
-arguments, so the model cannot see or change them; any other `_meta` entries (such as
+arguments; any other `_meta` entries (such as
 `progressToken`) are kept, and a value already under this key is replaced.
 
 ```json
@@ -350,6 +350,23 @@ arguments, so the model cannot see or change them; any other `_meta` entries (su
 | `runtimeSessionId` | Native runtime session that issued the call; equals `sessionId` for the main agent. |
 | `subagent` | `true` when `runtimeSessionId` differs from `sessionId`, meaning a subagent (for example one started by the `task` tool) made the call. |
 | `agentName` | Optional native internal agent name of that subagent (for example `general-purpose`), when the host observed its start event. Never set for the main agent. |
+| `toolCallId` | Optional nonempty tool-call identity from the native pre-MCP hook, unchanged. Never copied from tool arguments or a pre-existing `_meta` value. Absent on older hosts or when native identity is unavailable. |
+
+Consumers that require per-delivery tool attribution must require `toolCallId` on
+the actual invocation. Join it, scoped to `sessionId` and `runtimeSessionId`, to
+the native `assistant.message.data.toolRequests[].toolCallId`; then use that
+message's native `data.interactionId` and the module's exact prompt receipt
+mapping. Require an unambiguous match and the expected agent scope, and recheck
+the matched delivery's business state before mutating module data. Missing,
+expired or ambiguous evidence is not permission to target the currently active
+batch. Native tool IDs are correlation evidence, not authorization secrets; the
+module still owns all business authorization. The host performs no history scan,
+interaction inference, tool-call cache or business-state lookup.
+
+The pinned native pre-MCP hook has no declared interaction ID. Its real
+loopback fixture supplies `toolCallId` but no trace metadata; outgoing MCP `_meta`
+contains the host namespace and native progress token. W3C tracing context on
+other SDK surfaces is not a prompt receipt or a guaranteed interaction identity.
 
 The host only labels calls; it never allows, denies or rewrites them, and it does not
 know module tools. Modules decide how to use the label, for example rejecting a
@@ -432,6 +449,80 @@ successful continuation; explicitly resynchronize rather than silently replacing
 the cursor. Unknown sessions, invalid filters, native failures and malformed
 results remain errors. No cache, replay, private history access, automatic load
 or retry is added. Calls retain the existing module activation/shutdown guards.
+
+##### Prompt receipts and interaction attribution
+
+Check `context.host?.promptReceiptVersion === 1` before relying on prompt
+correlation. The deployment descriptor advertises `promptReceipt.v1`.
+`host.call('prompt', body)` then returns a nonempty `messageId` on success:
+the unchanged native `send()` acceptance receipt, including when `queued:true`.
+The wire member is optional for compatibility with hosts without this capability.
+Acceptance is not execution, completion, a persisted user event, or an assistant
+message identity. Missing native receipts and uncertain sends remain errors;
+never automatically resend after an error or lost acknowledgement.
+
+Within the original session, match **only**
+`user.message.data.messageId === result.messageId`, not `event.id`, prompt text,
+timestamps, queue positions or the current session interaction. Native events may
+arrive before the call returns. Use the existing bounded `session/chat` reads
+to reconcile missed events; no host cache or replay is added. A queued message
+may be removed or cancelled before any matching event exists. Until an exact
+match with a nonempty native `data.interactionId` exists, attribution is unknown.
+
+Then match native `assistant.message.data.interactionId` exactly. Multiple
+assistant messages, including a reply after native ask/answer resumption, can
+belong to that same interaction. Deduplicate by native event/message identity,
+not text; a later ordinary turn in a shared session is not module output.
+Keep root and subagent provenance separate using the existing native agent
+fields; never assume session membership implies ownership. Background output
+without the exact matched identity is likewise unattributed, even after an
+earlier matching turn. Receipt ownership is per delivery: coordinator wakeups
+for distinct batches must retain their own receipts, not reuse a session-wide
+“latest batch” association.
+
+Use `mode:'enqueue'` for independently attributable deliveries. Native immediate
+steering may contribute to an existing interaction rather than start a new one.
+An interaction containing other inputs does not prove exclusive causation by a
+single module prompt. The receipt does not isolate a shared session or hide any
+events from ordinary Chat.
+
+**Native limits:** the pinned runtime's `assistant.turn_end` carries a `turnId`
+that can repeat across interactions and ends a model turn, not the entire
+interaction. `assistant.idle` ends the main processing loop even when attached
+background work remains; `session.idle` waits for background agents and attached
+shell work. Both idle events and `abort` omit interaction identity. These are not
+per-receipt completion/abort acknowledgements. Do not retire an interaction at
+`assistant.turn_end` or `assistant.idle`; its background continuation may still
+produce output with the same interaction ID. The native declarations also expose
+an experimental `session.completion_receipt` with a durable user-event range and
+accepted turn-end boundary, but ordinary enqueue/ask/background/abort smoke runs
+do not emit it. Its presence in the type union does not establish a guaranteed
+terminal event for every delivered prompt.
+Native `parentId` is defined as the chronologically preceding event, not a
+causal owner. In the real fixture, a later ordinary turn's idle event has all
+earlier interactions in its parent ancestry, and an abort's ancestry includes
+previously completed work. Following the chain to a matching ancestor does not
+prove completion or cancellation of that ancestor's interaction; choosing the
+nearest interaction is still an ordering inference, not a native ownership
+contract.
+The native ask callback supplies only session ID and question fields, not an
+interaction or tool-call identity; the public `AskRequest.requestId` identifies
+the pending response callback, not its originating prompt. The host deliberately
+does not expose its sampled current interaction as ask provenance. A matching
+assistant tool request alone cannot safely identify that pending callback.
+The native ephemeral `user_input.requested` event does carry its own `requestId`
+and optional `toolCallId`, so the event can be joined to the originating assistant
+tool request and interaction. However, that native request ID is not passed to
+the legacy callback and is not the host-generated `AskRequest.requestId`.
+Disabling the legacy callback also removes the native `ask_user` tool; it is not
+a drop-in event-based adapter. Do not pair the two request identities by question,
+event order or current state. Ephemeral requests are unavailable in persisted
+history and require an explicit live event type filter/observer.
+Modules requiring exclusive ask attribution or deterministic terminal
+acknowledgement must fail closed or retain an unknown/pending state; do not
+infer either from adjacent events, question equality or current session state.
+This capability guarantees receipt preservation, not those unsupported native
+identities.
 
 `session/get` may include `nativeName` and `nativeNameUserSet` for loaded sessions
 when native reads are consistent. `nativeName:null` means none; omission means

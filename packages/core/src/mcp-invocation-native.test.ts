@@ -8,10 +8,11 @@ import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { MCP_INVOCATION_META_KEY, type SessionRole } from '@cockpit/protocol';
 import type { RoleProvider } from './roles.ts';
+import type { SessionConfig } from '@github/copilot-sdk';
 
 test('native module MCP invocation _meta: main agent, subagent and third-party server', {
   skip: process.env.COCKPIT_NATIVE_MCP_META !== '1', timeout: 90_000,
-}, async () => {
+}, async t => {
   const originalEnv = { ...process.env };
   const originalCwd = process.cwd();
   const root = resolve(`.native-mcp-meta-${randomUUID()}`);
@@ -105,7 +106,19 @@ test('native module MCP invocation _meta: main agent, subagent and third-party s
         mcpServers: { third_party: { type: 'http', url: `${mcpUrl}/third`, tools: ['*'] } },
       },
     });
+    const hookCalls: { input: Parameters<NonNullable<NonNullable<SessionConfig['hooks']>['onPreMcpToolCall']>>[0]; sessionId: string }[] = [];
+    const create = runtime.createSession.bind(runtime);
+    t.mock.method(runtime, 'createSession', async (config: SessionConfig) => {
+      const original = config.hooks?.onPreMcpToolCall;
+      assert.ok(original);
+      return create({ ...config, hooks: { ...config.hooks, onPreMcpToolCall: (input, invocation) => {
+        hookCalls.push({ input, sessionId: invocation.sessionId });
+        return original(input, invocation);
+      } } });
+    });
     engine = new Engine({ runtime, sessionDefaults: memorySessionDefaults('gpt-4.1') });
+    const events: { agentId?: string; data: Record<string, unknown>; type: string }[] = [];
+    engine.onNativeEvent(({ event }) => { events.push(event); });
     const role: SessionRole = { moduleId: 'fixture', moduleName: 'Fixture', roleId: 'node', name: 'Node' };
     const saved = new Map<string, SessionRole[]>();
     const roles: RoleProvider = {
@@ -130,7 +143,9 @@ test('native module MCP invocation _meta: main agent, subagent and third-party s
     assert.equal(calls.length, 3, JSON.stringify(calls));
     const [main, third, sub] = calls;
     assert.equal(main!.path, '/module');
-    assert.deepEqual(main!.meta?.[MCP_INVOCATION_META_KEY], { sessionId: id, runtimeSessionId: id, subagent: false });
+    assert.deepEqual(main!.meta?.[MCP_INVOCATION_META_KEY], {
+      sessionId: id, runtimeSessionId: id, subagent: false, toolCallId: hookCalls[0]!.input.toolCallId,
+    });
     assert.ok('progressToken' in main!.meta!, 'native request _meta is preserved');
     assert.equal(third!.path, '/third');
     assert.equal(third!.meta?.[MCP_INVOCATION_META_KEY], undefined, 'third-party servers receive no origin metadata');
@@ -141,6 +156,23 @@ test('native module MCP invocation _meta: main agent, subagent and third-party s
     assert.equal(typeof origin.runtimeSessionId, 'string');
     assert.notEqual(origin.runtimeSessionId, id);
     assert.equal(origin.agentName, 'general-purpose');
+    assert.equal(origin.toolCallId, hookCalls[2]!.input.toolCallId);
+    for (const call of hookCalls) {
+      assert.ok(call.input.toolCallId);
+      assert.equal('interactionId' in call.input, false);
+      assert.equal('traceparent' in call.input, false);
+      const matching = events.filter(event => event.type === 'assistant.message')
+        .filter(event => Array.isArray(event.data.toolRequests)
+          && event.data.toolRequests.some(request => request?.toolCallId === call.input.toolCallId));
+      assert.equal(matching.length, 1);
+      assert.equal(typeof matching[0]!.data.interactionId, 'string');
+      assert.equal(matching[0]!.agentId ?? id, call.input.sessionId);
+    }
+    assert.equal(hookCalls.length, 3);
+    assert.ok(hookCalls.every(call => call.input._meta === undefined), 'No trace metadata is supplied to these real native hooks');
+    assert.deepEqual(Object.keys(main!.meta!).sort(), [MCP_INVOCATION_META_KEY, 'progressToken'].sort());
+    assert.deepEqual(Object.keys(third!.meta!), ['progressToken']);
+    t.diagnostic('Root and subagent outgoing MCP metadata preserves native toolCallId matching exactly one assistant tool request in the same runtime session, whose message retains interactionId. Hook input contains no trace or interaction identity.');
   } finally {
     await engine?.stop().catch(() => undefined);
     mcp.close(); provider.close();
