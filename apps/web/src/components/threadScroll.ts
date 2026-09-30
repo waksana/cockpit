@@ -159,6 +159,9 @@ export class ThreadScroll {
 
   settle() {
     if (this.touching || this.disposed) return;
+    // Chromium can deliver scrollend before the final queued scroll event.
+    // Consume its current position now so that event cannot reopen the gesture.
+    this.scroll();
     if (this.moving && this.reachedBottom && atBottom(this.view.measure())) {
       this.following = true;
       this.onFollow();

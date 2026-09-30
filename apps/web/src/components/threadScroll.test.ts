@@ -110,6 +110,43 @@ function fixture(top = 700) {
   return { view, frames, scroll, notices };
 }
 
+test('scrollend consumes the final keyboard displacement before a trailing scroll event and topic reflow', () => {
+  const view = new Transcript();
+  const frames = new Frames();
+  const activity: boolean[] = [];
+  const scroll = new ThreadScroll(view, frames, () => {}, active => activity.push(active));
+  scroll.intent(false);
+  view.top = 1;
+  scroll.scroll();
+  view.top = 0;
+  scroll.settle();
+  scroll.scroll();
+  view.rows[0].before = 24;
+  scroll.changed({ contentReady: true });
+  scroll.changed({ layoutReady: true });
+  assert.equal(view.top, 24, 'topic header preserves the settled reading anchor before paint, without a trailing timer');
+  assert.deepEqual(activity, [true, false], 'the final queued scroll must not reopen an already ended gesture');
+  assert.equal(scroll.following, false);
+  assert.equal(frames.pending.size, 0);
+});
+
+test('scrollend consumes a final downward displacement and resumes follow only for the actual bottom', () => {
+  for (const finalTop of [690, 700]) {
+    const h = fixture(600);
+    h.scroll.intent(true);
+    h.view.top = 680;
+    h.scroll.scroll();
+    h.view.top = finalTop;
+    h.scroll.settle();
+    h.scroll.scroll();
+    assert.equal(h.scroll.following, finalTop === 700);
+    assert.equal(h.notices.follows, finalTop === 700 ? 1 : 0);
+    h.view.rows[0].height += 24;
+    h.scroll.changed({ layoutReady: true });
+    assert.equal(h.view.top, finalTop + 24, 'async growth follows or preserves reading without a false new gesture');
+  }
+});
+
 test('first committed content supersedes an empty mount frame before paint, even after empty frames run', () => {
   for (const flushEmpty of [false, true]) {
     const h = fixture(0);
