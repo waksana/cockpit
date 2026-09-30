@@ -56,6 +56,44 @@ test('cold module activation exposes role hooks and capability-gated passive dir
   assert.deepEqual(calls, ['session/directory', 'session/load', 'roles/notify']);
 });
 
+test('saved role callbacks can inspect passive native scope without leaving an incomplete assignment fence', async t => {
+  const f = await moduleFixture(t);
+  await installLocalModule(await f.package(moduleEntries('scope-reader', `
+    export function activate(context) {
+      const observations = [];
+      return {
+        routes: [{ method: 'GET', path: '/seen', handler: () => ({ body: observations }) }],
+        roleAssignments: { async saved(notification) {
+          observations.push(await context.host.call('session/tool-scope', { sessionId: notification.sessionId }));
+        } },
+      };
+    }
+  `, { roles: [{ id: 'reader', name: 'Reader' }] })), { trustLocalCode: true, enable: true });
+  const app = Fastify();
+  t.after(() => app.close());
+  const calls: string[] = [];
+  const host = new ModuleHost({ observer: f.observer, host: { call: async (name, body) => {
+    assert.equal(name, 'session/tool-scope');
+    assert.ok('sessionId' in body);
+    calls.push(body.sessionId);
+    return { sessionId: body.sessionId, loaded: false, configured: null, applied: null, tools: null } as never;
+  } } });
+  await host.register(app);
+  const roles = host.roles.list();
+  for (const sessionId of ['first', 'second']) {
+    await host.roles.withAssignment({ operation: 'create', sessionId, roles, previousRoles: [] }, async () => {
+      host.roles.save(sessionId, roles);
+      return sessionId;
+    });
+  }
+  const apiBase = host.bootstrap().modules[0]!.apiBase;
+  const seen = (await app.inject({ method: 'GET', url: `${apiBase}/seen` })).json();
+  assert.deepEqual(calls, ['first', 'second']);
+  assert.deepEqual(seen, calls.map(sessionId =>
+    ({ sessionId, loaded: false, configured: null, applied: null, tools: null })));
+  assert.deepEqual(host.bootstrap().errors, []);
+});
+
 test('global provenance verifies loaded module endpoints and file digests without inferring declaring roles', async t => {
   const f = await moduleFixture(t);
   const entries = moduleEntries('global', undefined, { roles: [
