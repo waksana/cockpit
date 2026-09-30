@@ -1,5 +1,10 @@
 [
   {
+    "version": "0.10.0",
+    "kind": "additive",
+    "summary": "Add promptReceiptVersion: 1 and native prompt acceptance messageId, plus optional native McpInvocationMeta.toolCallId for exact tool-request joins, without inventing ask or terminal-event provenance."
+  },
+  {
     "version": "0.9.0",
     "kind": "additive",
     "summary": "Add capability-gated messageList and chatMessage public components sharing native Chat row, Markdown, timestamp, spacing and attachment presentation without changing the existing message body middleware contract."

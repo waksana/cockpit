@@ -196,6 +196,17 @@ COCKPIT_NATIVE_MODEL_SMOKE=1 COCKPIT_NATIVE_DELETE_TEST=1 \
   src/fork-native.test.ts src/model-settings-native.test.ts src/delete-native.test.ts
 ```
 
+**Prompt correlation.** Synthetic:
+`pnpm --filter @cockpit/core exec node --import tsx --test src/engine-send.test.ts`
+and `pnpm --filter @cockpit/server exec node --import tsx --test src/module-conversation.test.ts`.
+Native: `COCKPIT_NATIVE_CORRELATION=1 pnpm --filter @cockpit/core exec node --import tsx --test src/prompt-correlation-native.test.ts`.
+The isolated, credential-free loopback provider verifies actual acceptance IDs
+against user-event data (not event UUIDs), enqueue, multipart ask and real
+background-shell continuation, ordinary turns before/after abort. It also verifies the pinned native callback and
+terminal-event identity gaps, the distinct assistant/session idle boundaries,
+chronological (not ownership) parent chains, and native ask event IDs versus legacy callback IDs documented in the
+[module contract](module-contract.md#prompt-receipts-and-interaction-attribution).
+
 **Roles.** Synthetic: `pnpm --filter @cockpit/mcp exec node --import tsx --test src/tools/roles.test.ts src/index.test.ts`
 plus the HTTP stub in `apps/server/src/intents.test.ts` — one metadata-only request,
 the complete `saved/unchanged/uncertain` result, error marking for unknown
@@ -217,7 +228,11 @@ forged namespace value, main agent versus subagent, subagent names and a fresh n
 table after reload. Native:
 `COCKPIT_NATIVE_MCP_META=1 pnpm --filter @cockpit/core exec node --import tsx --test src/mcp-invocation-native.test.ts`
 — a real main-agent call and a `task` subagent call reach a loopback HTTP MCP server
-with the expected metadata; a non-module server receives none.
+with the expected metadata; a non-module server receives none. The native
+pre-MCP hook's `toolCallId` is also joined to the same runtime agent's assistant
+tool request and interaction, and preserved in outgoing host invocation metadata.
+The pinned fixture exposes no direct trace/interaction identity on the hook or
+outgoing MCP metadata.
 
 **Tool metadata.** The same native entry covers null tool metadata after model/Skill
 changes, MCP reload not restoring it, explicit `session/tools-initialize` restoring it

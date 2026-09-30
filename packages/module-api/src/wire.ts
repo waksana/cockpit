@@ -391,6 +391,7 @@ export type ModuleHostIntentMap = {
             text: string;
         };
         result: {
+            messageId?: string | undefined;
             ok: boolean;
             queued?: boolean | undefined;
         };

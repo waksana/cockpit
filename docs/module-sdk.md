@@ -141,6 +141,17 @@ major, legacy v2 or global-component behavior. See
 activation and revocation. SDK types alone do not prove a host advertises
 `page.v1` in its deployment descriptor.
 
+Backend prompt correlation requires `promptReceiptVersion: 1`, independently of
+SDK version. The `prompt` result's optional `messageId` preserves the native
+acceptance receipt, not the event UUID or an assistant message ID. Follow
+[prompt receipt attribution and native limits](module-contract.md#prompt-receipts-and-interaction-attribution)
+before consuming output from a shared session; ask and terminal-event provenance
+must not be inferred from current state.
+Optional `McpInvocationMeta.toolCallId` preserves the native pre-MCP hook identity
+for [exact tool-request attribution](module-contract.md#mcp-invocation-meta).
+Require the field on the actual call; an SDK version cannot manufacture missing
+native evidence.
+
 Complete ordinary conversation presentation is separately gated by
 `messagePresentationVersion: 1`. The `messageList` and `chatMessage` component
 types extend the same public directory while keeping `message` as the original

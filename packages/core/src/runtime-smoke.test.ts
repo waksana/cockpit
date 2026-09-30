@@ -1338,7 +1338,10 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
       assert.equal((await bounded(host.prompt(busyId, 'SMOKE_FATALBUSY'))).ok, true);
       await eventually(() => held.has('SMOKE_FATALBUSY'), 'Accepted Engine turn must be held by the real loopback provider');
       assert.equal((await host.getMeta(busyId))?.status, 'running');
-      assert.deepEqual(await bounded(host.prompt(busyId, 'SMOKE_FATALQUEUED')), { ok: true, queued: true });
+      const queuedPrompt = await bounded(host.prompt(busyId, 'SMOKE_FATALQUEUED'));
+      assert.equal(queuedPrompt.ok, true);
+      assert.equal(queuedPrompt.queued, true);
+      assert.ok(queuedPrompt.messageId);
       await eventually(async () => !!(await host.getMeta(busyId))?.queue?.length, 'A second accepted send must remain queued before native death');
       let mutationSettled = false;
       const mutation = host.compact(compactId, 'SMOKE_FATALCOMPACT');

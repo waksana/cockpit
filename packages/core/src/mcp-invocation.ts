@@ -35,6 +35,7 @@ export function moduleMcpInvocationHook(moduleServers: ReadonlySet<string>, name
     const meta: McpInvocationMeta = {
       sessionId: invocation.sessionId, runtimeSessionId: input.sessionId, subagent,
       ...(agentName ? { agentName } : {}),
+      ...(typeof input.toolCallId === 'string' && input.toolCallId ? { toolCallId: input.toolCallId } : {}),
     };
     return { metaToUse: { ...input._meta, [MCP_INVOCATION_META_KEY]: meta } };
   };

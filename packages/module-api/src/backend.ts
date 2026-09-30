@@ -24,6 +24,8 @@ export interface ModuleHostApi {
   readonly askResponseVersion?: 1;
   /** Bounded native session/chat reads; absent on older hosts. */
   readonly chatReadVersion?: 1;
+  /** Successful prompt returns the native user.message.data.messageId acceptance receipt. */
+  readonly promptReceiptVersion?: 1;
   call<Name extends ModuleHostIntent>(
     name: Name,
     body: ModuleHostIntentBody<Name>,

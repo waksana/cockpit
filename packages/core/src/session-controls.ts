@@ -22,11 +22,11 @@ export class SessionControlService {
     this.reader = reader;
   }
 
-  async prompt(id: string, text: string, mode: 'enqueue' | 'immediate' = 'enqueue', attachments?: RuntimeAttachment[]): Promise<{ ok: boolean; queued?: boolean }> {
+  async prompt(id: string, text: string, mode: 'enqueue' | 'immediate' = 'enqueue', attachments?: RuntimeAttachment[]): Promise<IntentResult<'prompt'>> {
     return this.k.diagnostics.operation(id, 'prompt', { mode }, trace => this.sendPrompt(id, text, mode, attachments, trace));
   }
 
-  private async sendPrompt(id: string, text: string, mode: 'enqueue' | 'immediate', attachments: RuntimeAttachment[] | undefined, trace: DiagnosticTrace): Promise<{ ok: boolean; queued?: boolean }> {
+  private async sendPrompt(id: string, text: string, mode: 'enqueue' | 'immediate', attachments: RuntimeAttachment[] | undefined, trace: DiagnosticTrace): Promise<IntentResult<'prompt'>> {
     if (!text.trim() && !attachments?.length) throw invalid('Prompt must not be empty');
     return this.k.operation(id, (sdk, st) => st.serialize('controlGate', async () => {
       const before = await this.k.readControl(st, sdk);
@@ -44,7 +44,7 @@ export class SessionControlService {
           st.accepted.add(accepted);
           if (mode === 'immediate' && before.processing.processing) st.steeringAccepted.add(accepted);
         }
-        return { ok: true, ...(queued ? { queued: true } : {}) };
+        return { ok: true, messageId: accepted, ...(queued ? { queued: true } : {}) };
       } catch (error) {
         this.k.patch(st, { status: 'error', error: messageOf(error) });
         throw error;

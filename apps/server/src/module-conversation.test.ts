@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import Fastify from 'fastify';
 import type { ModuleHostApi } from '@cockpit/module-api/backend';
 import { Intents } from '@cockpit/protocol';
-import { harness, user, assistant } from '../../../packages/core/test-support/engine-harness.ts';
+import { harness, user, assistant, event } from '../../../packages/core/test-support/engine-harness.ts';
 import { ModuleHost } from './module-host.ts';
 import { installLocalModule } from './module-install.ts';
 import { moduleEntries, moduleFixture } from './test-support/module-fixture.ts';
@@ -16,7 +16,7 @@ test('module conversation bridge preserves canonical native decisions and bounde
     let host;
     export function getHost() { return host; }
     export function activate(context) {
-      if (context.host?.askResponseVersion !== 1 || context.host?.chatReadVersion !== 1) {
+      if (context.host?.askResponseVersion !== 1 || context.host?.chatReadVersion !== 1 || context.host?.promptReceiptVersion !== 1) {
         throw new Error('Native conversation capabilities required before opening module data');
       }
       host = context.host;
@@ -37,10 +37,39 @@ test('module conversation bridge preserves canonical native decisions and bounde
   const host = fixture.getHost();
   assert.equal(host.askResponseVersion, 1);
   assert.equal(host.chatReadVersion, 1);
+  assert.equal(host.promptReceiptVersion, 1);
   assert.ok(Object.isFrozen(host));
-  for (const oldHost of [{}, { askResponseVersion: 1 as const }, { chatReadVersion: 1 as const }]) {
+  for (const oldHost of [{}, { askResponseVersion: 1 as const }, { chatReadVersion: 1 as const },
+    { askResponseVersion: 1 as const, chatReadVersion: 1 as const }]) {
     assert.throws(() => fixture.activate({ host: oldHost }), /capabilities required before opening module data/);
   }
+
+  await t.test('prompt receipt links only exact native user identity to multipart output, not ordinary turns', async t => {
+    const h = harness(t);
+    server.setTestDependencies({ engine: h.engine });
+    const s = await h.load();
+    s.state.processing = true;
+    s.sdk.send.mock.mockImplementation(async () => {
+      s.emit(event('user.message', { content: 'duplicate', messageId: 'native-receipt', interactionId: 'owned-interaction' }, 'different-event'));
+      return 'native-receipt';
+    });
+    assert.deepEqual(await host.call('prompt', { sessionId: s.id, text: 'duplicate' }),
+      { ok: true, queued: true, messageId: 'native-receipt' });
+    s.emit(event('assistant.message', { content: 'first', messageId: 'part-1', interactionId: 'owned-interaction' }));
+    s.emit(event('assistant.message', { content: 'second', messageId: 'part-2', interactionId: 'owned-interaction' }));
+    s.emit(event('user.message', { content: 'duplicate', messageId: 'ordinary-receipt', interactionId: 'ordinary-interaction' }));
+    s.emit(event('assistant.message', { content: 'ordinary', messageId: 'part-3', interactionId: 'ordinary-interaction' }));
+    const page = await host.call('session/chat', Intents['session/chat'].body.parse({ sessionId: s.id, source: 'live', max: 20 }));
+    const delivered = page.events.find(event => event.type === 'user.message' && event.data.messageId === 'native-receipt');
+    assert.equal(delivered?.id, 'different-event');
+    assert.deepEqual(page.events.filter(event => event.type === 'assistant.message'
+      && event.data.interactionId === delivered?.data.interactionId).map(event => event.data.content), ['first', 'second']);
+    const pending = h.configs.get(s.id)!.onUserInputRequest!({ question: 'Unattributable ask' }, { sessionId: s.id });
+    const ask = (await host.call('session/get', { sessionId: s.id })).meta!.ask!;
+    assert.equal('interactionId' in ask, false, 'Never label callbacks using the current interaction');
+    await host.call('respondAsk', { sessionId: s.id, requestId: ask.requestId, answer: 'yes', wasFreeform: true });
+    await pending;
+  });
 
   await t.test('answers only the original pending ask and retains native choice/freeform checks', async t => {
     const h = harness(t);
