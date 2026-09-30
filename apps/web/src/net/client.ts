@@ -26,7 +26,7 @@ export const HOST_INTENT_MUTATES = {
   'session/usage': false, 'session/plan': false, 'session/panels': false, 'session/panel': false,
   respondAsk: true, respondPlan: true, planSupersede: true, respondElicitation: true,
   'queue/remove': true, 'session/refresh': true, 'session/list': false, 'session/get': false,
-  'session/resources': false, 'mcp/global': false, 'mcp/global-default': true, 'mcp/refresh': true,
+  'session/resources': false, 'session/tool-scope': false, 'mcp/global': false, 'mcp/global-default': true, 'mcp/refresh': true,
   'mcp/reload-session': true, 'mcp/session': false, 'mcp/session-toggle': true,
   'skills/global': false, 'skills/read': false, 'skills/session': false,
   'skills/session-toggle': true, 'skills/global-toggle': true, 'skills/refresh': true,

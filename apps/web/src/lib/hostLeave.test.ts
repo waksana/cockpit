@@ -32,7 +32,7 @@ function client(t: TestContext) {
 
 test('every typed intent explicitly classifies reads separately from mutations', () => {
   assert.deepEqual(Object.keys(HOST_INTENT_MUTATES).sort(), Object.keys(Intents).sort());
-  for (const name of ['session/chat', 'session/resources', 'fs/listDir', 'roles/readiness', 'roles/skill-read', 'skills/read'] as const) {
+  for (const name of ['session/chat', 'session/resources', 'session/tool-scope', 'fs/listDir', 'roles/readiness', 'roles/skill-read', 'skills/read'] as const) {
     assert.equal(HOST_INTENT_MUTATES[name], false, name);
   }
 });
@@ -77,6 +77,16 @@ test('passive reads never install leave listeners, including failures', async t 
   const failed = net.listRoles();
   respond(Response.json({ error: 'Unavailable' }, { status: 503 }));
   await assert.rejects(failed);
+  assert.equal(view.handlers.size, 0);
+  assert.equal(hasHostLeaveRisk(), false);
+  const scope = net.intent('session/tool-scope', { sessionId: 'unloaded' });
+  assert.equal(view.handlers.size, 0);
+  const result = { sessionId: 'unloaded', loaded: false, configured: null, applied: null, tools: null };
+  respond(Response.json(result));
+  assert.deepEqual(await scope, result);
+  const failedScope = net.intent('session/tool-scope', { sessionId: 'unloaded' });
+  respond(Response.json({ error: 'Unavailable' }, { status: 503 }));
+  await assert.rejects(failedScope);
   assert.equal(view.handlers.size, 0);
   assert.equal(hasHostLeaveRisk(), false);
 });
