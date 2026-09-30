@@ -91,13 +91,25 @@ const fixtures = [
     const componentVersion: 1 = frontend.publicComponentsVersion;
     const ownerVersion: 1 = frontend.draftOwnerVersion;
     const messagePresentationVersion: 1 = frontend.messagePresentationVersion;
+    const conversationPresentationVersion: 1 = frontend.conversationPresentationVersion;
+    const Frame = frontend.components.get('conversationFrame');
+    const Header = frontend.components.get('conversationHeader');
+    const Transcript = frontend.components.get('conversationTranscript');
+    const scroll = frontend.conversation.useScroll({ key: 'synthetic-view', items: [{ id: 'one' }], itemKey: item => item.id });
+    scroll.changed({ contentReady: true, newContent: false });
+    const transcript: import('@waksana/cockpit-module-sdk/frontend').ConversationTranscriptProps = {
+      viewportRef: scroll.viewportRef, contentRef: scroll.contentRef, awayFromBottom: scroll.awayFromBottom,
+      hasNewContent: scroll.hasNewContent, onFollow: scroll.follow,
+    };
+    // @ts-expect-error Presentation does not accept a native session or routing target.
+    const badFrame: import('@waksana/cockpit-module-sdk/frontend').ConversationFrameProps = { composer: null, sessionId: 'native' };
     const MessageList = frontend.components.get('messageList');
     const ChatMessage = frontend.components.get('chatMessage');
     const chatMessage: import('@waksana/cockpit-module-sdk/frontend').ChatMessageProps = {
       identity: { owner: 'module', id: 'one', kind: 'message', role: 'user' },
       role: 'user', timestamp: 1000, complete: true, body: '**Hello**',
       attachments: [{ type: 'file', path: '/synthetic/file.txt' }],
-      previous: { role: 'assistant', timestamp: 999 }, 'data-message-key': 'one',
+      previous: { role: 'assistant', timestamp: 999 }, 'data-message-key': 'one', header: 'Topic',
     };
     const submissionVersion: 2 = frontend.draftSubmissionVersion;
     const Composer: React.ComponentType<ComposerProps> = frontend.components.get('composer');
@@ -113,7 +125,8 @@ const fixtures = [
     // @ts-expect-error Enhancer draft bindings cannot settle an owner transaction.
     frontend.state.bindDraft(owner.reference).reconcile('original-submission');
     void [componentVersion, ownerVersion, submissionVersion, Composer, noNativeTarget, editable, actionRevision, result, rejection,
-      messagePresentationVersion, MessageList, ChatMessage, chatMessage];
+      messagePresentationVersion, MessageList, ChatMessage, chatMessage,
+      conversationPresentationVersion, Frame, Header, Transcript, transcript, badFrame];
     const settingsVersion: 1 = frontend.settingsVersion;
     const globalVersion: 1 | undefined = frontend.globalComponentVersion;
     const globalComponent: ModuleGlobalComponent = { id: 'dialog', component: () => null };
@@ -128,6 +141,8 @@ const fixtures = [
     legacy.navigation.home();
     // @ts-expect-error Legacy activation does not receive complete message presentation.
     legacy.messagePresentationVersion;
+    // @ts-expect-error Legacy activation does not receive the shared Chat owner.
+    legacy.conversation.useScroll({ key: 'legacy' });
     // @ts-expect-error The host does not pass private router/session props to pages.
     const badPage: ModulePage = { id: 'bad', component: (props: { router: unknown }) => null };
     const declaration: ModuleFrontend = { apiVersion: 3, globalComponents: [globalComponent], pages: [page] };

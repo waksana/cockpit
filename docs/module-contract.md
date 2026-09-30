@@ -1,6 +1,6 @@
 # Module contract
 This document defines the current Cockpit module host contract. Version numbers in this file are API capability versions, not release pairings: manifest/backend API v1, Web API v3 (with native-only v2 compatibility), public UI v1, `menuVersion: 1`, `settingsVersion: 1`, `uiSurfaceVersion: 1`, `chatWindowVersion: 1`, `composerInputVersion: 1`, `draftLifecycleVersion: 1`,
-`draftSubmissionVersion: 2`, `publicComponentsVersion: 1`, `messagePresentationVersion: 1`, `draftOwnerVersion: 1`, `pageVersion: 1`, and `context.serviceReadyVersion: 1`. Host/module release pairings belong in the [module catalog](modules.md) and GitHub Releases.
+`draftSubmissionVersion: 2`, `publicComponentsVersion: 1`, `messagePresentationVersion: 1`, `conversationPresentationVersion: 1`, `draftOwnerVersion: 1`, `pageVersion: 1`, and `context.serviceReadyVersion: 1`. Host/module release pairings belong in the [module catalog](modules.md) and GitHub Releases.
 
 Product boundaries are in [R1-R8](product-requirements.md). Business contracts for individual modules, such as File or Notification, stay in their own repositories; this document only defines host/module integration.
 
@@ -272,6 +272,7 @@ if (context.serviceReadyVersion !== 1) {
 | Pages | `pageVersion: 1`, `pages`, `context.navigation.path/navigate/home` | This module's namespaced SPA pages and explicit homepage navigation; no arbitrary router access. |
 | Components | `publicComponentsVersion: 1`, `context.components.get(name)`, `components`, `wrap(Base)` | Same public entry for host and module consumers; stable runtime/name identity and existing middleware. |
 | Conversation presentation | `messagePresentationVersion: 1`, `components.get('messageList'/'chatMessage')` | Shared native Chat reading width, ordinary message shell, Markdown, attachments, timestamps and gaps; no history authority or second chat engine. |
+| Conversation composition | `conversationPresentationVersion: 1`, `conversationFrame`, `conversationHeader`, `conversationTranscript`, `context.conversation.useScroll` | Shared native Chat layout, input notices, return-to-latest control and reading-position owner; controlled content, no native session/request routing. |
 | Shared settings | `settingsVersion: 1`, `SettingsProps`, `components` with `boundary: 'settings'` | Append module-owned sections to host preference content; no generic settings store, native action or page registration. |
 | Composer input | `composerInputVersion: 1`, `ComposerInputProps` | Actual controlled textarea; preserve value/onChange/events/ref and host submit gate. |
 | Markdown | `markdown`, `matches(node)`, `component` | Already-parsed link/image occurrences only; not attachments or full Markdown parsing. |
@@ -980,7 +981,7 @@ Each `ChatWindowMessage` projects only `id`, `origin`, `role`, `text`, `complete
 turn streaming or known-incomplete content into final content. `text` is existing message content only; thoughts, tool calls, attachments, private store, native session handles, and structured question bodies are not exported. Snapshots are frozen, stable by reference when unchanged, and subscriptions are revoked with
 the module scope.
 ### 6.2 Component middleware
-Boundaries are: `message`, `messageList`, `chatMessage`, `sessionStatus`, `composer`, `composerEditor`, `composerInput`, `button`, `attachment`, `managementHeader`, `managementDetailHeader`, and `settings`. They correspond to real existing host components: visible message body/current ask question; reading viewport and complete ordinary conversation row; concurrent session activity summary; actual composer card; input row;
+Boundaries are: `message`, `messageList`, `chatMessage`, `conversationFrame`, `conversationHeader`, `conversationTranscript`, `sessionStatus`, `composer`, `composerEditor`, `composerInput`, `button`, `attachment`, `managementHeader`, `managementDetailHeader`, and `settings`. They correspond to real existing host components: visible message body/current ask question; reading viewport and complete ordinary conversation row; conversation composition; concurrent session activity summary; actual composer card; input row;
 controlled textarea; historical attachment row; management headers; and shared preference content.
 
 Middleware sorts by `(order ?? 0, moduleId, id)` with lower values outermost. The host composes only on registration/base changes, not every render. Enhancers must preserve inherited props, children, refs, actions, native identity, scroll and a11y anchors, and layout semantics. Composition and error boundaries add no
@@ -1018,7 +1019,8 @@ element, `contentRef` its reading column, and normal div attributes such as
 `onScroll`, `aria-label` and `aria-busy` are preserved. Optional `before` content
 places history/loading/error controls before the rows in that column. Children
 are the message rows. The module still owns history retrieval, filtering,
-pagination, reading anchors and following; this is not a second chat controller
+pagination and content identity. Reading anchors/following can use the separately
+gated shared owner below; the viewport itself is not a second chat controller
 or a subscription to the native chat store.
 Middleware activation/revocation can replace the viewport and content elements.
 Both refs accept callbacks: track their actual node values, release listeners
@@ -1041,6 +1043,10 @@ across middleware replacement, without carrying it into a different session.
   optional `today` supplies a local-midnight epoch for deterministic date labels.
 - Optional `children` for necessary choices/actions after the message content.
   These nodes confer no reply target, authorization or native routing behavior.
+- With `conversationPresentationVersion: 1`, optional `header` for business
+  content inside the row, after its date/speaker gap and before the byline/body.
+  Updating a heading is not a new message. Do not label user originals merely
+  because an assistant reply has a topic.
 - Optional `rowRef`, normal div attributes and `data-*` attributes on the outer
   row, allowing a module to maintain its own stable reading anchors.
 
@@ -1055,6 +1061,60 @@ visible body (also for attachment-only messages), preserving refs, identity and
 File/Speech enhancement. Native transcript framing retains its measurement,
 date/anchor ownership and process/decision rows without a duplicate shell.
 Merely displaying a message never creates native provenance or replays a message.
+
+<a id="conversation-composition"></a>
+#### Shared Chat composition and reading position
+
+Check `context.conversationPresentationVersion === 1` before using these Web v3
+additions. The deployment descriptor advertises `conversationPresentation.v1`;
+legacy v2 receives neither this capability, its hook nor the three boundaries.
+
+- `conversationHeader` uses the actual Chat/PaneHeader layout with caller-owned
+  `leading`, `title` and `actions` nodes. Native Chat retains its title/info/menu
+  behavior; modules can supply their own setup and navigation actions.
+- `conversationFrame` renders optional `header` above the thread, its children as
+  transcript content, and `notices` plus `composer` in the existing input dock.
+  Pass the public Composer directly: it detects the shared dock and renders
+  exactly one card, not nested cards or docks. Native Chat uses this same frame
+  around its existing execution controls. Notice content, visibility and truthful
+  errors remain caller-owned.
+- `conversationTranscript` composes the public `messageList` (same middleware,
+  refs, `before` and children) with Chat's floating return-to-latest button.
+  Supply `awayFromBottom`, `hasNewContent` and `onFollow` from the shared hook.
+  Optional `followContent` replaces only the button's content; native decisions
+  keep their existing return-to-question label. This is not a decision-card API.
+- `context.conversation.useScroll({ key, items, itemKey })` is a React hook,
+  called unconditionally from a component/custom hook. It wraps the existing
+  native Chat scroll owner, not a second algorithm. Render its returned `items`:
+  these retain the mounted prefix during an active gesture while only newly
+  arrived older rows wait for settle. `prependHeld` reports that presentation
+  hold without blocking tail updates or hiding existing content. Bind `viewportRef` and
+  `contentRef` to the transcript; use returned `viewport`/`content` node identities
+  in content-commit effects, along with returned `items`, so held prepends and
+  middleware replacement are reconciled too.
+  Call `changed({ contentReady, newContent })` in a layout effect after relevant
+  content changes. `newContent` is the caller's actual new-conversation fact:
+  metadata/topic patches, historical prepends and diagnostic updates must pass
+  false. `follow()` is explicit user/local-submission intent; `isFollowing()` is
+  a passive current-position check. No native send observer is installed for a
+  module.
+
+The shared owner retains reading anchors across prepends, resize and middleware
+replacement; a changed `key` starts a new view. Geometry-induced scroll events
+before ResizeObserver do not imply reader intent. Wheel/touch/keyboard/find/
+selection navigation, native follow thresholds, initial positioning and cleanup
+are the same as Chat. Public `chatMessage` rows provide its stable anchors from
+message identity; never mutate identities for a topic/title patch. Native Chat
+keeps its existing history prefetch and local submission adapter.
+Modules own their bounded history retrieval and business new-content detection.
+
+There is intentionally no public pending-decision card or native answer handler.
+A module can show questions and options as ordinary Markdown and accept replies
+through its one owner draft; actual request correlation and answer restrictions
+belong to that module's backend, not this presentation contract.
+The executable synthetic example is `module-conversation-fixture.tsx`,
+available through [Chat Lab](../apps/web/src/dev/chat-lab.tsx) as
+`scene=module-conversation`.
 
 `composerInput` requires `context.composerInputVersion === 1`. The `Base` is the controlled textarea and continues to own value, IME, Enter/Ctrl/Meta+Enter, and native `onKeyDown` behavior. Enhancers pass through value/onChange/native props, compose `editorRef` including callback cleanup, avoid private DOM queries, and
 may render siblings such as a microphone after `Base`. Full-width status panels belong around the existing composer, not inside the input row.

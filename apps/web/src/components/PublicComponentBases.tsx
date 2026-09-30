@@ -3,7 +3,7 @@ import type {
   AttachmentProps, ComposerProps, ComposerEditorProps, ComposerInputProps, ManagementHeaderProps,
   ManagementDetailHeaderProps, MessageProps, ModuleComponentProps, PublicButtonProps, SessionStatusProps, SettingsProps,
 } from '@cockpit/module-api/frontend';
-import { ComposerSurfaceContext, PublicComponentRuntime } from '../lib/publicComponentContext';
+import { ComposerDockContext, ComposerSurfaceContext, PublicComponentRuntime } from '../lib/publicComponentContext';
 import { ComposerCard, ComposerSurface } from './ComposerSurface';
 import { sessionActivityIndicators } from '../lib/sessionActivity';
 import { SessionActivity } from './SessionActivity';
@@ -35,11 +35,14 @@ export function ButtonBase(props: PublicButtonProps) { return <Button {...props}
 
 export function ComposerBase({ children, ...props }: ComposerProps) {
   const embedded = useContext(ComposerSurfaceContext);
+  const docked = useContext(ComposerDockContext);
   const content = <div className="chat-composer"><div className="chat-composer-body">
     <div className="chat-composer-context">{children}</div>
     <div className="chat-composer-editor"><PublicComponent name="composerEditor" props={props} /></div>
   </div></div>;
-  return embedded ? content : <ComposerSurface><ComposerCard>{content}</ComposerCard></ComposerSurface>;
+  if (embedded) return content;
+  const card = <ComposerCard>{content}</ComposerCard>;
+  return docked ? card : <ComposerSurface>{card}</ComposerSurface>;
 }
 export function ComposerEditorBase({ draft, operation, disabled, busy, placeholder, submitLabel, sendBlocked, statusInHeader, editorRef,
   onTextChange, onSubmit, children, className, ...domProps }: ComposerEditorProps) {

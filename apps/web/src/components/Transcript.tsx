@@ -240,7 +240,7 @@ const MessageGroup = memo(function MessageGroup({ m, sessionId, date, showByline
 });
 
 export const TranscriptMessages = memo(function TranscriptMessages({ messages, sessionId, liveId, today, nested = false }: {
-  messages: ChatMessage[]; sessionId: string; liveId?: string; today: number; nested?: boolean;
+  messages: readonly ChatMessage[]; sessionId: string; liveId?: string; today: number; nested?: boolean;
 }) {
   const layout = useMemo(() => createMessageLayout(), []);
   useLayoutEffect(() => () => layout.dispose(), [layout]);

@@ -20,7 +20,7 @@ export function ThreadInputNotices({ session, readOnly, authoritative, activityR
 }) {
   const { interruptResult, interruptAction, stopAction } = execution;
   return (
-    <div className="chat-input-notices">
+    <>
       {!readOnly && session.controlsError && <p className="chat-error" role="alert">
         活动列表读取失败：{session.controlsError}
         {onRetryControls && <Button disabled={!authoritative || activityRefreshing}
@@ -37,7 +37,7 @@ export function ThreadInputNotices({ session, readOnly, authoritative, activityR
         停止结果未确认：{stopAction.error}
       </p>}
       {!readOnly && <ComposerNotices draft={draft} />}
-    </div>
+    </>
   );
 }
 

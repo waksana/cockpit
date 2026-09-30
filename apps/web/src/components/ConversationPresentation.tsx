@@ -20,26 +20,29 @@ export function MessageListBase({ viewportRef, contentRef, before, children, cla
   </div>;
 }
 
-export function ChatMessageBase({ identity, origin, decisionOrigin, complete, bodyRef, rowRef, role, timestamp, body, attachments,
+export function ChatMessageBase({ identity, origin, decisionOrigin, complete, bodyRef, rowRef, role, timestamp, body, attachments, header,
   previous, showTimestamp, today = new Date().setHours(0, 0, 0, 0), children, className, ...props }: ChatMessageProps) {
   const embedded = useContext(ChatMessageFrameContext);
   const hasContent = !!body.trim() || !!attachments?.length;
   const newDay = !previous || !sameMessageDay(previous.timestamp, timestamp);
   const showTime = showTimestamp ?? (role === 'user' || newDay || previous?.role !== 'assistant');
+  const anchorId = embedded?.anchorId ?? JSON.stringify([identity.owner, identity.kind, identity.id]);
   const content = <>
     <MessageContentPresentation identity={identity} origin={origin} decisionOrigin={decisionOrigin} complete={complete}
       bodyRef={bodyRef} body={body} attachments={attachments} />
     {children && <div className="chat-message-actions">{children}</div>}
   </>;
   const row = role === 'user' ? <div className="user-message">
-    <div className="message is-out" data-message-id={embedded?.anchorId}>{content}</div>
+    <div className="message is-out" data-message-id={anchorId}>{header}{content}</div>
     {showTime && <div className="user-message-meta"><MessageTimestamp className="message-time" timestamp={timestamp} /></div>}
   </div> : <article className="message is-doc">
+    {header}
     {showTime && hasContent && <header className="doc-byline"><MessageTimestamp className="doc-time" timestamp={timestamp} /></header>}
-    <div className="message-speech" data-message-id={embedded?.anchorId}>{content}</div>
+    <div className="message-speech" data-message-id={anchorId}>{content}</div>
   </article>;
   if (embedded) return row;
   return <div {...props} ref={rowRef} className={['msg-group', 'chat-conversation-message', className].filter(Boolean).join(' ')}
+    data-message-frame={anchorId}
     data-gap={newDay ? 'none' : conversationGap(previous?.role, role)}
     data-assistant-message={role === 'assistant' && hasContent || undefined}>
     {newDay && hasContent && <div className="date-separator" aria-hidden="true">{messageDateLabel(timestamp, today)}</div>}

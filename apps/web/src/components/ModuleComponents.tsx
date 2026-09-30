@@ -1,6 +1,7 @@
 import { createElement, Suspense, useCallback, useContext, useEffect, useState, useSyncExternalStore, type Attributes, type ReactNode } from 'react';
 import type {
-  AttachmentProps, ChatMessageProps, MessageListProps, MarkdownNode, MessageProps, ModuleComponentProps, ModulePage, SessionStatusProps, SettingsProps,
+  AttachmentProps, ChatMessageProps, ConversationFrameProps, ConversationHeaderProps, ConversationTranscriptProps,
+  MessageListProps, MarkdownNode, MessageProps, ModuleComponentProps, ModulePage, SessionStatusProps, SettingsProps,
 } from '@cockpit/module-api/frontend';
 import { Link, useMatch } from 'react-router-dom';
 import { ModuleErrorBoundary, moduleRuntime, type LoadedModule, type ModuleRuntime } from '../lib/moduleRuntime';
@@ -29,6 +30,18 @@ export function ChatMessagePresentation(props: ChatMessageProps) {
 
 export function MessageList(props: MessageListProps) {
   return useModuleElement('messageList', props);
+}
+
+export function ConversationFrame(props: ConversationFrameProps) {
+  return useModuleElement('conversationFrame', props);
+}
+
+export function ConversationHeader(props: ConversationHeaderProps) {
+  return useModuleElement('conversationHeader', props);
+}
+
+export function ConversationTranscript(props: ConversationTranscriptProps) {
+  return useModuleElement('conversationTranscript', props);
 }
 
 export function SessionStatus(props: SessionStatusProps) {

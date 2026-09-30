@@ -55,6 +55,7 @@ async function snapshot(page: Page, testInfo: TestInfo, name: string) {
 }
 
 const componentScenes: [scene: string, ready: string][] = [
+  ['module-conversation', '.chat-input-card'],
   ['all', '.chat-input-card'],
   ['reading', '[data-message-frame]'],
   ['streaming', '.chat-input-card'],
@@ -65,6 +66,55 @@ const componentScenes: [scene: string, ready: string][] = [
   ['decision-stack', '.chat-decision-tabs'],
   ['decision-history', '.chat-decision-card[data-state="done"]'],
 ];
+
+test('public conversation uses Chat layout, preserves reading through topic/prepend updates and follows explicitly', async ({ page }, testInfo) => {
+  const guard = await open(page, 'scene=module-conversation');
+  const viewport = page.getByLabel('对话消息', { exact: true });
+  const editor = page.getByRole('textbox', { name: '消息输入', exact: true });
+  await expect(editor).toBeInViewport();
+  await settle(page);
+  const distance = () => viewport.evaluate(element => element.scrollHeight - element.scrollTop - element.clientHeight);
+  await expect.poll(distance).toBeLessThanOrEqual(2);
+  await expect(page.locator('.chat-input-area')).toHaveCount(1);
+  await expect(page.locator('.chat-input-card')).toHaveCount(1);
+  await expect(page.locator('.chat-decision-card')).toHaveCount(0);
+  await viewport.focus();
+  await page.keyboard.press('Home');
+  await expect(page.getByRole('button', { name: '回到最新', exact: true })).toBeVisible();
+  const anchor = (id?: string) => viewport.evaluate((element, id) => {
+    const top = element.getBoundingClientRect().top;
+    const row = Array.from(element.querySelectorAll('[data-message-id]'))
+      .find(node => id ? node.getAttribute('data-message-id') === id : node.getBoundingClientRect().bottom > top + 1)!;
+    return { id: row.getAttribute('data-message-id'), offset: row.getBoundingClientRect().top - top };
+  }, id);
+  await settle(page);
+  const before = await anchor();
+  await page.getByRole('button', { name: 'Toggle topic' }).click();
+  await settle(page);
+  expect((await anchor()).id).toBe(before.id);
+  expect(Math.abs((await anchor()).offset - before.offset)).toBeLessThanOrEqual(2);
+  await expect(page.getByRole('button', { name: '有新内容 · 回到最新', exact: true })).toHaveCount(0);
+  const earlier = page.getByRole('button', { name: 'Earlier messages' });
+  await earlier.focus();
+  await settle(page);
+  const beforePrepend = await anchor();
+  await earlier.click();
+  await expect(page.locator('[data-message-frame]')).toHaveCount(25);
+  await settle(page);
+  expect(Math.abs((await anchor(beforePrepend.id!)).offset - beforePrepend.offset)).toBeLessThanOrEqual(2);
+  await page.getByRole('button', { name: 'Append reply' }).click();
+  await expect(page.getByRole('button', { name: '有新内容 · 回到最新', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '有新内容 · 回到最新', exact: true }).click();
+  await expect.poll(distance).toBeLessThanOrEqual(2);
+  await page.getByRole('button', { name: 'Toggle notice' }).click();
+  await expect(page.getByRole('alert')).toBeVisible();
+  await expect.poll(distance).toBeLessThanOrEqual(2);
+  await editor.fill(Array.from({ length: 30 }, () => 'Long input keeps the same shared dock.').join('\n'));
+  await expect(page.getByRole('button', { name: '发送', exact: true })).toBeInViewport({ ratio: 1 });
+  await expect.poll(distance).toBeLessThanOrEqual(2);
+  await snapshot(page, testInfo, 'public-conversation');
+  await expectHealthy(page, guard);
+});
 
 for (const [scene, ready] of componentScenes) {
   test(`component scene ${scene} renders on synthetic input`, async ({ page }, testInfo) => {

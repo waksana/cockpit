@@ -158,6 +158,16 @@ types extend the same public directory while keeping `message` as the original
 body middleware boundary. See [conversation presentation](module-contract.md#conversation-presentation)
 for row identity, native provenance and layout ownership.
 
+Shared Chat composition is independently gated by
+`conversationPresentationVersion: 1`: `conversationFrame`, `conversationHeader`,
+`conversationTranscript`, the host-provided `conversation.useScroll` React hook
+and `ChatMessageProps.header`. These are controlled presentation contracts;
+native sessions, pending-decision cards and request routing are not exposed.
+See [shared Chat composition](module-contract.md#conversation-composition).
+The SDK exports their types only; both native Chat and module pages use the
+host's real implementations. The deployment capability is
+`conversationPresentation.v1`, independent of package installation.
+
 An SDK version is not proof that every host version supports a module. Module
 releases still record and test their exact host compatibility in the
 [module catalog](modules.md) and their own release material. Pin the SDK version

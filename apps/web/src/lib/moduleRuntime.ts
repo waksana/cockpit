@@ -17,6 +17,7 @@ import { useCockpit } from '../net/store';
 import type { NativeDraftRequest } from './draft';
 import { publicComponentBases } from './publicComponents';
 import { PublicComponentRuntime } from './publicComponentContext';
+import { useConversationScroll } from './useConversationScroll';
 
 interface RuntimeOptions {
   baseUrl?: string;
@@ -44,7 +45,7 @@ export interface LoadedModule {
 export interface RegisteredRenderer { module: LoadedModule; renderer: MarkdownRenderer }
 type Boundary = keyof ModuleComponentProps;
 const BOUNDARIES = new Set<Boundary>(['message', 'messageList', 'chatMessage', 'sessionStatus', 'composer', 'composerEditor', 'composerInput', 'attachment',
-  'managementHeader', 'managementDetailHeader', 'settings', 'button']);
+  'managementHeader', 'managementDetailHeader', 'settings', 'button', 'conversationFrame', 'conversationHeader', 'conversationTranscript']);
 const EMPTY_VIEW: HostSnapshot = Object.freeze({ sessionId: null, visible: false, connected: false });
 let moduleSequence = 0;
 
@@ -155,7 +156,8 @@ function validateFrontend(input: unknown, ids: Set<string>, version: 2 | 3): Mod
           : key === 'globalComponents' || key === 'pages' ? ['id', 'component'] : ['id', 'matches', 'component'];
       if (Object.keys(entry).some(field => !fields.includes(field))) throw new Error(`Unsupported module ${key} registration field`);
       if (key === 'components') {
-        if (!BOUNDARIES.has(entry.boundary as Boundary) || (version === 2 && ['button', 'messageList', 'chatMessage'].includes(entry.boundary as string))
+        if (!BOUNDARIES.has(entry.boundary as Boundary) || (version === 2
+          && ['button', 'messageList', 'chatMessage', 'conversationFrame', 'conversationHeader', 'conversationTranscript'].includes(entry.boundary as string))
           || typeof entry.wrap !== 'function') throw new Error('Invalid component middleware');
         if (entry.order !== undefined && (typeof entry.order !== 'number' || !Number.isFinite(entry.order))) throw new Error('Invalid module order');
       } else if (key === 'menus') {
@@ -420,6 +422,7 @@ export class ModuleRuntime {
       ...(version === 3
         ? {
           apiVersion: 3, draftSubmissionVersion: 2, publicComponentsVersion: 1, messagePresentationVersion: 1,
+          conversationPresentationVersion: 1, conversation: Object.freeze({ useScroll: useConversationScroll }),
           draftOwnerVersion: 1, components: this.components,
           pageVersion: 1,
           navigation: Object.freeze({

@@ -6,21 +6,22 @@ import { StateNotice } from '../../components/StateNotice';
 import { RegionErrorBoundary } from '../../components/ErrorBoundary';
 import { TranscriptMessages } from '../../components/Transcript';
 import { useElicitationRecords, withElicitationRecords } from '../../lib/decisionRecords';
-import { MessageList } from '../../components/ModuleComponents';
+import { ConversationTranscript } from '../../components/ModuleComponents';
 
 // The scrollable transcript: history state, rows, the pending decision card
 // (always last: native callbacks carry no tool call position) and the
 // return-to-latest badge. The refs belong to the Thread scroll owner.
 export function ThreadTranscript({ session, messages, decision, scrollRef, contentRef, awayFromBottom, hasNewContent, onFollow, onRetryHistory }: {
-  session: ChatSession; messages: ChatMessage[]; decision?: ReactNode;
+  session: ChatSession; messages: readonly ChatMessage[]; decision?: ReactNode;
   scrollRef: Ref<HTMLDivElement>; contentRef: Ref<HTMLDivElement>;
   awayFromBottom: boolean; hasNewContent: boolean; onFollow: () => void; onRetryHistory?: () => void;
 }) {
   const records = useElicitationRecords(session.sessionId);
   const shown = useMemo(() => withElicitationRecords(messages, records), [messages, records]);
   return (
-    <div className="chat-transcript">
-      <MessageList viewportRef={scrollRef} contentRef={contentRef} aria-busy={session.loadingHistory}
+      <ConversationTranscript viewportRef={scrollRef} contentRef={contentRef} aria-busy={session.loadingHistory}
+        awayFromBottom={awayFromBottom} hasNewContent={hasNewContent} onFollow={onFollow}
+        followContent={decision ? <><Icon name="decision" size={16} />有问题等你回答 · 回到问题</> : undefined}
         before={<HistoryControls session={session} onFollow={onFollow} onRetryHistory={onRetryHistory} />}>
         {!decision && session.messages.length === 0 && session.materialized && !session.historyStale && !session.loadingHistory && !session.hasMore && (
           <div className="chat-empty-hint"><Icon name="newchat" size={28} />
@@ -34,15 +35,7 @@ export function ThreadTranscript({ session, messages, decision, scrollRef, conte
         {decision && <div className="msg-group" data-decision-row data-gap={shown.length ? 'speaker' : 'none'}>
           <RegionErrorBoundary label="待处理的请求">{decision}</RegionErrorBoundary>
         </div>}
-      </MessageList>
-
-      {awayFromBottom && (
-        <Button className="new-msg-badge" data-decision={!!decision || undefined} onClick={onFollow}>
-          {decision ? <><Icon name="decision" size={16} />有问题等你回答 · 回到问题</>
-            : hasNewContent ? '有新内容 · 回到最新' : '回到最新'}
-        </Button>
-      )}
-    </div>
+      </ConversationTranscript>
   );
 }
 

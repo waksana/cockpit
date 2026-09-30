@@ -571,6 +571,57 @@ export interface MessageListProps extends React.HTMLAttributes<HTMLDivElement> {
   readonly children?: React.ReactNode;
 }
 
+/** Chat's page composition. Header is outside the thread; notices share the input dock. */
+export interface ConversationFrameProps extends React.HTMLAttributes<HTMLElement> {
+  readonly header?: React.ReactNode;
+  readonly notices?: React.ReactNode;
+  readonly composer: React.ReactNode;
+}
+
+/** The same header geometry as native Chat; controls and title are caller-owned content. */
+export interface ConversationHeaderProps {
+  readonly leading?: React.ReactNode;
+  readonly title: React.ReactNode;
+  readonly actions?: React.ReactNode;
+  readonly className?: string;
+}
+
+/** Shared messageList plus Chat's return-to-latest control. No history or request routing. */
+export interface ConversationTranscriptProps extends MessageListProps {
+  readonly awayFromBottom: boolean;
+  readonly hasNewContent: boolean;
+  readonly followContent?: React.ReactNode;
+  onFollow(): void;
+}
+
+export interface ConversationScrollOptions<Item> {
+  /** Stable reading-view identity. Changing it starts a new reading position. */
+  readonly key: string;
+  readonly items: readonly Item[];
+  itemKey(item: Item): string;
+}
+
+export interface ConversationScrollController<Item> {
+  /** Existing rows stay visible; new prepends wait until the active reading gesture settles. */
+  readonly items: readonly Item[];
+  readonly prependHeld: boolean;
+  readonly viewportRef: React.RefCallback<HTMLDivElement>;
+  readonly contentRef: React.RefCallback<HTMLDivElement>;
+  readonly viewport: HTMLDivElement | null;
+  readonly content: HTMLDivElement | null;
+  readonly awayFromBottom: boolean;
+  readonly hasNewContent: boolean;
+  isFollowing(): boolean;
+  follow(): void;
+  /** Call after a content commit. Metadata-only patches must not set newContent. */
+  changed(change: { readonly contentReady?: boolean; readonly newContent?: boolean }): void;
+}
+
+export interface ConversationPresentation {
+  /** React hook using Chat's single scroll owner; never call outside a component/hook. */
+  useScroll<Item>(options: ConversationScrollOptions<Item>): ConversationScrollController<Item>;
+}
+
 /** One ordinary conversation row using the same bubble/byline/Markdown/attachment presentation as Chat. */
 export interface ChatMessageProps extends Omit<React.HTMLAttributes<HTMLDivElement>, 'role' | 'children'> {
   readonly identity: MessageIdentity;
@@ -589,6 +640,8 @@ export interface ChatMessageProps extends Omit<React.HTMLAttributes<HTMLDivEleme
   readonly showTimestamp?: boolean;
   /** Optional midnight epoch for deterministic date labels; defaults to the current local day. */
   readonly today?: number;
+  /** In-row business heading, after date/speaker spacing and before the message byline/body. */
+  readonly header?: React.ReactNode;
   /** Necessary choices/actions after the content. No implicit reply or native routing authority. */
   readonly children?: React.ReactNode;
   readonly [attribute: `data-${string}`]: string | number | boolean | undefined;
@@ -653,6 +706,9 @@ export interface ModuleComponentProps {
   message: MessageProps;
   messageList: MessageListProps;
   chatMessage: ChatMessageProps;
+  conversationFrame: ConversationFrameProps;
+  conversationHeader: ConversationHeaderProps;
+  conversationTranscript: ConversationTranscriptProps;
   sessionStatus: SessionStatusProps;
   composer: ComposerProps;
   composerEditor: ComposerEditorProps;
@@ -721,6 +777,9 @@ export interface ModuleFrontendContext {
   readonly publicComponentsVersion: 1;
   /** Full conversation rows and the shared Chat reading viewport; independently capability-gated. */
   readonly messagePresentationVersion: 1;
+  /** Shared Chat composition and reading-position owner. Web v3 only. */
+  readonly conversationPresentationVersion: 1;
+  readonly conversation: ConversationPresentation;
   readonly draftOwnerVersion: 1;
   readonly components: PublicComponents;
   /** Namespaced pages in the existing host SPA. Check independently of Web v3. */
@@ -835,7 +894,8 @@ export type LegacyMessageIdentity = {
 export interface LegacyMessageProps extends Omit<MessageProps, 'identity' | 'origin' | 'decisionOrigin'> {
   readonly identity: LegacyMessageIdentity;
 }
-export type LegacyModuleComponentProps = Omit<ModuleComponentProps, 'message' | 'button' | 'messageList' | 'chatMessage'> & { message: LegacyMessageProps };
+export type LegacyModuleComponentProps = Omit<ModuleComponentProps, 'message' | 'button' | 'messageList' | 'chatMessage'
+  | 'conversationFrame' | 'conversationHeader' | 'conversationTranscript'> & { message: LegacyMessageProps };
 export type LegacyModuleComponentMiddleware = {
   [Name in keyof LegacyModuleComponentProps]: {
     readonly id: string;
@@ -845,7 +905,8 @@ export type LegacyModuleComponentMiddleware = {
   };
 }[keyof LegacyModuleComponentProps];
 export interface LegacyModuleFrontendContext extends Omit<ModuleFrontendContext,
-  'apiVersion' | 'publicComponentsVersion' | 'messagePresentationVersion' | 'draftOwnerVersion' | 'components' | 'draftSubmissionVersion' | 'state' | 'pageVersion' | 'navigation'> {
+  'apiVersion' | 'publicComponentsVersion' | 'messagePresentationVersion' | 'conversationPresentationVersion' | 'conversation'
+  | 'draftOwnerVersion' | 'components' | 'draftSubmissionVersion' | 'state' | 'pageVersion' | 'navigation'> {
   readonly apiVersion: 2;
   readonly draftSubmissionVersion: 1;
   readonly state: Omit<ModuleStateRegistry, 'createDraft'>;

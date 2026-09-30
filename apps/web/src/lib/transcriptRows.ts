@@ -20,7 +20,7 @@ export function transcriptGap(previous: TranscriptRow | undefined, next: Transcr
   return gap;
 }
 
-export function groupTranscript(messages: ChatMessage[], previous: TranscriptRow[] = []): TranscriptRow[] {
+export function groupTranscript(messages: readonly ChatMessage[], previous: TranscriptRow[] = []): TranscriptRow[] {
   const previousGroups = previous.filter(row => row.kind === 'process');
   const previousAnchors = new Map(previousGroups.map(row => [row.anchorId, row]));
   const previousItems = new Map(previousGroups.flatMap(row => row.items.map(item => [item.key, row] as const)));
