@@ -57,13 +57,15 @@ test('constructing/rendering the module store has no bootstrap or backend access
 });
 
 test('legacy activation cannot register the new full conversation boundaries', async () => {
-  for (const boundary of ['messageList', 'chatMessage']) {
+  for (const boundary of ['messageList', 'chatMessage', 'conversationFrame', 'conversationHeader', 'conversationTranscript']) {
     const f = fixture([asset()], {
       apiVersion: 2, components: [{ id: 'row', boundary, wrap: (Base: unknown) => Base }],
     } as unknown as ModuleFrontend);
     await f.runtime.start();
     assert.equal(f.runtime.getSnapshot().length, 0);
     assert.equal('messagePresentationVersion' in f.contexts[0], false);
+    assert.equal('conversationPresentationVersion' in f.contexts[0], false);
+    assert.equal('conversation' in f.contexts[0], false);
     assert.equal(f.reports.length, 1);
     assert.match(String(f.reports[0]), /Invalid component middleware/);
     f.runtime.stop();

@@ -4,7 +4,8 @@
 
 import type { ReactNode } from 'react';
 import { Composer } from './Composer';
-import { ComposerCard, ComposerSurface } from './ComposerSurface';
+import { ComposerCard } from './ComposerSurface';
+import { ConversationFrame } from './ModuleComponents';
 import { SessionControlBar, SessionControlActionButton } from './SessionControlBar';
 import type { SessionControlAction } from '../lib/sessionControls';
 import type { ChatSession, ExitPlanModeAction } from '../net/types';
@@ -103,16 +104,11 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
           : promptBusy ? '加入队列' : '输入消息…';
 
   return (
-    <DisclosureChoices key={session.sessionId}><main className="chat">
-      <ThreadTranscript session={session} messages={messages} decision={decisionCard} scrollRef={scrollRef} contentRef={contentRef}
-        awayFromBottom={awayFromBottom} hasNewContent={hasNewContent}
-        onFollow={follow} onRetryHistory={onRetryHistory} />
-
-      <ComposerSurface>
-        <ThreadInputNotices session={session} readOnly={readOnly} authoritative={authoritative}
+    <DisclosureChoices key={session.sessionId}><ConversationFrame
+      notices={<ThreadInputNotices session={session} readOnly={readOnly} authoritative={authoritative}
           activityRefreshing={activityRefreshing} execution={execution} draft={draft}
-          onRetryControls={onRetryControls} onRetryHistory={onRetryHistory} />
-        <ComposerCard ref={cardRef} data-open={inputOpen}
+          onRetryControls={onRetryControls} onRetryHistory={onRetryHistory} />}
+      composer={<ComposerCard ref={cardRef} data-open={inputOpen}
           data-controls={!!controls || undefined} data-controls-open={controls ? controlsOpen : undefined}
           data-header={hasInputHeader || undefined} data-decision={hasPendingDecision || undefined}
           bodyId={bodyId} bodyHidden={!inputOpen}
@@ -145,8 +141,10 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
                 sendBlocked={!connected || !snapshotReady || answer?.allowFreeform === false || operation === 'elicitation' || !onSend}
               />
             )}
-        </ComposerCard>
-      </ComposerSurface>
-    </main></DisclosureChoices>
+        </ComposerCard>}>
+      <ThreadTranscript session={session} messages={messages} decision={decisionCard} scrollRef={scrollRef} contentRef={contentRef}
+        awayFromBottom={awayFromBottom} hasNewContent={hasNewContent}
+        onFollow={follow} onRetryHistory={onRetryHistory} />
+    </ConversationFrame></DisclosureChoices>
   );
 }

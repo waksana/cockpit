@@ -297,6 +297,18 @@ if (scene === 'dialog-focus') {
     window.addEventListener('pagehide', () => moduleRuntime.stop(), { once: true });
   }
   root.render(<DialogFocusLab modules={modules} />);
+} else if (scene === 'module-conversation') {
+  const { createConversationFixture } = await import('./module-conversation-fixture');
+  const { ModuleRuntimeProvider } = await import('../components/ModuleComponents');
+  const runtime = createConversationFixture();
+  await runtime.start();
+  window.addEventListener('pagehide', () => runtime.stop(), { once: true });
+  const frontend = runtime.getSnapshot()[0]?.frontend;
+  const Page = frontend?.apiVersion === 3 ? frontend.pages?.[0]?.component : undefined;
+  if (!Page) throw new Error('Synthetic conversation module did not activate');
+  root.render(<ModuleRuntimeProvider runtime={runtime}>
+    <div style={{ height: '100dvh', display: 'flex', flexDirection: 'column' }}><Page /></div>
+  </ModuleRuntimeProvider>);
 } else if (scene === 'module-global') {
   const { installWorkspaceFixture } = await import('./workspace-fixtures');
   const { installResourceFixture } = await import('./resource-fixtures');

@@ -64,7 +64,7 @@ export function useElicitationRecords(sessionId: string): readonly ElicitationRe
 export const elicitationRecordId = (requestId: string) => `elicitation-${requestId}`;
 
 // Place each record after the message that was last when it was answered.
-export function withElicitationRecords(messages: ChatMessage[], list: readonly ElicitationRecord[]): ChatMessage[] {
+export function withElicitationRecords(messages: readonly ChatMessage[], list: readonly ElicitationRecord[]): readonly ChatMessage[] {
   if (!list.length) return messages;
   const after = new Map<string | null, ChatMessage[]>();
   for (const record of list) {

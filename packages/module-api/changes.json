@@ -1,5 +1,10 @@
 [
   {
+    "version": "0.11.0",
+    "kind": "additive",
+    "summary": "Add Web v3 conversationPresentationVersion: 1 with shared Chat frame/header/transcript components, the native reading-position hook and an optional in-row message header; preserve native decisions and existing message/composer middleware."
+  },
+  {
     "version": "0.10.0",
     "kind": "additive",
     "summary": "Add promptReceiptVersion: 1 and native prompt acceptance messageId, plus optional native McpInvocationMeta.toolCallId for exact tool-request joins, without inventing ask or terminal-event provenance."

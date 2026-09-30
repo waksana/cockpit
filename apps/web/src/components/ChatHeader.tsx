@@ -1,6 +1,6 @@
 import type { RefObject } from 'react';
 import { Button, IconButton } from './Button';
-import { PaneHeader } from './PaneHeader';
+import { ConversationHeader } from './ModuleComponents';
 
 export function ChatHeader({ title, modelLabel, moreRef, moreOpen, onBack, onInfo, onMore }: {
   title: string; modelLabel: string;
@@ -8,7 +8,7 @@ export function ChatHeader({ title, modelLabel, moreRef, moreOpen, onBack, onInf
   moreOpen: boolean;
   onBack: () => void; onInfo: () => void; onMore: () => void;
 }) {
-  return <PaneHeader className="chat-topbar"
+  return <ConversationHeader
     leading={<IconButton className="chat-back lg:hidden" icon="back" label="返回" onClick={onBack} />}
     title={<Button className="chat-topbar-content" aria-label={`查看会话信息：${title}`} onClick={onInfo}>
       <span className="pane-title chat-topbar-title ck-text-primary" title={title}>{title}</span>

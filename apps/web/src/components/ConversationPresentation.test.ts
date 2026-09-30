@@ -1,15 +1,19 @@
 import { act, fireEvent, render, screen } from '../test/dom';
 import assert from '../test/identityAssert';
 import { test } from 'node:test';
-import { createElement as h, Fragment } from 'react';
+import { createElement as h, Fragment, type ComponentType } from 'react';
 import type { ChatMessage } from '@cockpit/protocol';
 import type {
-  ChatMessageProps, ModuleFrontend, ModuleFrontendContext, ModuleComponentMiddleware, MessageProps,
+  ChatMessageProps, ModuleFrontend, ModuleFrontendContext, ModuleComponentMiddleware, ModuleComponentProps, MessageProps,
 } from '@cockpit/module-api/frontend';
 import { compile } from 'sass';
 import { ModuleRuntime } from '../lib/moduleRuntime';
 import { ModuleRuntimeProvider, MessageList } from './ModuleComponents';
 import { TranscriptMessages } from './Transcript';
+import { Thread } from './Thread';
+import { ChatHeader } from './ChatHeader';
+import { fixtureSession } from '../dev/chat-fixtures';
+import { SessionDraft } from '../lib/textDraft';
 
 const today = new Date(2026, 8, 29).getTime();
 const body = '# Conversation\n\nA **bold** reply with [a link](https://example.invalid).\n\n- first\n- second\n\n| A | B |\n| - | - |\n| one | two |\n\n```ts\nconst value = 1;\n```';
@@ -139,15 +143,73 @@ test('full message preserves real origin for Markdown/attachment enhancement wit
   assert.deepEqual(observed, [undefined, origin]);
 });
 
-for (const boundary of ['chatMessage', 'messageList'] as const) {
+test('native Chat and public consumers share frame/header/transcript and exactly one composer dock/card', async t => {
+  const seen = new Set<string>();
+  const boundaries = ['conversationFrame', 'conversationHeader', 'conversationTranscript', 'composer', 'messageList'] as const;
+  const f = fixture({ apiVersion: 3, components: boundaries.map(boundary => ({
+    id: boundary, boundary, wrap: (Base: ComponentType<ModuleComponentProps[typeof boundary]>) =>
+      (value: ModuleComponentProps[typeof boundary]) => { seen.add(boundary); return h(Base, value); },
+  })) as ModuleComponentMiddleware[] });
+  t.after(() => f.runtime.stop());
+  await f.runtime.start();
+  const session = { ...fixtureSession('reading'), messages: [], error: 'Synthetic error' };
+  const native = render(h(ModuleRuntimeProvider, { runtime: f.runtime, children: h(Fragment, null,
+    h(ChatHeader, { title: 'Native', modelLabel: '', moreRef: { current: null }, moreOpen: false,
+      onBack: () => {}, onInfo: () => {}, onMore: () => {} }),
+    h(Thread, { session, onLoadMore: () => {} }),
+  ) }));
+  for (const name of boundaries) assert.ok(seen.has(name), `Native Chat uses ${name}`);
+  assert.equal(native.container.querySelectorAll('.chat-input-area').length, 1);
+  assert.equal(native.container.querySelectorAll('.chat-input-card').length, 1);
+  assert.equal(native.container.querySelectorAll('.chat-input-notices').length, 1);
+  assert.ok(native.container.querySelector('.chat-input-notices [role="alert"]'));
+  native.unmount();
+  const Frame = f.runtime.components.get('conversationFrame'), Header = f.runtime.components.get('conversationHeader');
+  const Transcript = f.runtime.components.get('conversationTranscript'), Composer = f.runtime.components.get('composer');
+  const draft = new SessionDraft('public-frame');
+  let follows = 0;
+  const publicView = render(h(Frame, {
+    header: h(Header, { title: h('h1', null, 'Module'), actions: h('button', null, 'Setup') }),
+    notices: h('p', { role: 'alert' }, 'Unknown send, retained'),
+    composer: h(Composer, { draft: draft.reference, operation: 'prompt', disabled: false, busy: false,
+      sendBlocked: false, onTextChange: text => draft.edit(text), onSubmit: () => {} }),
+    children: h(Transcript, { awayFromBottom: true, hasNewContent: true, onFollow: () => { follows++; },
+      children: h('p', null, 'A normal question and ordinary options') }),
+  }));
+  assert.equal(publicView.container.querySelectorAll('.chat-input-area').length, 1);
+  assert.equal(publicView.container.querySelectorAll('.chat-input-card').length, 1);
+  assert.ok(publicView.container.querySelector('.chat-input-notices [role="alert"]'));
+  assert.equal(publicView.container.querySelectorAll('.chat-decision-card').length, 0);
+  fireEvent.click(screen.getByRole('button', { name: '有新内容 · 回到最新' }));
+  assert.equal(follows, 1);
+  assert.deepEqual(f.errors, []);
+});
+
+test('optional reply headings are inside the shared row after its date separator, not an extra message', async t => {
+  const f = fixture();
+  t.after(() => f.runtime.stop());
+  await f.runtime.start();
+  const Row = f.runtime.components.get('chatMessage');
+  const view = render(h(Row, { ...props({ id: 'reply', role: 'assistant', timestamp: today, content: 'Original reply' }),
+    header: h('h3', null, 'Stable topic') }));
+  assert.equal(view.container.querySelectorAll('.msg-group').length, 1);
+  assert.equal(view.container.querySelector('.message.is-doc')?.firstElementChild?.tagName, 'H3');
+  assert.equal(view.container.querySelector('.msg-group')?.firstElementChild?.className, 'date-separator');
+  assert.ok(view.container.querySelector('[data-message-frame] [data-message-id]'), 'public rows have shared reading anchors');
+});
+
+for (const boundary of ['chatMessage', 'messageList', 'conversationFrame', 'conversationHeader', 'conversationTranscript'] as const) {
   test(`${boundary} middleware failure preserves shared Base and revokes only its module`, async t => {
     t.mock.method(console, 'error', () => {});
     const registration = { id: 'fault', boundary, wrap: () => () => { throw new Error('Fixture failure'); } } as ModuleComponentMiddleware;
     const f = fixture({ apiVersion: 3, components: [registration] });
     t.after(() => f.runtime.stop());
     await f.runtime.start();
-    const List = f.runtime.components.get('messageList'), Row = f.runtime.components.get('chatMessage');
-    render(h(List, { children: h(Row, props({ id: 'one', role: 'user', timestamp: today, content: 'Still readable' })) }));
+    const List = f.runtime.components.get('conversationTranscript'), Row = f.runtime.components.get('chatMessage');
+    const Frame = f.runtime.components.get('conversationFrame'), Header = f.runtime.components.get('conversationHeader');
+    render(h(Frame, { composer: null, header: h(Header, { title: 'Still a header' }),
+      children: h(List, { awayFromBottom: false, hasNewContent: false, onFollow: () => {},
+        children: h(Row, props({ id: 'one', role: 'user', timestamp: today, content: 'Still readable' })) }) }));
     await act(async () => {});
     assert.ok(screen.getByText('Still readable'));
     assert.equal(f.runtime.getSnapshot().length, 0);
