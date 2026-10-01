@@ -43,6 +43,13 @@ export type SessionStatus = z.infer<typeof SessionStatus>;
 export const AgentStatus = z.enum(['starting', 'up', 'stopping', 'failed']);
 export type AgentStatus = z.infer<typeof AgentStatus>;
 
+/** Host ingress evidence; not an assertion of physical human presence. No message body is copied. */
+export const PromptAccepted = z.object({
+  sessionId: z.string().min(1), messageId: z.string().min(1),
+  origin: z.enum(['user', 'module', 'api']), acceptedAt: z.number().int().nonnegative(),
+}).strict();
+export type PromptAccepted = z.infer<typeof PromptAccepted>;
+
 export const ServiceIdentity = z.object({
   instanceId: z.string().uuid(),
   version: z.string().min(1),

@@ -546,6 +546,12 @@ export type PlanRequest = {
     requestId: string;
     summary: string;
 };
+export type PromptAccepted = {
+    acceptedAt: number;
+    messageId: string;
+    origin: "api" | "module" | "user";
+    sessionId: string;
+};
 export type QueuedItem = {
     canSteer?: boolean | undefined;
     id: string;

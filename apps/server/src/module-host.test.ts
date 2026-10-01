@@ -5,7 +5,7 @@ import { chmod, readFile, unlink, symlink } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
-import { MAX_MODULE_EVENT_BYTES, type ModuleEventPayload } from '@cockpit/module-api/backend';
+import { MAX_MODULE_EVENT_BYTES, type ModuleEventPayload, type PromptAccepted } from '@cockpit/module-api/backend';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { installLocalModule, selectModule } from './module-install.ts';
@@ -28,6 +28,35 @@ export function activate(ctx) {
     ],
   };
 }`;
+
+test('prompt acceptance observers expose only live receipt facts and are revoked on close', async t => {
+  const f = await moduleFixture(t);
+  await installLocalModule(await f.package(moduleEntries('origin', `
+    export function activate(context) {
+      if (context.host.promptOriginVersion !== 1) throw new Error('Missing prompt-origin capability');
+      const seen = [];
+      return {
+        promptAccepted(event) { seen.push(event); },
+        routes: [{ method: 'GET', path: '/seen', handler: () => ({ body: seen }) }]
+      };
+    }
+  `)), { trustLocalCode: true, enable: true });
+  const observers = new Set<(event: PromptAccepted) => void | Promise<void>>();
+  const host = new ModuleHost({ observer: { ...f.observer, onPromptAccepted(handler) {
+    observers.add(handler); return () => { observers.delete(handler); };
+  } } });
+  const app = Fastify(); t.after(() => app.close());
+  await host.register(app);
+  assert.deepEqual(host.bootstrap().errors, []);
+  const value: PromptAccepted = { sessionId: 'native-session', messageId: 'actual-receipt', origin: 'module', acceptedAt: 123 };
+  for (const observe of observers) await observe(value);
+  value.origin = 'user';
+  const base = host.bootstrap().modules[0]!.apiBase;
+  assert.deepEqual((await app.inject(`${base}/seen`)).json(),
+    [{ sessionId: 'native-session', messageId: 'actual-receipt', origin: 'module', acceptedAt: 123 }]);
+  host.close();
+  assert.equal(observers.size, 0);
+});
 
 async function waitUntil(predicate: () => boolean, message: string | (() => string)): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt++) {

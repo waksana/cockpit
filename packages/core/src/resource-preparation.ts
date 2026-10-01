@@ -7,7 +7,7 @@ import type { ResourceValues, SessionKernel } from './kernel.ts';
 import type { SessionHandle } from './session-handle.ts';
 import type { RoleService } from './role-service.ts';
 import type { McpService } from './mcp-service.ts';
-import { assertScopeToolMetadata, assertSessionScopeNamespaces } from './tool-scope.ts';
+import { assertScopeToolMetadata, assertSessionScopeNamespaces, assertRoleResource, assertRoleResources } from './tool-scope.ts';
 
 /** Explicit tool initialization and selected skill/MCP preparation on a loaded idle handle. */
 export class ResourcePreparation {
@@ -38,6 +38,7 @@ export class ResourcePreparation {
     const metadata = await this.k.withSession(st, sdk, () => sdk.rpc.tools.getCurrentMetadata());
     if (!Array.isArray(metadata.tools)) throw new Error('Native tool initialization is unconfirmed; metadata is unavailable');
     if (st.toolScope) assertScopeToolMetadata(st.toolScope, metadata.tools);
+    await this.k.withSession(st, sdk, () => assertRoleResources(st, sdk));
     return metadata.tools;
   }
 
@@ -65,6 +66,8 @@ export class ResourcePreparation {
         const sdk = st.sdk;
         try {
           if (!sdk) throw new SessionUnloadedError();
+          for (const name of selection.skills ?? []) assertRoleResource(st, 'skill', name);
+          for (const { name } of selection.mcpServers ?? []) assertRoleResource(st, 'mcp', name);
           await assertSessionScopeNamespaces(this.k, st, sdk);
           const roleState = this.roleService.roleState(st, await this.roleService.savedRoles(st.id));
           if (roleState.rolesNeedReload) {

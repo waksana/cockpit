@@ -7,7 +7,7 @@ export type {
   TodoProgress, SessionActivity, SessionControls, RoleSelection, SessionRole,
   SessionMeta, SessionResource, Snapshot, ServerEvent,
   SessionResourcesPrepare, ResourcePreparationResult,
-  ToolScope, SessionToolScope,
+  ToolScope, SessionToolScope, PromptAccepted,
   RoleAssignmentFailure, RoleAssignmentFailureDetails, RoleAssignmentMutationResult,
 } from './index.ts';
 

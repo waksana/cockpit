@@ -331,6 +331,52 @@ names are manifest keys. The host generates
 `X-Cockpit-Module-Digest`. Same-module roles with the same endpoint union tool
 lists; `['*']` means all tools and `[]` means none.
 
+#### Exclusive role resources
+
+With `context.host.roleResourcePolicyVersion === 1`, a role may declare
+`"resourcePolicy":"exclusive"`. It must be selected alone and use explicit raw
+MCP tool names, not `*`. Native configuration discovery is disabled for that
+handle; only its role Skill directories and MCP definitions are supplied.
+Unrelated discovered/global MCP servers and the built-in GitHub server remain
+disabled, not authenticated or connected. Other sessions and global settings
+are unchanged. Native resource panels may still list disabled definitions.
+
+The effective tool scope has no builtins and only role MCP tools, intersected
+with an explicitly saved tool scope when one exists. `session/tool-scope`
+continues to distinguish the optional saved `configured` scope from the actual
+`applied` scope; a role-derived scope does not invent saved configuration.
+Role instructions and user instructions remain; unrelated module-wide default
+instructions are not appended. Skill availability is not proof of body loading.
+
+Cold loading/reloading rebuilds this policy from the selected role. Enabling an
+unrelated Skill/MCP or preparing it is rejected. MCP-only reload is rejected for
+exclusive handles: use a full idle session reload to recompute the exclusions.
+Actual native resources and tool metadata are checked, not merely hidden in UI.
+This is an opt-in resource boundary, not an OS sandbox or a permission-policy
+change; native permissions remain `allow-all`.
+
+#### Native prompt ingress observations
+
+`context.host.promptOriginVersion === 1` supports
+`ModuleBackend.promptAccepted(event)`. Its live, body-free event is
+`{sessionId,messageId,origin,acceptedAt}`. `messageId` is the real native
+acceptance receipt, not an event-envelope UUID. The module may join it to native
+Chat if it needs the original text; the Host creates no message mirror.
+
+`origin:"user"` means the accepted same-origin browser entry with browser
+`Origin` and `Sec-Fetch-Site: same-origin` headers. Module host calls are
+`"module"`; generic API/MCP/CLI entry is `"api"`. Request-body fields cannot set
+this class. This uses the existing authenticated same-origin/same-user Host
+boundary, not physical-human attestation or protection against malicious local
+code forging browser headers. A native event's `source` and agent scope remain
+independent evidence. Unknown/older messages are not assumed to be human.
+
+Callbacks are live only and stop with module activation. Missing native receipts
+produce no observation. Callback errors are reported without undoing acceptance,
+retrying a send, or changing native history. A consumer requiring durable identity
+must save the small receipt fact itself; observation does not establish processing
+or success. Native system-notification sending is not added by this capability.
+
 <a id="mcp-invocation-meta"></a>
 #### MCP invocation metadata
 

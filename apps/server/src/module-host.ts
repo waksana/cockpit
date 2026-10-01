@@ -29,6 +29,7 @@ const backendSchema = z.object({
   routes: z.array(routeSchema).max(256),
   publicConfig: z.record(z.unknown()).optional(),
   onReady: z.custom<NonNullable<ModuleBackend['onReady']>>(value => typeof value === 'function').optional(),
+  promptAccepted: z.custom<NonNullable<ModuleBackend['promptAccepted']>>(value => typeof value === 'function').optional(),
   roleAssignments: z.object({
     permit: z.custom<NonNullable<NonNullable<ModuleBackend['roleAssignments']>['permit']>>(value => typeof value === 'function').optional(),
     saved: z.custom<NonNullable<NonNullable<ModuleBackend['roleAssignments']>['saved']>>(value => typeof value === 'function').optional(),
@@ -57,6 +58,7 @@ interface Loaded {
   replies: Set<FastifyReply>;
   unsubscribe?: () => void;
   unsubscribeControl?: () => void;
+  unsubscribePrompts?: () => void;
 }
 interface RequestScope {
   controller: AbortController;
@@ -101,7 +103,7 @@ export class ModuleHost {
   private readyNotified = false;
   constructor(private readonly options: {
     hostRoot?: string;
-    observer: Pick<Engine, 'onNativeEvent'> & Partial<Pick<Engine, 'onEvent'>>;
+    observer: Pick<Engine, 'onNativeEvent'> & Partial<Pick<Engine, 'onEvent' | 'onPromptAccepted'>>;
     onInvalidate?: (id: string) => void;
     onEvent?: (id: string, payload: ModuleEventPayload) => void;
     report?: (id: string, error: unknown) => void;
@@ -177,7 +179,9 @@ export class ModuleHost {
         const installation = await readModuleInstallation(id, selected, hostRoot);
         const apiBase = `/_modules/${id}/${installation.digest}/api`;
         const context: ModuleBackendContext = Object.freeze({
-          host: Object.freeze({ resourcePreparationVersion: 1, toolScopeVersion: 1, askResponseVersion: 1, chatReadVersion: 1, promptReceiptVersion: 1,
+          host: Object.freeze({ resourcePreparationVersion: 1, toolScopeVersion: 1, roleResourcePolicyVersion: 1,
+            ...(this.options.observer.onPromptAccepted ? { promptOriginVersion: 1 as const } : {}),
+            askResponseVersion: 1, chatReadVersion: 1, promptReceiptVersion: 1,
             roleAssignmentVersion: 1, sessionDirectoryVersion: 1, sessionLoadVersion: 1, call: (name, body) => {
             if (controller.signal.aborted || this.closed) throw new Error('Module is stopped');
             if (!this.loaded.some(module => module.controller === controller)) throw new Error('Module host intents are not active');
@@ -246,6 +250,16 @@ export class ModuleHost {
         ]);
         if (this.closed) throw new Error('Module host is closing');
         const loaded: Loaded = { installation, backend, controller, apiBase, streams: new Set(), replies: new Set() };
+        if (backend.promptAccepted) {
+          if (!this.options.observer.onPromptAccepted) throw new Error('Module requires prompt acceptance observations');
+          const callback = backend.promptAccepted;
+          loaded.unsubscribePrompts = this.options.observer.onPromptAccepted(event => {
+            if (controller.signal.aborted) return;
+            try { void Promise.resolve(callback(structuredClone(event))).catch(error => this.report(id, error)); }
+            catch (error) { this.report(id, error); }
+          });
+          controller.signal.addEventListener('abort', () => loaded.unsubscribePrompts?.(), { once: true });
+        }
         if (backend.events) {
           const events = backend.events;
           const types = new Set(events.types);
@@ -573,6 +587,7 @@ export class ModuleHost {
     for (const module of this.loaded) {
       try { module.unsubscribe?.(); } catch (error) { this.report(module.installation.manifest.id, error); }
       try { module.unsubscribeControl?.(); } catch (error) { this.report(module.installation.manifest.id, error); }
+      try { module.unsubscribePrompts?.(); } catch (error) { this.report(module.installation.manifest.id, error); }
       for (const stream of module.streams) stream.destroy();
       module.streams.clear();
       for (const reply of module.replies) reply.raw.destroy();

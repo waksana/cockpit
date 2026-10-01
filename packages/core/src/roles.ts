@@ -3,6 +3,7 @@ import type { ModuleRoleResources, ModuleRoleSkill, ModuleSkillSource, ModuleSou
 
 export interface RoleAssembly {
   roles: SessionRole[];
+  resourcePolicy?: 'exclusive';
   config: Pick<SessionConfig, 'systemMessage' | 'skillDirectories' | 'mcpServers'>;
   skills: Array<{ name: string; path: string; module?: ModuleSource }>;
   mcpSources?: Record<string, ModuleSource>;

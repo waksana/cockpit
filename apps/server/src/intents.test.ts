@@ -21,9 +21,24 @@ process.env.COCKPIT_NO_BOOT = '1';
 process.env.LOG_LEVEL = 'silent';
 process.env.COCKPIT_SERVE_WEB = '0';
 process.env.COCKPIT_MAX_SSE_CLIENTS = '2';
-const { app, setTestDependencies, broadcastFrame, onEngineEvent } = await import('./index.ts');
+const { app, setTestDependencies, broadcastFrame, onEngineEvent, callModuleIntent } = await import('./index.ts');
 
 const calls: { method: string; args: unknown[] }[] = [];
+test('prompt origin comes from the native client or module boundary, never a request-body field', async () => {
+  const payload = { sessionId: 's', text: 'Synthetic origin', mode: 'enqueue' };
+  const response = await app.inject({ method: 'POST', url: '/intent/prompt', payload, headers: {
+    host: 'synthetic.test', origin: 'https://synthetic.test', 'sec-fetch-site': 'same-origin',
+  } });
+  assert.equal(response.statusCode, 200, response.body);
+  assert.equal(calls.at(-1)?.args[4], 'user');
+  await callModuleIntent('prompt', { sessionId: 's', text: 'Module notice' });
+  assert.equal(calls.at(-1)?.args[4], 'module');
+  const api = await app.inject({ method: 'POST', url: '/intent/prompt', payload });
+  assert.equal(api.statusCode, 200);
+  assert.equal(calls.at(-1)?.args[4], undefined);
+  const forged = await app.inject({ method: 'POST', url: '/intent/prompt', payload: { ...payload, origin: 'user' } });
+  assert.equal(forged.statusCode, 400);
+});
 function record<T>(method: string, args: unknown[], result: T): T {
   calls.push({ method, args });
   return result;

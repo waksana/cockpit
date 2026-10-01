@@ -7,7 +7,7 @@ import { messageOf, settled } from './async.ts';
 import { describeMcpServer, mcpConnection, redactMcpConfig } from './mcp-config.ts';
 import type { ResourceValues, SessionKernel } from './kernel.ts';
 import type { SessionHandle } from './session-handle.ts';
-import { assertSessionScopeNamespaces } from './tool-scope.ts';
+import { assertSessionScopeNamespaces, assertRoleResource } from './tool-scope.ts';
 
 /** Native global MCP configuration and per-session MCP connections. */
 export class McpService {
@@ -93,6 +93,7 @@ export class McpService {
 
   async toggleSessionMcp(id: string, name: string, enabled: boolean): Promise<McpToggleResult> {
     return this.k.operation(id, async (sdk, st) => {
+      if (enabled) assertRoleResource(st, 'mcp', name);
       if (st.mcpOperations) throw busy('MCP mutation is already in progress');
       const operation: McpToggleOperation = { id: randomUUID(), desiredEnabled: enabled,
         state: 'running', startedAt: Date.now(), status: 'pending' };
@@ -159,6 +160,8 @@ export class McpService {
     return this.k.transition(st, async () => {
       const sdk = st.sdk;
       if (!sdk) throw new SessionUnloadedError();
+      if (st.roleAssembly?.resourcePolicy === 'exclusive')
+        throw new Error('Exclusive role resources require a full idle session reload to rediscover exclusions safely');
       await this.k.untilFatal(() => this.k.runtime.rpc.mcp.config.reload());
       await assertSessionScopeNamespaces(this.k, st, sdk);
       st.mcpOperations++;
