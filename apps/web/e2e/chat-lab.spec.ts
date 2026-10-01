@@ -67,6 +67,37 @@ const componentScenes: [scene: string, ready: string][] = [
   ['decision-history', '.chat-decision-card[data-state="done"]'],
 ];
 
+for (const reducedMotion of ['no-preference', 'reduce'] as const) {
+  test(`loading arcs keep stationary viewports (${reducedMotion})`, async ({ page }) => {
+    const guard = await open(page, 'scene=sidebar');
+    await page.emulateMedia({ reducedMotion });
+    await expect(page.locator('.session-activity .spinner').first()).toBeVisible();
+    await page.evaluate(async () => {
+      const path = '/src/net/api.ts';
+      const { cockpitApi } = await import(path) as {
+        cockpitApi: { listDir(): Promise<unknown>; listRoles(): Promise<unknown> };
+      };
+      cockpitApi.listDir = () => new Promise(() => {});
+      cockpitApi.listRoles = () => new Promise(() => {});
+    });
+    await page.getByRole('button', { name: '新建会话', exact: true }).click();
+    await expect(page.locator('.dirpicker-list .spinner')).toBeVisible();
+    await settle(page);
+    const run = () => page.evaluate(async () => {
+      const path = '/src/dev/spinner-checks.ts';
+      const { runSpinnerChecks } = await import(path) as { runSpinnerChecks(): Promise<unknown> };
+      return runSpinnerChecks();
+    });
+    await run();
+    await expectHealthy(page, guard);
+    const toolGuard = await open(page, 'scene=all&compact=1');
+    await expect(page.locator('.tool-state-icon[data-status="in_progress"]').first()).toBeVisible();
+    await settle(page);
+    await run();
+    await expectHealthy(page, toolGuard);
+  });
+}
+
 test('public conversation uses Chat layout, preserves reading through topic/prepend updates and follows explicitly', async ({ page }, testInfo) => {
   const guard = await open(page, 'scene=module-conversation');
   const viewport = page.getByLabel('对话消息', { exact: true });

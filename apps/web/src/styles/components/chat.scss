@@ -284,10 +284,6 @@ button.activity-head {
 .tool-state-icon { display: block; flex: none; }
 // An inline SVG leaves a line box whose rotated overflow changes scrollHeight.
 .tool-state-icon > svg { display: block; }
-.tool-state-icon[data-status='in_progress'] {
-  animation: spinner-rotate 0.7s linear infinite;
-  @media (prefers-reduced-motion: reduce) { animation-duration: 1.6s; }
-}
 .tool-head {
   grid-template-columns: 1rem minmax(0, 1fr) 1rem;
   font-family: var(--chat-font-mono);

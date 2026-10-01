@@ -3,7 +3,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { test } from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { FileTerminal, SquareTerminal } from 'lucide-react';
+import { FileTerminal, LoaderCircle, SquareTerminal } from 'lucide-react';
 import { compile } from 'sass';
 import { Icon, type IconName } from './Icon';
 
@@ -50,6 +50,21 @@ test('skills use BookOpen while thoughts retain Lightbulb', () => {
   assert.doesNotMatch(skills, /lucide-lightbulb/);
   assert.match(thought, /lucide-lightbulb/);
   assert.doesNotMatch(thought, /lucide-book-open/);
+});
+
+test('loading retains the Lucide arc and rotates only its geometry around the viewBox center', () => {
+  const glyph = renderToStaticMarkup(createElement(LoaderCircle, {
+    width: '100%', height: '100%', 'aria-hidden': true, focusable: 'false',
+  }));
+  assert.equal((glyph.match(/<path /g) ?? []).length, 1, 'the motion selector targets the pinned single arc');
+  for (const size of [10, 16, 20, 24]) {
+    const html = renderToStaticMarkup(createElement(Icon, { name: 'loading', className: 'spinner', size }));
+    assert.equal(html, `<span class="ck-icon spinner" data-icon="loading" aria-hidden="true" style="width:${size}px;height:${size}px">${glyph}</span>`);
+  }
+  const css = compile(new URL('../styles/primitives/preloader.scss', import.meta.url).pathname).css;
+  assert.match(css, /\.spinner \{\s*color: var\(--ck-color-accent\);\s*\}/);
+  assert.match(css, /\.ck-icon\.spinner > svg > path,\s*\.tool-state-icon\[data-status=in_progress\] > svg > path \{\s*transform-box: view-box;\s*transform-origin: center;\s*animation: spinner-rotate 0\.7s linear infinite;/);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\.ck-icon\.spinner > svg > path,\s*\.tool-state-icon\[data-status=in_progress\] > svg > path \{\s*animation-duration: 1\.6s;/);
 });
 
 test('Module UI v1 publishes common primitives without private ancestors or icon fonts', () => {

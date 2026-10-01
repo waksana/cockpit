@@ -1,6 +1,13 @@
 // Motion only: the loading glyph comes from the shared Lucide adapter.
 .spinner {
   color: var(--ck-color-accent);
+}
+// Keep the SVG viewport stationary: rotating its HTML box can wobble in Safari.
+// Use the full viewBox center, not the incomplete arc's bounding box.
+.ck-icon.spinner > svg > path,
+.tool-state-icon[data-status='in_progress'] > svg > path {
+  transform-box: view-box;
+  transform-origin: center;
   animation: spinner-rotate 0.7s linear infinite;
   @media (prefers-reduced-motion: reduce) { animation-duration: 1.6s; }
 }

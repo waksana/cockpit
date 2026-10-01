@@ -598,8 +598,8 @@ test('process rows use compact typography with leading status and a trailing nam
   assert.match(css, /\.activity-icon \{[^}]*grid-column: 1/);
   assert.match(css, /\.tool-label \{[^}]*margin-inline-start: auto/);
   assert.match(css, /\.tool-label \{[^}]*border-radius: var\(--ck-radius\);[^}]*font-size: var\(--chat-text-meta\)/);
-  assert.match(css, /\.tool-state-icon\[data-status=in_progress\] \{[^}]*animation: spinner-rotate 0\.7s linear infinite/);
-  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\.tool-state-icon\[data-status=in_progress\] \{[^}]*animation-duration: 1\.6s/);
+  assert.doesNotMatch(css, /animation: spinner-rotate/,
+    'loading motion belongs to the shared preloader, not the tool wrapper');
 });
 
 test('message process spacing does not retain old document or copy toolbar gaps', () => {
