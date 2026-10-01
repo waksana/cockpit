@@ -235,7 +235,7 @@ export class Engine {
   async forkSession(id: string, toEventId?: string, name?: string): Promise<{ sessionId: string }> {
     const st = await this.k.state(id);
     return this.k.transition(st, async () => {
-      if (await this.k.roles?.readToolScope?.(id)) {
+      if (st.toolScope || await this.k.roles?.readToolScope?.(id)) {
         throw new CockpitError('UNSUPPORTED', 'Forking a tool-scoped session is unsupported; scope must not be silently widened');
       }
       const sdk = st.sdk;

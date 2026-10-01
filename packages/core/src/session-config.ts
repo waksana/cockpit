@@ -68,10 +68,10 @@ export class SessionConfigurator {
         if (Object.hasOwn(configured.servers, name) || discovered.servers.some(server => server.name === name)) {
           throw new Error(`Role MCP conflicts with native configuration: ${name}`);
         }
-        if (exclusive) disabledMcpServers = [...new Set(['github-mcp-server',
-          ...Object.keys(configured.servers), ...discovered.servers.map(server => server.name)])]
-          .filter(name => !Object.hasOwn(assembly.config.mcpServers ?? {}, name));
       }
+      if (exclusive) disabledMcpServers = [...new Set(['github-mcp-server',
+        ...Object.keys(configured.servers), ...discovered.servers.map(server => server.name)])]
+        .filter(name => !Object.hasOwn(assembly.config.mcpServers ?? {}, name));
       if (toolScope) assertScopeServerIdentities(toolScope, [
         ...Object.keys(configured.servers), ...discovered.servers.map(server => server.name),
         ...Object.keys(assembly?.config.mcpServers ?? {}),

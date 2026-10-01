@@ -92,6 +92,8 @@ test('native immutable tool scope: direct calls, MCP/model changes, role reload 
       { id: 'exclusive', name: 'Exclusive', resourcePolicy: 'exclusive', instructions: 'foreground.md',
         skillDirectories: ['skills'],
         mcpServers: { 'fixture-service': { type: 'http', path: '/mcp', tools: ['read'] } } },
+      { id: 'exclusive-empty', name: 'Exclusive empty', resourcePolicy: 'exclusive', instructions: 'foreground.md' },
+      { id: 'exclusive-empty-map', name: 'Exclusive empty map', resourcePolicy: 'exclusive', mcpServers: {} },
     ] });
     entries.push({ path: 'foreground.md', content: 'Synthetic foreground instructions remain appended without a Skill/view tool.' });
     entries.push({ path: 'skills/owned/SKILL.md', content: '---\nname: owned-skill\ndescription: Synthetic role skill\n---\nOwned guidance' });
@@ -266,11 +268,23 @@ test('native immutable tool scope: direct calls, MCP/model changes, role reload 
     assert.equal(excluded.ok, false);
     assert.match(excluded.error!, /Exclusive role/);
     await handles.get(exclusive)!.sendAndWait({ prompt: 'Synthetic persisted exclusive role.' });
+    await assert.rejects(engine.forkSession(exclusive), /tool-scoped session/);
     await engine.unload(exclusive);
     await engine.load(exclusive);
     await exclusiveCheck();
     await engine.reload(exclusive);
     await exclusiveCheck();
+    for (const roleId of ['exclusive-empty', 'exclusive-empty-map']) {
+      const before = requests.length;
+      const emptyRole = await engine.newSession(dirs.work!, [{ moduleId: 'fixture', roleId }]);
+      assert.deepEqual((await engine.getSessionToolScope(emptyRole)).tools, []);
+      assert.deepEqual((await engine.listSessionMcp(emptyRole)).servers.filter(server => server.enabled), []);
+      assert.equal(requests.slice(before).includes('/global'), false);
+      await handles.get(emptyRole)!.sendAndWait({ prompt: 'Synthetic empty-role persistence.' });
+      await engine.unload(emptyRole); await engine.load(emptyRole);
+      assert.deepEqual((await engine.listSessionMcp(emptyRole)).servers.filter(server => server.enabled), []);
+      assert.deepEqual((await engine.listSessionSkills(emptyRole)).filter(skill => skill.enabled), []);
+    }
     await assert.rejects(engine.newSession(dirs.work!, [
       { moduleId: 'fixture', roleId: 'exclusive' }, { moduleId: 'fixture', roleId: 'extra' },
     ]), /selected alone/);
