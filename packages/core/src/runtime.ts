@@ -256,7 +256,7 @@ export class OfficialRuntime {
     }));
   }
 
-  private sessionOptions(config: SessionConfig | ResumeSessionConfig, scope?: ToolScope, session?: () => RuntimeSession | undefined): SessionConfig {
+  private sessionOptions(config: SessionConfig | ResumeSessionConfig, scope?: ToolScope, session?: () => RuntimeSession | undefined, exclusive = false): SessionConfig {
     const base = this.config.sessionConfig;
     for (const name of Object.keys(config.mcpServers ?? {})) {
       if (base?.mcpServers && Object.hasOwn(base.mcpServers, name)) {
@@ -279,14 +279,14 @@ export class OfficialRuntime {
         ...base?.hooks, ...config.hooks,
         onPreToolUse: toolScopeHook(scope, session, config.hooks?.onPreToolUse ?? base?.hooks?.onPreToolUse),
       } } : {}),
-      mcpServers: { ...base?.mcpServers, ...config.mcpServers },
+      mcpServers: exclusive ? config.mcpServers : { ...base?.mcpServers, ...config.mcpServers },
       ...(base?.systemMessage && config.systemMessage && base.systemMessage.mode === 'append'
         && config.systemMessage.mode === 'append' ? { systemMessage: {
           mode: 'append' as const, content: `${base.systemMessage.content}\n\n${config.systemMessage.content}`,
         } } : {}),
-      tools: [...this.config.sessionConfig?.tools ?? [], ...config.tools ?? []],
+      tools: [...(exclusive ? [] : this.config.sessionConfig?.tools ?? []), ...config.tools ?? []],
       skillDirectories: [...new Set([
-        ...this.config.sessionConfig?.skillDirectories ?? [],
+        ...(exclusive ? [] : this.config.sessionConfig?.skillDirectories ?? []),
         ...config.skillDirectories ?? [],
       ])],
       // The product deliberately has no interactive permission policy.
@@ -294,21 +294,21 @@ export class OfficialRuntime {
     };
   }
 
-  createSession(config: SessionConfig, scope?: ToolScope): Promise<RuntimeSession> {
+  createSession(config: SessionConfig, scope?: ToolScope, exclusive = false): Promise<RuntimeSession> {
     if (scope !== undefined) scope = ToolScope.parse(scope);
     return this.shared(() => this.perSession(config.sessionId, async () => {
       if (config.sessionId && this.live.has(config.sessionId)) throw new Error('Session is already owned by this runtime');
-      const session: RuntimeSession = await this.client!.createSession(this.sessionOptions(config, scope, () => session));
+      const session: RuntimeSession = await this.client!.createSession(this.sessionOptions(config, scope, () => session, exclusive));
       this.own(session);
       return session;
     }));
   }
 
-  resumeSession(id: string, config: ResumeSessionConfig, scope?: ToolScope): Promise<RuntimeSession> {
+  resumeSession(id: string, config: ResumeSessionConfig, scope?: ToolScope, exclusive = false): Promise<RuntimeSession> {
     if (scope !== undefined) scope = ToolScope.parse(scope);
     return this.shared(() => this.perSession(id, async () => {
       if (this.live.has(id)) throw new Error('Session is already owned by this runtime');
-      const session: RuntimeSession = await this.client!.resumeSession(id, this.sessionOptions(config, scope, () => session));
+      const session: RuntimeSession = await this.client!.resumeSession(id, this.sessionOptions(config, scope, () => session, exclusive));
       this.own(session);
       return session;
     }));

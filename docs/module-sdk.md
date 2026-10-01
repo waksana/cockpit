@@ -161,6 +161,13 @@ for supported identity syntax, collision rejection, role intersection, native de
 cold-load/fork limits and the unchanged allow-all permission policy. SDK types or
 enabled MCP connections alone are not native filtering evidence.
 
+`roleResourcePolicyVersion: 1` adds opt-in role-only resource assembly and
+`promptOriginVersion: 1` adds body-free `promptAccepted` callbacks. See
+[exclusive resources and native ingress](module-contract.md#exclusive-role-resources)
+for lifecycle restrictions and the browser/module/API trust boundary.
+Neither capability adds an alternative chat store or exposes private SDK
+system-notification calls.
+
 Complete ordinary conversation presentation is separately gated by
 `messagePresentationVersion: 1`. The `messageList` and `chatMessage` component
 types extend the same public directory while keeping `message` as the original

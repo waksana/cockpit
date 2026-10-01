@@ -21,6 +21,8 @@ export interface ModuleRole {
   description?: string;
   instructions?: string;
   skillDirectories?: string[];
+  /** Opt-in native resource isolation. An exclusive role must be selected alone. */
+  resourcePolicy?: 'exclusive';
   mcpServers?: Record<string, { type: 'http'; path: string; tools: string[] }>;
 }
 

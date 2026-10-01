@@ -8,7 +8,7 @@ import type { RoleService } from './role-service.ts';
 import type { SkillsService } from './skills-service.ts';
 import type { DecisionBroker } from './decisions.ts';
 import { moduleMcpInvocationHook, SubagentNames } from './mcp-invocation.ts';
-import { assertScopeServerIdentities, nativeToolScope } from './tool-scope.ts';
+import { assertScopeServerIdentities, nativeToolScope, roleToolScope } from './tool-scope.ts';
 
 type UserInputResponse = Awaited<ReturnType<NonNullable<SessionConfig['onUserInputRequest']>>>;
 const planActions = new Set<string>(['exit_only', 'interactive', 'autopilot', 'autopilot_fleet']);
@@ -37,9 +37,11 @@ export class SessionConfigurator {
     const disabled = await this.skills.globalDisabledSkills();
     const selected = await this.roleService.savedRoles(st.id);
     const assembly = selected.length ? await this.k.roles!.assemble(st.id, selected) : undefined;
-    const toolScope = await this.k.roles?.readToolScope?.(st.id);
+    const toolScope = roleToolScope(assembly, await this.k.roles?.readToolScope?.(st.id));
+    const exclusive = assembly?.resourcePolicy === 'exclusive';
+    let disabledMcpServers: string[] | undefined;
     if (assembly?.skills.length) {
-      const existing = await this.skills.discoverSkills(cwd ?? st.observedCwd ?? undefined);
+      const existing = exclusive ? { skills: [] } : await this.skills.discoverSkills(cwd ?? st.observedCwd ?? undefined);
       const names = new Map(existing.skills.map(skill => [skill.name, skill.path]));
       for (const directory of assembly.config.skillDirectories ?? []) {
         const discovered = await this.k.untilFatal(() => this.k.runtime.rpc.skills.discover({
@@ -67,6 +69,9 @@ export class SessionConfigurator {
           throw new Error(`Role MCP conflicts with native configuration: ${name}`);
         }
       }
+      if (exclusive) disabledMcpServers = [...new Set(['github-mcp-server',
+        ...Object.keys(configured.servers), ...discovered.servers.map(server => server.name)])]
+        .filter(name => !Object.hasOwn(assembly.config.mcpServers ?? {}, name));
       if (toolScope) assertScopeServerIdentities(toolScope, [
         ...Object.keys(configured.servers), ...discovered.servers.map(server => server.name),
         ...Object.keys(assembly?.config.mcpServers ?? {}),
@@ -81,7 +86,9 @@ export class SessionConfigurator {
       ...(toolScope ? { availableTools: nativeToolScope(toolScope) } : {}),
       ...(subagents ? { hooks: { onPreMcpToolCall: moduleMcpInvocationHook(moduleServers, subagents) } } : {}),
       sessionId: st.id, ...(cwd ? { workingDirectory: cwd } : {}), streaming: true,
-      enableConfigDiscovery: true,
+      enableConfigDiscovery: !exclusive,
+      ...(exclusive ? { enableSkills: true, pluginDirectories: [], instructionDirectories: [],
+        disabledMcpServers, enableFileHooks: false, enableOnDemandInstructionDiscovery: false } : {}),
       // Runtime 1.0.83 discovers skills but does not apply its global disabled
       // list on create/cold resume unless the SDK receives that native value.
       disabledSkills: disabled,

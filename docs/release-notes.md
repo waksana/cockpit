@@ -21,6 +21,10 @@ isolated package snapshot, never committed back to source.
   selections remove tools, ambiguous MCP identities fail closed, and cold load
   preserves scope without changing the allow-all permission policy. See
   [native session tool scope](module-contract.md#session-tool-scope).
+- Opt-in exclusive roles connect only their MCP resources and discover only their
+  Skill directories through cold load. Native prompt receipt observations expose
+  the Host ingress class without copying message content or replacing native Chat.
+  See [exclusive resources](module-contract.md#exclusive-role-resources).
 - The independently versioned [module SDK](module-sdk.md) adds `settingsVersion: 1`
   and `settings` component middleware. Modules keep their own configuration and
   operations; the host supplies only the shared presentation boundary.

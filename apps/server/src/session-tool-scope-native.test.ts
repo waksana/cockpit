@@ -31,8 +31,10 @@ test('native immutable tool scope: direct calls, MCP/model changes, role reload 
     GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: join(dirs.config!, 'gitconfig'), COCKPIT_PORT: '0',
   };
   const calls: Array<{ path: string; name: string; meta?: Record<string, unknown> }> = [];
+  const requests: string[] = [];
   const prompts: Array<{ tools?: Array<{ function: { name: string } }>; messages: unknown[] }> = [];
   const mcp = createServer(async (request, response) => {
+    requests.push(request.url!);
     let text = ''; for await (const chunk of request) text += chunk;
     const message = JSON.parse(text);
     if (!('id' in message)) { response.writeHead(202); response.end(); return; }
@@ -87,8 +89,17 @@ test('native immutable tool scope: direct calls, MCP/model changes, role reload 
       { id: 'foreground', name: 'Foreground', instructions: 'foreground.md',
         mcpServers: { 'fixture-service': { type: 'http', path: '/mcp', tools: ['read'] } } },
       { id: 'extra', name: 'Extra', mcpServers: { extra: { type: 'http', path: '/extra', tools: ['*'] } } },
+      { id: 'exclusive', name: 'Exclusive', resourcePolicy: 'exclusive', instructions: 'foreground.md',
+        skillDirectories: ['skills'],
+        mcpServers: { 'fixture-service': { type: 'http', path: '/mcp', tools: ['read'] } } },
+      { id: 'exclusive-empty', name: 'Exclusive empty', resourcePolicy: 'exclusive', instructions: 'foreground.md' },
+      { id: 'exclusive-empty-map', name: 'Exclusive empty map', resourcePolicy: 'exclusive', mcpServers: {} },
     ] });
     entries.push({ path: 'foreground.md', content: 'Synthetic foreground instructions remain appended without a Skill/view tool.' });
+    entries.push({ path: 'skills/owned/SKILL.md', content: '---\nname: owned-skill\ndescription: Synthetic role skill\n---\nOwned guidance' });
+    mkdirSync(join(dirs.home!, '.copilot/skills/unrelated'), { recursive: true });
+    writeFileSync(join(dirs.home!, '.copilot/skills/unrelated/SKILL.md'),
+      '---\nname: unrelated-skill\ndescription: Unrelated synthetic skill\n---\nNever discovered by the exclusive session.');
     const packagePath = join(root, 'fixture.tgz');
     writeFileSync(packagePath, archive(entries));
     const installed = await installLocalModule(packagePath, { trustLocalCode: true, hostRoot: dirs.cockpit });
@@ -235,6 +246,49 @@ test('native immutable tool scope: direct calls, MCP/model changes, role reload 
     assert.equal((await engine.roleReadiness(id, foreground)).ready, true);
     assert.equal((await engine.getMeta(id))?.roles?.length, 2);
     assert.equal((await engine.getMeta(id))?.appliedRoles?.length, 2);
+    await current.runtime.rpc.mcp.config.enable({ names: ['unrelated'] });
+    const beforeExclusiveRequests = requests.length;
+    const exclusive = await engine.newSession(dirs.work!, [{ moduleId: 'fixture', roleId: 'exclusive' }]);
+    const exclusiveCheck = async () => {
+      const scope = await engine!.getSessionToolScope(exclusive);
+      assert.equal(scope.configured, null, 'Role-derived restrictions are not a separately saved user tool scope');
+      assert.deepEqual(scope.applied, { builtins: [], mcpServers: [{ name: 'fixture-service', tools: ['read'] }] });
+      assert.deepEqual(scope.tools?.map(tool => tool.name), ['fixture-service-read']);
+      const mcp = await engine!.listSessionMcp(exclusive);
+      assert.deepEqual(mcp.servers.filter(server => server.enabled).map(server => server.name), ['fixture-service']);
+      assert.deepEqual((await engine!.listSessionSkills(exclusive)).filter(skill => skill.enabled).map(skill => skill.name), ['owned-skill']);
+      assert.equal((await engine!.roleReadiness(exclusive)).ready, true);
+    };
+    await exclusiveCheck();
+    assert.equal(requests.slice(beforeExclusiveRequests).includes('/global'), false, 'Unrelated MCP never starts for the exclusive role');
+    await assert.rejects(engine.toggleSessionMcp(exclusive, 'unrelated', true), /Exclusive role/);
+    await assert.rejects(engine.toggleSessionSkill(exclusive, 'unrelated-skill', true), /Exclusive role/);
+    await assert.rejects(engine.reloadSessionMcp(exclusive), /full idle session reload/);
+    const excluded = await engine.prepareSessionResources({ sessionId: exclusive, mcpServers: [{ name: 'unrelated' }] });
+    assert.equal(excluded.ok, false);
+    assert.match(excluded.error!, /Exclusive role/);
+    await handles.get(exclusive)!.sendAndWait({ prompt: 'Synthetic persisted exclusive role.' });
+    await assert.rejects(engine.forkSession(exclusive), /tool-scoped session/);
+    await engine.unload(exclusive);
+    await engine.load(exclusive);
+    await exclusiveCheck();
+    await engine.reload(exclusive);
+    await exclusiveCheck();
+    for (const roleId of ['exclusive-empty', 'exclusive-empty-map']) {
+      const before = requests.length;
+      const emptyRole = await engine.newSession(dirs.work!, [{ moduleId: 'fixture', roleId }]);
+      assert.deepEqual((await engine.getSessionToolScope(emptyRole)).tools, []);
+      assert.deepEqual((await engine.listSessionMcp(emptyRole)).servers.filter(server => server.enabled), []);
+      assert.equal(requests.slice(before).includes('/global'), false);
+      await handles.get(emptyRole)!.sendAndWait({ prompt: 'Synthetic empty-role persistence.' });
+      await engine.unload(emptyRole); await engine.load(emptyRole);
+      assert.deepEqual((await engine.listSessionMcp(emptyRole)).servers.filter(server => server.enabled), []);
+      assert.deepEqual((await engine.listSessionSkills(emptyRole)).filter(skill => skill.enabled), []);
+    }
+    await assert.rejects(engine.newSession(dirs.work!, [
+      { moduleId: 'fixture', roleId: 'exclusive' }, { moduleId: 'fixture', roleId: 'extra' },
+    ]), /selected alone/);
+    await current.runtime.rpc.mcp.config.disable({ names: ['unrelated'] });
     await current.runtime.rpc.mcp.config.add({ name: 'fixture.service',
       config: { type: 'http', url: `${mcpUrl}/alias`, tools: ['read'] } });
     const configuredBefore = await current.runtime.rpc.mcp.config.list();

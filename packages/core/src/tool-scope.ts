@@ -3,9 +3,36 @@ import type { ToolScope } from '@cockpit/protocol';
 import { messageOf, settled } from './async.ts';
 import type { SessionKernel } from './kernel.ts';
 import type { SessionHandle } from './session-handle.ts';
+import type { RoleAssembly } from './roles.ts';
 
 type ToolMetadata = Awaited<ReturnType<CopilotSession['rpc']['tools']['getCurrentMetadata']>>['tools'];
 type PreToolUseHandler = NonNullable<NonNullable<SessionConfig['hooks']>['onPreToolUse']>;
+
+export function roleToolScope(assembly: RoleAssembly | undefined, saved?: ToolScope): ToolScope | undefined {
+  if (assembly?.resourcePolicy !== 'exclusive') return saved;
+  return { builtins: [], mcpServers: Object.entries(assembly.config.mcpServers ?? {}).map(([name, config]) => ({
+    name, tools: (config.tools ?? []).filter(tool => !saved || saved.mcpServers.some(server =>
+      server.name === name && server.tools.includes(tool))),
+  })) };
+}
+export function assertRoleResource(st: SessionHandle, kind: 'skill' | 'mcp', name: string): void {
+  const assembly = st.roleAssembly;
+  if (assembly?.resourcePolicy !== 'exclusive') return;
+  const allowed = kind === 'skill' ? assembly.skills.some(skill => skill.name === name)
+    : Object.hasOwn(assembly.config.mcpServers ?? {}, name);
+  if (!allowed) throw new Error(`Exclusive role does not permit ${kind}: ${name}`);
+}
+export async function assertRoleResources(st: SessionHandle, sdk: CopilotSession): Promise<void> {
+  if (st.roleAssembly?.resourcePolicy !== 'exclusive') return;
+  const [mcp, skills] = await settled([sdk.rpc.mcp.list(), sdk.rpc.skills.list()] as const);
+  for (const server of mcp.servers) if (!['disabled', 'not_configured', 'stopped'].includes(server.status))
+    assertRoleResource(st, 'mcp', server.name);
+  for (const skill of skills.skills) if (skill.enabled) {
+    assertRoleResource(st, 'skill', skill.name);
+    if (!st.roleAssembly.skills.some(expected => expected.name === skill.name && expected.path === skill.path))
+      throw new Error(`Exclusive role Skill source differs: ${skill.name}`);
+  }
+}
 
 /** Source-qualified native filters; supported MCP raw names do not need normalization. */
 export function nativeToolScope(scope: ToolScope): ToolSet {

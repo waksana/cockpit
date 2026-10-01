@@ -7,7 +7,7 @@ import type {
   DirListing, ExitPlanModeAction, IntentResult, McpServerGlobal, McpServerSession, McpToggleResult, MetaResource,
   NativeChatPage, PanelItem, PanelSection, ResourcePreparationResult, RoleAdditionResult, RoleReadiness, RoleSelection,
   ScheduleEntry, ServerEvent, SessionBrief, SessionControlAction, SessionControlResult, SessionMeta, SessionPanels,
-  SessionPlan, SessionProjection, SessionResourcesPrepare, SessionUsage, SkillSession, Snapshot,
+  SessionPlan, SessionProjection, SessionResourcesPrepare, SessionUsage, SkillSession, Snapshot, PromptAccepted,
 } from '@cockpit/protocol';
 import { NativeChatRead, NativeRewindResult, ToolScope, SessionToolScope } from '@cockpit/protocol';
 import { OfficialRuntime } from './runtime.ts';
@@ -34,7 +34,7 @@ import { SessionControlService } from './session-controls.ts';
 import { SessionSettings } from './session-settings.ts';
 import { SessionDefaults, type SessionDefaultsStore } from './session-defaults.ts';
 import { listDir } from './list-dir.ts';
-import { assertScopeToolMetadata } from './tool-scope.ts';
+import { assertScopeToolMetadata, assertRoleResources } from './tool-scope.ts';
 
 export { boundedMap } from './async.ts';
 export type { EngineRuntime } from './kernel.ts';
@@ -43,6 +43,8 @@ export type { NativeObservation } from './native-events.ts';
 // Parent transports can expose these limits without inventing runtime support.
 export const coreCapabilities = {
   toolScopeVersion: 1,
+  roleResourcePolicyVersion: 1,
+  promptOriginVersion: 1,
   forkSession: {
     native: true, source: 'loaded-idle', boundary: 'before-root-user-event',
     schedules: false, workspaceIsolation: false, childLoaded: false,
@@ -120,6 +122,15 @@ export class Engine {
   /** Live notifications only; optional types are matched before copying event payloads. */
   onNativeEvent(handler: (event: NativeObservation) => void | Promise<void>, options?: { types: readonly string[] }): () => void {
     return this.events.onNativeEvent(handler, options);
+  }
+  onPromptAccepted(handler: (event: PromptAccepted) => void | Promise<void>): () => void {
+    const failed = (error: unknown) => this.k.log('prompt acceptance observer failed', { error: messageOf(error) });
+    const listener = (event: PromptAccepted) => {
+      try { void Promise.resolve(handler(structuredClone(event))).catch(failed); }
+      catch (error) { failed(error); }
+    };
+    this.k.bus.on('prompt-accepted', listener);
+    return () => { this.k.bus.off('prompt-accepted', listener); };
   }
 
   onActivitySettled(handler: () => void): () => void {
@@ -224,7 +235,7 @@ export class Engine {
   async forkSession(id: string, toEventId?: string, name?: string): Promise<{ sessionId: string }> {
     const st = await this.k.state(id);
     return this.k.transition(st, async () => {
-      if (await this.k.roles?.readToolScope?.(id)) {
+      if (st.toolScope || await this.k.roles?.readToolScope?.(id)) {
         throw new CockpitError('UNSUPPORTED', 'Forking a tool-scoped session is unsupported; scope must not be silently widened');
       }
       const sdk = st.sdk;
@@ -281,8 +292,8 @@ export class Engine {
       } };
       if (create) st.creationSubmitted = true;
       const sdk = await this.k.untilFatal(() => create
-        ? this.k.runtime.createSession(config, assembled.toolScope)
-        : this.k.runtime.resumeSession(st.id, config, assembled.toolScope));
+        ? this.k.runtime.createSession(config, assembled.toolScope, assembled.assembly?.resourcePolicy === 'exclusive')
+        : this.k.runtime.resumeSession(st.id, config, assembled.toolScope, assembled.assembly?.resourcePolicy === 'exclusive'));
       this.k.assertAvailable();
       if (sdk.sessionId !== st.id) {
         const action = create ? 'creation' : 'resume';
@@ -306,6 +317,7 @@ export class Engine {
         try {
           const { tools } = await this.k.withSession(st, sdk, () => sdk.rpc.tools.getCurrentMetadata());
           assertScopeToolMetadata(st.toolScope, tools);
+          await this.k.withSession(st, sdk, () => assertRoleResources(st, sdk));
         } catch (error) {
           try { await this.k.close(st); }
           catch (closeError) { throw new AggregateError([error, closeError], 'Tool scope validation and native close failed', { cause: closeError }); }
@@ -505,8 +517,9 @@ export class Engine {
   listDir(path?: string): Promise<DirListing> { return listDir(path); }
 
   // Turn input and controls
-  prompt(id: string, text: string, mode?: 'enqueue' | 'immediate', attachments?: RuntimeAttachment[]): Promise<IntentResult<'prompt'>> {
-    return this.controls.prompt(id, text, mode, attachments);
+  prompt(id: string, text: string, mode?: 'enqueue' | 'immediate', attachments?: RuntimeAttachment[],
+    origin?: PromptAccepted['origin']): Promise<IntentResult<'prompt'>> {
+    return this.controls.prompt(id, text, mode, attachments, origin);
   }
 
   cancel(id: string): Promise<void> { return this.controls.cancel(id); }

@@ -7,11 +7,16 @@ import type {
   NativeChatEvent,
   ServerEvent,
   RoleSelection,
+  PromptAccepted,
 } from './contract.ts';
 
 export * from './contract.ts';
 
 export interface ModuleHostApi {
+  /** Role-only native resource discovery and connection policy. */
+  readonly roleResourcePolicyVersion?: 1;
+  /** Body-free native prompt acceptance observations with trusted Host ingress class. */
+  readonly promptOriginVersion?: 1;
   /** Atomic role permission and durable saved-selection notifications. */
   readonly roleAssignmentVersion?: 1;
   /** Bounded, passive native session metadata directory. */
@@ -106,6 +111,8 @@ export interface ModuleBackendContext {
 
 export interface ModuleBackend {
   routes: readonly ModuleRoute[];
+  /** Live acceptance facts only. Errors do not undo or retry an accepted native send. */
+  promptAccepted?(event: PromptAccepted): void | Promise<void>;
   roleAssignments?: {
     /** Absent means allow. Called at mutation time, not just by a UI preflight. */
     permit?(assignment: RoleAssignment, signal: AbortSignal):

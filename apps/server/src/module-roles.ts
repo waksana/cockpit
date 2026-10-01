@@ -219,7 +219,7 @@ export class ModuleRoles implements RoleProvider {
     const sections: string[] = [];
     const sources: SessionInstructions['sources'] = [];
     const modules = [...this.installations()].sort((a, b) => a.manifest.id.localeCompare(b.manifest.id));
-    for (const installation of modules) {
+    for (const installation of assembly?.resourcePolicy === 'exclusive' ? [] : modules) {
       const { manifest, root } = installation;
       if (!manifest.instructions) continue;
       const text = await verifiedResource(installation, manifest.instructions);
@@ -324,6 +324,7 @@ export class ModuleRoles implements RoleProvider {
 
   async assemble(sessionId: string, selections: RoleSelection[]): Promise<RoleAssembly> {
     const roles: SessionRole[] = [];
+    let resourcePolicy: 'exclusive' | undefined;
     const skills = new Map<string, { name: string; path: string; hash: string; module: ModuleSource }>();
     const directories = new Set<string>();
     const instructions = new Map<string, { headers: string[]; text: string }>();
@@ -336,6 +337,15 @@ export class ModuleRoles implements RoleProvider {
       const installation = this.installations().find(module => module.manifest.id === selection.moduleId);
       const role = installation?.manifest.roles?.find(role => role.id === selection.roleId);
       if (!installation || !role) throw new Error(`Module role unavailable: ${selection.moduleId}/${selection.roleId}`);
+      if (role.resourcePolicy === 'exclusive') {
+        if (selected.length !== 1) throw new Error('An exclusive resource role must be selected alone');
+        resourcePolicy = role.resourcePolicy;
+        for (const server of Object.values(role.mcpServers ?? {})) {
+          if (server.tools.some(name => !/^[A-Za-z0-9_]+$/.test(name))) {
+            throw new Error('Exclusive role MCP tools must use explicit supported raw names, not wildcards');
+          }
+        }
+      }
       const { manifest, root } = installation;
       const module = { id: manifest.id, name: manifest.name };
       const contribute = (previous?: ModuleSource): ModuleSource => ({
@@ -393,7 +403,8 @@ export class ModuleRoles implements RoleProvider {
       skillDirectories: [...directories], mcpServers: servers,
     } : {};
     return { roles, config, skills: [...skills.values()], mcpSources, instructionSources,
-      fingerprint: createHash('sha256').update(JSON.stringify(config)).digest('hex') };
+      ...(resourcePolicy ? { resourcePolicy } : {}),
+      fingerprint: createHash('sha256').update(JSON.stringify({ config, resourcePolicy })).digest('hex') };
   }
 }
 

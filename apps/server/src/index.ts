@@ -25,6 +25,7 @@ import { GracefulShutdown } from './shutdown.ts';
 import { registerChatStream } from './chat-stream.ts';
 import { serviceIdentity } from './identity.ts';
 import { ModuleHost } from './module-host.ts';
+import { promptOrigin, browserPromptOrigin } from './prompt-origin.ts';
 import { guardModuleHostStartup, type ModuleStartupGuard } from './module-lifetime.ts';
 import { HostSessionDefaults } from './session-defaults.ts';
 
@@ -336,9 +337,10 @@ const handlers: IntentHandlers = {
   'session/resources-prepare': b => engine.prepareSessionResources(b),
   'session/fork': (b) => engine.forkSession(b.sessionId, b.toEventId, b.name),
   'session/chat': (b, signal) => engine.chat(b, signal),
-  prompt: async (b) => b.attachments === undefined
-    ? engine.prompt(b.sessionId, b.text, b.mode)
-    : engine.prompt(b.sessionId, b.text, b.mode, b.attachments),
+  prompt: async (b) => promptOrigin.getStore() && promptOrigin.getStore() !== 'api'
+    ? engine.prompt(b.sessionId, b.text, b.mode, b.attachments, promptOrigin.getStore())
+    : b.attachments === undefined ? engine.prompt(b.sessionId, b.text, b.mode)
+      : engine.prompt(b.sessionId, b.text, b.mode, b.attachments),
   cancel: async (b) => {
     await engine.cancel(b.sessionId);
     return { ok: true };
@@ -536,7 +538,8 @@ app.post('/intent/*', async (req, reply) => {
     reply.raw.on('close', cancel);
   }
   try {
-    return await dispatch(name, req.body, controller.signal);
+    return await promptOrigin.run(browserPromptOrigin(req.headers, isAllowedOrigin(req.headers)),
+      () => dispatch(name, req.body, controller.signal));
   } catch (e) {
     if (controller.signal.aborted && e === controller.signal.reason) {
       req.log.debug({ intent: name }, 'client disconnected during native read');
@@ -561,7 +564,7 @@ export async function callModuleIntent<K extends IntentName>(name: K, body: Inte
   const state = shutdown.snapshot();
   if (state.phase !== 'running') throw new Error('Host is shutting down');
   const release = shutdown.retain();
-  try { return await dispatch(name, body); }
+  try { return await promptOrigin.run('module', () => dispatch(name, body)); }
   finally { release(); }
 }
 

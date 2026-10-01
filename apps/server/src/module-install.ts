@@ -33,6 +33,7 @@ export const manifestSchema = z.object({
   roles: z.array(z.object({
     id: idSchema, name: z.string().trim().min(1).max(200), description: z.string().max(4000).optional(),
     instructions: pathSchema.optional(), skillDirectories: z.array(pathSchema).max(64).optional(),
+    resourcePolicy: z.literal('exclusive').optional(),
     mcpServers: z.record(idSchema, z.object({
       type: z.literal('http'),
       path: z.string().refine(value => value.startsWith('/') && (() => { try { safeModulePath(value.slice(1)); return true; } catch { return false; } })(), 'Invalid module API path'),
