@@ -143,6 +143,17 @@ baseline for review — compare a PR's artifact with `main`'s. Screenshots are n
 pixel-compared, so fonts or Chromium updates do not fail CI. The job never contacts
 a real service or session; it is not native, iOS or production evidence.
 
+Classic loading indicators rotate the existing Lucide arc inside a stationary
+SVG viewport, avoiding Safari wobble from rotating the HTML wrapper. The Chat Lab
+smoke case `loading arcs keep stationary viewports` exercises session activity,
+held directory/role loading and tool status in desktop/narrow layouts and both
+motion preferences. It varies icon sizes and font line heights, checks full-turn
+geometry and ancestor scroll extents, then samples the running animation.
+For an isolated Lab with loading indicators visible, the same check is available
+through `await import('/src/dev/spinner-checks.ts').then(m => m.runSpinnerChecks())`.
+Browser geometry is not a substitute for actual painted-frame review on macOS
+Safari; do not center the incomplete arc using its own bounding box.
+
 ## Targeted Web suites
 
 Global/session menus (one Web runner invocation): `src/lib/moduleRuntime.test.ts`,
