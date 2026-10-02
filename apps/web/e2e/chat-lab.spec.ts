@@ -67,6 +67,50 @@ const componentScenes: [scene: string, ready: string][] = [
   ['decision-history', '.chat-decision-card[data-state="done"]'],
 ];
 
+test('session-list descriptions preserve native rows and wrap without nested controls', async ({ page }, testInfo) => {
+  const plainGuard = await open(page, 'scene=sidebar');
+  const row = page.locator('[data-session-id="demo-roles"]');
+  const plain = page.locator('[data-session-id="demo-plain"]');
+  await expect(row).toBeVisible();
+  const baseline = await plain.boundingBox();
+  await expect(row.locator('.session-row-description')).toHaveCount(0);
+  await expectHealthy(page, plainGuard);
+  const guard = await open(page, 'scene=sidebar&description=1');
+  const description = row.locator('.session-row-description');
+  await expect(description).toContainText('Example Synthetic module description');
+  await settle(page);
+  expect((await plain.boundingBox())!.height).toBe(baseline!.height);
+  await expect(plain.locator('.session-row-description')).toHaveCount(0);
+  await expect(row.locator('button, a, input, [tabindex]')).toHaveCount(0);
+  const geometry = await row.evaluate(element => {
+    const title = element.querySelector<HTMLElement>('.session-row-title')!;
+    const time = element.querySelector<HTMLElement>('.dialog-time')!;
+    const description = element.querySelector<HTMLElement>('.session-row-description')!;
+    const details = element.querySelector<HTMLElement>('.session-row-details')!;
+    const t = title.getBoundingClientRect(), s = time.getBoundingClientRect();
+    const d = description.getBoundingClientRect(), b = details.getBoundingClientRect();
+    return {
+      descriptionBelowTitle: d.top >= Math.max(t.bottom, s.bottom),
+      detailsBelowDescription: b.top >= d.bottom,
+      fullWidth: Math.abs(d.left - b.left) < 1 && Math.abs(d.right - b.right) < 1,
+      textFits: description.scrollWidth <= description.clientWidth + 1
+        && description.scrollHeight <= description.clientHeight + 1,
+      lines: d.height / parseFloat(getComputedStyle(description).lineHeight),
+    };
+  });
+  expect(geometry).toMatchObject({
+    descriptionBelowTitle: true, detailsBelowDescription: true, fullWidth: true, textFits: true,
+  });
+  expect(geometry.lines).toBeGreaterThan(1);
+  await row.focus();
+  await page.keyboard.press('Shift+F10');
+  await expect(page.getByRole('menu')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(row).toBeFocused();
+  await snapshot(page, testInfo, 'session-list-description');
+  await expectHealthy(page, guard);
+});
+
 for (const reducedMotion of ['no-preference', 'reduce'] as const) {
   test(`loading arcs keep stationary viewports (${reducedMotion})`, async ({ page }) => {
     const guard = await open(page, 'scene=sidebar');

@@ -107,6 +107,16 @@ const fixtures = [
     import type * as React from 'react';
     import type { ModuleFrontend, ModuleGlobalComponent, ModulePage, ModuleNavigation, LegacyModuleFrontendContext, ModuleFrontendContext, ModuleAsset, ComposerProps, SettingsProps, ModuleComponentMiddleware, DraftOwnerOptions, DraftOwner, DraftTransportOutcome } from '@waksana/cockpit-module-sdk/frontend';
     declare const frontend: ModuleFrontendContext;
+    const sessionListItemVersion: 1 | undefined = frontend.sessionListItemVersion;
+    const SessionListItem: React.ComponentType<import('@waksana/cockpit-module-sdk/frontend').SessionListItemProps> =
+      frontend.components.get('sessionListItem');
+    const item: import('@waksana/cockpit-module-sdk/frontend').SessionListItemProps = {
+      sessionId: 'synthetic', title: 'Session name', time: 'now', details: 'directory',
+      description: 'Module-owned text', onClick: event => event.currentTarget.focus(),
+    };
+    const itemMiddleware: import('@waksana/cockpit-module-sdk/frontend').LegacyModuleComponentMiddleware = {
+      id: 'description', boundary: 'sessionListItem', wrap: Base => Base,
+    };
     declare const asset: ModuleAsset;
     declare const props: ComposerProps;
     const children: React.ReactNode = props.children;
@@ -160,6 +170,8 @@ const fixtures = [
     navigation.navigate(page.id);
     navigation.home();
     declare const legacy: LegacyModuleFrontendContext;
+    const legacyItemVersion: 1 | undefined = legacy.sessionListItemVersion;
+    void [sessionListItemVersion, legacyItemVersion, SessionListItem, item, itemMiddleware];
     // @ts-expect-error Legacy activation does not receive page navigation.
     legacy.navigation.home();
     // @ts-expect-error Legacy activation does not receive complete message presentation.

@@ -381,7 +381,7 @@ if (scene === 'dialog-focus') {
   if (scene === 'sidebar') {
     const { createSidebarModuleFixture } = await import('./sidebar-fixtures');
     const { ModuleRuntimeProvider } = await import('../components/ModuleComponents');
-    const runtime = createSidebarModuleFixture();
+    const runtime = createSidebarModuleFixture(new URLSearchParams(location.search).get('description') === '1');
     await runtime.start();
     window.addEventListener('pagehide', () => runtime.stop(), { once: true });
     root.render(<ModuleRuntimeProvider runtime={runtime}>{app}</ModuleRuntimeProvider>);

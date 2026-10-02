@@ -702,6 +702,19 @@ export interface SettingsProps extends React.HTMLAttributes<HTMLElement> {
   readonly children: React.ReactNode;
 }
 
+/**
+ * The real session-list selection button. Preserve Base and its DOM/event props,
+ * title, time and details. Description is noninteractive phrasing content only;
+ * actions belong in the session menu, never inside this button.
+ */
+export interface SessionListItemProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+  readonly sessionId: string;
+  readonly title: string;
+  readonly time: string;
+  readonly details: React.ReactNode;
+  readonly description?: React.ReactNode;
+}
+
 export interface ModuleComponentProps {
   message: MessageProps;
   messageList: MessageListProps;
@@ -710,6 +723,7 @@ export interface ModuleComponentProps {
   conversationHeader: ConversationHeaderProps;
   conversationTranscript: ConversationTranscriptProps;
   sessionStatus: SessionStatusProps;
+  sessionListItem: SessionListItemProps;
   composer: ComposerProps;
   composerEditor: ComposerEditorProps;
   composerInput: ComposerInputProps;
@@ -791,6 +805,8 @@ export interface ModuleFrontendContext {
   readonly settingsVersion: 1;
   /** Session-independent components in the host React tree; absent on older hosts. */
   readonly globalComponentVersion?: 1;
+  /** Real session-list item middleware, available to both Web v2 and v3. */
+  readonly sessionListItemVersion?: 1;
   /** Read-only current-window text projection. Check independently of Web API v2. */
   readonly chatWindowVersion: 1;
   /** Middleware around the actual controlled textarea, independently of the input row. */

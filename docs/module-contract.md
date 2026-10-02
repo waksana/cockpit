@@ -1195,7 +1195,7 @@ Each `ChatWindowMessage` projects only `id`, `origin`, `role`, `text`, `complete
 turn streaming or known-incomplete content into final content. `text` is existing message content only; thoughts, tool calls, attachments, private store, native session handles, and structured question bodies are not exported. Snapshots are frozen, stable by reference when unchanged, and subscriptions are revoked with
 the module scope.
 ### 6.2 Component middleware
-Boundaries are: `message`, `messageList`, `chatMessage`, `conversationFrame`, `conversationHeader`, `conversationTranscript`, `sessionStatus`, `composer`, `composerEditor`, `composerInput`, `button`, `attachment`, `managementHeader`, `managementDetailHeader`, and `settings`. They correspond to real existing host components: visible message body/current ask question; reading viewport and complete ordinary conversation row; conversation composition; concurrent session activity summary; actual composer card; input row;
+Boundaries are: `message`, `messageList`, `chatMessage`, `conversationFrame`, `conversationHeader`, `conversationTranscript`, `sessionStatus`, `sessionListItem`, `composer`, `composerEditor`, `composerInput`, `button`, `attachment`, `managementHeader`, `managementDetailHeader`, and `settings`. They correspond to real existing host components: visible message body/current ask question; reading viewport and complete ordinary conversation row; conversation composition; concurrent session activity summary; session-list selection button; actual composer card; input row;
 controlled textarea; historical attachment row; management headers; and shared preference content.
 
 Middleware sorts by `(order ?? 0, moduleId, id)` with lower values outermost. The host composes only on registration/base changes, not every render. Enhancers must preserve inherited props, children, refs, actions, native identity, scroll and a11y anchors, and layout semantics. Composition and error boundaries add no
@@ -1209,6 +1209,41 @@ components through the same lookup; middleware calls its received `Base`, never
 recursively looks up its own boundary. Unrelated rerenders do not call `wrap`.
 An actual chain change can still remount its affected subtree; durable draft and
 upload/recording state belongs in controllers/services, not middleware hooks.
+
+<a id="session-list-item"></a>
+#### Session-list item
+
+Check `context.sessionListItemVersion === 1` before registering middleware for
+`sessionListItem`. Both legacy Web v2 and Web v3 receive this independent
+capability; v3 also exposes the component through `components.get`. Unsupported
+boundary names fail activation, rather than registering invisible contributions.
+The deployment descriptor advertises `sessionListItem.v1`.
+
+`SessionListItemProps` extends `React.ButtonHTMLAttributes<HTMLButtonElement>`
+with `sessionId: string`, `title: string`, `time: string`,
+`details: React.ReactNode` and optional `description: React.ReactNode`.
+Base is the actual selection button, not an empty slot or a new navigation
+surface. It owns the existing row classes, title/time layout and details line;
+`className` extends the row classes. Preserve all received props and pass the
+original title, time and details back to Base. The host retains selection,
+long-press, context menu, keyboard handlers, active/unloaded state and native
+role/cwd/activity content. The component reads no module or native business data.
+
+Description renders in a full-width `span` between title/time and details, with
+wrapping and no reserved row when omitted, null or false. Supply only
+noninteractive phrasing content: spans, text and decorative icons; never buttons,
+links, inputs, dialogs or focusable descendants. The description participates in
+the button's accessible name. Keep full text available on narrow screens, not
+just in a hover tooltip. Business state, icons, badges and titles belong to the
+module, not host session status. Compose any inherited description instead of
+discarding peer content; do not reproduce Base, inspect host DOM or use private CSS.
+Use a session menu action for independent operations and, when needed, separately
+capability-gated global components for module dialogs.
+
+The [runnable example](../apps/web/src/dev/module-session-list-example.ts) uses
+only host React and public surfaces. Run
+`/chat-lab.html?scene=sidebar&description=1` in the isolated Chat Lab to compare a
+described row with unchanged native rows.
 
 Message display identity belongs to its owner/local ID; optional `origin`
 identifies a real native source. `decisionOrigin` separately carries a real

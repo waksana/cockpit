@@ -31,6 +31,7 @@ Current Web exposes these independent frontend capabilities:
 | `menuVersion: 1` | Declarative global/session menu actions. Check separately. |
 | `settingsVersion: 1` | Component middleware for module-owned sections in the shared Settings dialog. |
 | `globalComponentVersion: 1` | Session-independent components in the host React tree, including module-owned dialogs. |
+| `sessionListItemVersion: 1` | Real session-list selection button and noninteractive description, available to Web v2 and v3. |
 | `pageVersion: 1` | Declarative namespaced pages and narrow module/home navigation in the existing SPA (Web v3 only). |
 | `chatWindowVersion: 1` | Read-only current-window text projection; check before `state.chatWindow`. |
 | `composerInputVersion: 1` | Middleware around the actual controlled textarea. |
@@ -82,6 +83,15 @@ page and navigate to it from an existing menu action. It replaces the current
 route rather than covering Chat with a modal, portal or second application.
 Use the same public components and CSS; the page owns its business layout, not
 another router or host shell.
+
+For module-owned text below a session name, wrap the real
+[`sessionListItem`](module-contract.md#session-list-item) after checking its
+capability. Preserve Base's props, title/time and native details; compose its
+`description` with noninteractive phrasing content, using public badges/icons
+and module-prefixed business styles only. This is still one session-selection
+button, not a second action or a mount for dialogs. The
+[example](../apps/web/src/dev/module-session-list-example.ts) and isolated
+`/chat-lab.html?scene=sidebar&description=1` exercise wrapping without private CSS.
 
 For UI that must exist on the empty homepage and survive navigation/menu closure,
 use [global components](module-contract.md#global-components), not a hidden menu icon,

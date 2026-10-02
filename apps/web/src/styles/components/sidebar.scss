@@ -77,6 +77,18 @@
 
   &.active { background-color: var(--host-color-selected); }
 
+  &:has(> .session-row-description) {
+    grid-template-areas: 'title time' 'description description' 'details details';
+  }
+  .session-row-description {
+    grid-area: description;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    font-size: var(--host-text-meta);
+    line-height: var(--host-leading-ui);
+    color: var(--host-color-muted);
+  }
+
   // Unloaded = not resident in memory. Dim the row's identity/content so
   // "what's loaded" reads at a glance, replacing the old "空闲" status word.
   // Attention badges (.dialog-meta) stay full strength — an unloaded session

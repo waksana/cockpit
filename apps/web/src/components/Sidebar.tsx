@@ -11,7 +11,7 @@ import { useLongPress } from '../lib/longpress';
 import { filterSessions } from '../pages/session-list';
 import { StateNotice } from './StateNotice';
 import { RegionErrorBoundary } from './ErrorBoundary';
-import { SessionStatus } from './ModuleComponents';
+import { SessionListItem, SessionStatus } from './ModuleComponents';
 import { RoleBadge } from './ModuleLabel';
 import { useCockpit } from '../net/store';
 
@@ -40,10 +40,12 @@ function SessionRow({ s, active, actions, connected }: {
   const lp = useLongPress(actions.onMenu, firedRef);
 
   return (
-    <button
+    <SessionListItem
       type="button"
-      className={`chatlist-chat ck-button${active ? ' active' : ''}${s.loaded ? '' : ' is-unloaded'}`}
-      data-session-id={s.sessionId}
+      className={[active && 'active', !s.loaded && 'is-unloaded'].filter(Boolean).join(' ')}
+      sessionId={s.sessionId}
+      title={s.title}
+      time={relTime(s.lastActivity)}
       tabIndex={0}
       aria-current={active ? true : undefined}
       aria-haspopup="menu"
@@ -62,10 +64,7 @@ function SessionRow({ s, active, actions, connected }: {
       onPointerMove={lp.onPointerMove}
       onPointerUp={lp.onPointerUp}
       onPointerCancel={lp.onPointerCancel}
-    >
-      <span className="session-row-title" title={s.title}>{s.title}</span>
-      <span className="dialog-time">{relTime(s.lastActivity)}</span>
-      <span className="session-row-details">
+      details={<>
         {!!s.roles?.length && <span className="dialog-roles session-role-badges">
           {s.roles.map(role => <RoleBadge key={`${role.moduleId}/${role.roleId}`} role={role} session={s} connected={connected} />)}
         </span>}
@@ -75,8 +74,8 @@ function SessionRow({ s, active, actions, connected }: {
           activityRefreshing={activityRefreshing}
           activityDisplay={s.activityDisplay}
           activity={s.activity} needsDecision={!!(s.ask || s.planRequest || s.elicitation)} />
-      </span>
-    </button>
+      </>}
+    />
   );
 }
 

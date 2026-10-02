@@ -45,7 +45,7 @@ export function hostProduct(repository) {
   }
   capabilities.push(...literalVersions(frontend, 'apiVersion').map(version => `frontend-api.v${version}`));
   capabilities.push(...literalVersions(frontend, 'draftSubmissionVersion').map(version => `draftSubmission.v${version}`));
-  for (const field of ['ui', 'uiSurface', 'menu', 'settings', 'globalComponent', 'chatWindow', 'composerInput', 'draftLifecycle', 'publicComponents', 'draftOwner', 'page', 'messagePresentation', 'conversationPresentation']) {
+  for (const field of ['ui', 'uiSurface', 'menu', 'settings', 'globalComponent', 'sessionListItem', 'chatWindow', 'composerInput', 'draftLifecycle', 'publicComponents', 'draftOwner', 'page', 'messagePresentation', 'conversationPresentation']) {
     capabilities.push(`${field}.v${literalVersion(frontend, `${field}Version`)}`);
   }
   return { kind: 'host', api, capabilities };
