@@ -175,13 +175,26 @@ fields; `omittedFields` and `omittedAttachments` disclose omissions. Long paths
 are omitted, never truncated into misleading references. No files, blob bytes,
 image bytes or attachment selections are fetched.
 
-Cursors are opaque, process-authenticated, bound to session/source/direction and
-this fixed view/filter version. Limits may change on continuation. Host restart
-expires them. Partial native pages are reread from their original cursor and
+Cursors are caller-owned, versioned position descriptions (`ct2.` plus base64url
+JSON), bound to session/source/direction and this fixed view/filter version.
+Save and pass them unchanged; limits may change on continuation. They are not
+authorization credentials or server-maintained read state. Normal authentication,
+scope and session checks apply on every request, even when a caller constructs a
+description. Strict schemas bound every field, native cursor, index and body
+offset; unknown fields and incompatible versions fail. No filesystem paths are
+resolved from positions. Ordinary Host restart does not expire them.
+Partial native pages are reread from their original cursor and
 checked against their full-page hash before using the saved index/body offset.
 Native expiry, nonadvancement and changed partial pages fail explicitly without
 fallback. Appending to an unanchored latest partial page can also invalidate it;
-discard that page's fragments and explicitly resynchronize. Between complete
+explicitly repeat the original `since` without `cursor` to recover that incremental
+range under the same per-call budgets, deduplicating `eventId`/offset fragments.
+Do not advance `since` until the entire range is delivered. Fragment sizes can
+change on replay: use offsets to reconcile overlapping text rather than blindly
+concatenating fragments. If the text itself changed, invalidate the old assembly
+and reread it. Initial historical pagination has no business checkpoint: restart
+that explicitly selected historical traversal and deduplicate, not an automatic
+recent-only reset. Between complete
 pages, history invalidation follows the SDK's native cursor contract; this is
 not a transaction or a global history snapshot/version service. No claim is
 made to detect an upstream mutation that the native cursor API does not expose.
@@ -197,7 +210,7 @@ for later increments. This reader does not wait, poll or load sessions.
 The SDK has no passive tail snapshot or public event-ID seek. Backward cursors
 cannot become forward cursors, nor can live positions be relabeled persisted.
 Instead, the text API supports a generic **backward incremental range** with
-`since`: an authenticated checkpoint records one actual native boundary event
+`since`: a caller-owned checkpoint records one actual native boundary event
 and its hash, not a stored transcript, numeric seek or timestamp ordering.
 
 1. Establish a baseline with `{"session_id":"S","source":"persisted","limit":16}`.
@@ -226,13 +239,29 @@ bound to the exact source/session. A missing or changed anchor rejects the
 range (including rewind/deletion), never succeeds with an empty update.
 An initially empty session's checkpoint explicitly covers its empty baseline.
 
-Persisted checkpoints remain usable after the source session unloads or the
-native child runtime restarts, while the host signer stays alive. **Host process
-restart expires all text cursors/checkpoints**: consumers must explicitly
-establish a new recent baseline; automatic catch-up across that restart is not
-provided. No private index, persisted key/state or implicit session resume is
-introduced. Loaded consumers can instead use the separate live bootstrap /
+Persisted checkpoints remain usable after the source session unloads, the
+native child runtime restarts, or the **complete Host process exits and a new
+process opens the same native persistence**. The agent decides when a range is
+processed; Assistant or another caller persists the position. The Host stores
+no per-caller checkpoint, read table, signing key, index or transcript mirror.
+Native cursor expiry and history mutation are separate from Host lifetime:
+recover a partial incremental range with its original `since` as above; a
+missing/changed checkpoint anchor requires an explicit caller decision about
+the history gap, never a success-shaped empty update or recent-only reset.
+The SDK does not supply global snapshot isolation or stable event-ID seek.
+Loaded consumers can instead use the separate live bootstrap /
 forward `liveCursor` path, which is not a passive checkpoint.
+
+Legacy v1 tokens carried a random process-key signature. A lost key cannot be
+recovered, and the new Host does **not** authenticate that old signature.
+For one-time migration it accepts the strictly validated legacy payload as
+caller-supplied coordinates, binds its original query, and checks the actual
+native anchor/page exactly as for v2. Successful reads emit only v2 positions.
+Keep the original legacy `since` during that range's pagination, then save the
+returned v2 checkpoint after processing the range. This can recover unchanged
+history without manufacturing authentication or silently selecting a new
+baseline. Invalid legacy shape, missing/changed anchors or unusable native
+cursors fail with the same explicit recovery requirements.
 
 These are **output and RPC bounds**, not upstream event-body memory/time bounds:
 the SDK can materialize huge native events before host filtering. Large-message

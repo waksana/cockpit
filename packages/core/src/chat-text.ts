@@ -1,22 +1,18 @@
-import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import {
-  ChatTextRead, type ChatTextMessage, type ChatTextPage,
+  ChatTextRead, ChatTextPosition, type ChatTextMessage, type ChatTextPage,
   NativeChatRead, type NativeChatEvent, type NativeChatPage,
 } from '@cockpit/protocol';
 import { conflict, invalid } from './errors.ts';
 
 const PAGE_EVENTS = 16;
-const key = randomBytes(32);
 type Anchor = { id: string; version: string };
-type Checkpoint = { kind: 'checkpoint'; query: string; anchor: Anchor | null };
-type Position = {
-  kind: 'page'; query: string; native?: string; version?: string; index: number; offset: number;
-  head?: Anchor | null; until?: Anchor | null;
-};
+type Checkpoint = Extract<ChatTextPosition, { kind: 'checkpoint' }>;
+type Position = Extract<ChatTextPosition, { kind: 'page' }>;
 
-function identity(query: ChatTextRead): string {
+function identity(query: ChatTextRead, format = 2): string {
   return createHash('sha256').update(JSON.stringify([
-    'text-v1-primary', query.sessionId, query.source, query.direction, query.since,
+    `text-v${format}-primary`, query.sessionId, query.source, query.direction, query.since,
   ])).digest('hex');
 }
 
@@ -25,20 +21,37 @@ function encode(position: Position | Checkpoint): string {
     throw conflict('TEXT_CURSOR_TOO_LARGE: unsupported native cursor size.');
   }
   const body = Buffer.from(JSON.stringify(position)).toString('base64url');
-  return `${body}.${createHmac('sha256', key).update(body).digest('base64url')}`;
+  return `ct2.${body}`;
 }
 
 function decode(cursor: string, query: ChatTextRead): Position | Checkpoint {
-  const [body, signature, extra] = cursor.split('.');
-  const expected = createHmac('sha256', key).update(body ?? '').digest('base64url');
-  if (!body || !signature || extra || !/^[A-Za-z0-9_-]{43}$/.test(signature)
-    || !timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) {
-    throw conflict('TEXT_CURSOR_INVALID: invalid or expired host cursor; explicitly restart without cursor.');
+  const legacy = !cursor.startsWith('ct2.');
+  const [legacyBody, legacySignature, extra] = cursor.split('.');
+  if (legacy && (!legacyBody || !legacySignature || extra || !/^[A-Za-z0-9_-]{43}$/.test(legacySignature))) {
+    throw invalid('TEXT_POSITION_FORMAT: unsupported position format. No read was performed.');
   }
-  // Only this process can authenticate these internally authored positions.
-  const position = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as Position | Checkpoint;
-  if (position.query !== identity(query)) throw invalid('Text cursor belongs to another session/source/direction/view.');
-  return position;
+  const body = legacy ? legacyBody! : cursor.slice(4);
+  if (!/^[A-Za-z0-9_-]+$/.test(body)) throw invalid('TEXT_CURSOR_INVALID: malformed position encoding.');
+  const decoded = Buffer.from(body, 'base64url');
+  if (decoded.toString('base64url') !== body) throw invalid('TEXT_CURSOR_INVALID: noncanonical position encoding.');
+  let json: unknown;
+  try { json = JSON.parse(decoded.toString('utf8')); }
+  catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    throw invalid('TEXT_CURSOR_INVALID: malformed position JSON.');
+  }
+  // Legacy signatures cannot survive their original host. Import their payload
+  // only as caller-owned coordinates, under the same native validation as v2.
+  if (legacy && json && typeof json === 'object' && !Array.isArray(json) && !('format' in json)) {
+    json = { ...json, format: 2 };
+  }
+  const parsed = ChatTextPosition.safeParse(json);
+  if (!parsed.success) throw invalid('TEXT_CURSOR_INVALID: invalid or incompatible position schema.');
+  const position = parsed.data;
+  if (position.query !== identity(query, legacy ? 1 : 2)) {
+    throw invalid('Text cursor belongs to another session/source/direction/view.');
+  }
+  return { ...position, query: identity(query) };
 }
 
 function anchor(event: NativeChatEvent): Anchor {
@@ -109,7 +122,10 @@ export async function readChatText(
   const since = query.since ? decode(query.since, { ...query, since: undefined }) : undefined;
   if (since?.kind === 'page') throw invalid('Use a returned checkpoint as since, not a page cursor.');
   let position: Position = saved
-    ?? { kind: 'page', query: identity(query), index: 0, offset: 0, ...(since ? { until: since.anchor } : {}) };
+    ?? { format: 2, kind: 'page', query: identity(query), index: 0, offset: 0, ...(since ? { until: since.anchor } : {}) };
+  if (saved && JSON.stringify(saved.until) !== JSON.stringify(since?.anchor)) {
+    throw invalid('TEXT_CURSOR_INVALID: page boundary differs from since.');
+  }
   const result: ChatTextPage = {
     sessionId: query.sessionId, source: query.source, direction: query.direction, view: 'text',
     order: query.direction === 'backward' ? 'newest-first' : 'oldest-first',
@@ -128,18 +144,26 @@ export async function readChatText(
     result.read.pages++;
     result.read.events += page.read.events;
     if (page.cursorStatus !== 'ok') {
-      throw conflict('TEXT_CURSOR_EXPIRED: native cursor expired; explicitly restart without cursor. No fallback was read.');
+      throw conflict('TEXT_CURSOR_EXPIRED: native cursor expired. For an incremental range, explicitly repeat the original since without cursor and deduplicate eventId/offset fragments; do not advance since. No fallback was read.');
     }
     const fingerprint = version(page);
     if (position.version && position.version !== fingerprint) {
-      throw conflict('TEXT_PAGE_CHANGED: partial native page changed; discard its fragments and explicitly restart.');
+      throw conflict('TEXT_PAGE_CHANGED: partial native page changed. Explicitly repeat the original since without cursor and deduplicate eventId/offset fragments; do not advance since. For an initial historical read, explicitly reselect the range. No fallback was read.');
     }
     if (page.liveCursor !== undefined) {
       result.liveCursor = encode({
-        kind: 'page', query: identity({ ...query, direction: 'forward' }), native: page.liveCursor, index: 0, offset: 0,
+        format: 2, kind: 'page', query: identity({ ...query, direction: 'forward' }), native: page.liveCursor, index: 0, offset: 0,
       });
     }
     const events = query.direction === 'backward' ? [...page.events].reverse() : page.events;
+    if (position.index > events.length) throw invalid('TEXT_CURSOR_INVALID: index exceeds the native page.');
+    if (position.offset) {
+      const target = events[position.index];
+      const item = target && message(target);
+      if (!item || position.offset >= item.content.length || boundary(item.content, position.offset) !== position.offset) {
+        throw invalid('TEXT_CURSOR_INVALID: offset is outside the native body or divides a surrogate pair.');
+      }
+    }
     if (query.direction === 'backward' && position.head === undefined) {
       position.head = events[0] ? anchor(events[0]) : null;
     }
@@ -215,7 +239,7 @@ function complete(result: ChatTextPage, query: ChatTextRead, position: Position)
 
 function checkpoint(query: ChatTextRead, position: Position): string {
   return encode({
-    kind: 'checkpoint', query: identity({ ...query, since: undefined }), anchor: position.head ?? null,
+    format: 2, kind: 'checkpoint', query: identity({ ...query, since: undefined }), anchor: position.head ?? null,
   });
 }
 
