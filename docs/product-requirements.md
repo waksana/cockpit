@@ -177,13 +177,16 @@ uses the native API; confirmation follows R3 and the Web UI states it is
 irreversible. Deletion does not depend on module unbinding or callbacks. External
 applications handle stale IDs; unloaded, timeouts and permission errors are not deletion.
 
-Normal shutdown waits only for native session idleness. Native turns, accepted
+Normal shutdown waits first for native session idleness. Native turns, accepted
 queue items, user decisions and related native work settle by their real state;
-then the host closes the SDK/network and exits. Module activity, sends, background
-connections, busy declarations or close callbacks add no wait condition; work a
-module starts through a native session still belongs to that session. Modules end
-with the host and may be interrupted; recovery is their persistence strategy, not
-host draining or resending. Idle does not mean every saved session disappears from
+then opted-in modules receive their stopping signal and drain already-started
+effects before the host closes the SDK/network and exits. Module observers and
+existing role tools remain available throughout the native wait. Module busy
+declarations do not replace native safety; work a module starts through a native
+session still belongs to that session. Legacy modules have no awaited drain
+guarantee. Recovery remains the module's persistence strategy, never host replay.
+See the [safe module shutdown contract](module-contract.md#safe-module-shutdown)
+for drain deadlines and fail-closed behavior. Idle does not mean every saved session disappears from
 the list; pending schedules do not keep sessions alive. During shutdown new
 independent work is closed off while paths needed to finish existing questions and
 in-flight operations remain; queues are not cleared, busy is not erased, and

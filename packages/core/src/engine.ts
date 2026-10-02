@@ -353,7 +353,7 @@ export class Engine {
   }
 
   async getSessionToolScope(id: string): Promise<SessionToolScope> {
-    const st = await this.k.state(id);
+    const st = await this.k.state(id, true);
     this.k.assertReadable(st);
     st.operations++;
     st.readLeases++;
@@ -395,9 +395,10 @@ export class Engine {
     await this.ensureLoaded(st);
   }
 
-  async stop(): Promise<void> {
+  async stop(beforeClose?: () => Promise<void>): Promise<void> {
     if (this.k.failure) {
       this.k.fail(this.k.failure);
+      await beforeClose?.();
       await this.k.runtime.stop();
       this.k.stopped = true;
       return;
@@ -412,8 +413,23 @@ export class Engine {
     this.k.lifecycle = true;
     for (const st of all) { st.closing = true; this.k.patch(st, { closing: true }); }
     try {
+      const revisions = all.map(st => st.revision);
       for (const st of all) await this.k.checkIdle(st);
-      for (const st of all) { await this.k.checkIdle(st); await this.k.close(st); }
+      if (all.some((st, index) => st.revision !== revisions[index])) {
+        throw busy('Session changed during shutdown preflight');
+      }
+      // Keep native handles readable for module settlement while the lifecycle
+      // gate rejects new mutations. Modules must finish before handles close.
+      if (beforeClose) {
+        this.k.draining = true;
+        try { await beforeClose(); }
+        finally { this.k.draining = false; }
+      }
+      // A confirmed child death during a successful drain leaves no live work
+      // to inspect. Do not turn that fatal cleanup path into a safety-read error.
+      if (!this.k.failure) {
+        for (const st of all) { await this.k.checkIdle(st); await this.k.close(st); }
+      }
       await this.k.runtime.stop();
       this.k.started = false;
       this.k.stopped = true;
@@ -466,7 +482,7 @@ export class Engine {
     return this.k.untilFatal(async () => {
       query = NativeChatRead.parse(query);
       signal?.throwIfAborted();
-      if (this.k.lifecycle || this.k.removing.has(query.sessionId)) throw transition('Session lifecycle transition is in progress');
+      if ((this.k.lifecycle && !this.k.draining) || this.k.removing.has(query.sessionId)) throw transition('Session lifecycle transition is in progress');
       const st = this.sessions.get(query.sessionId);
       this.k.assertReadable(st);
       if (this.k.creating.has(query.sessionId) && !st?.sdk) throw transition('Native session creation is still awaiting acknowledgement');

@@ -173,19 +173,28 @@ or schedule additions are refused. Answers to existing decisions, queue removal,
 Stop/interrupt and schedule stop remain available, as do native reads; accepted
 native queue items complete normally. The host waits for native turns,
 queue/steering, decisions, subagents, MCP operations and protected calls to
-settle, rechecks, then closes idle handles, the SDK and connections. Browser
+settle, rechecks under Engine's mutation-admission gate, then starts opted-in
+module stopping and drain. Only after drain succeeds does it close idle handles,
+the SDK and connections. Browser
 streams are not waited for; closing a view does not cancel model work.
 
-A known busy race returns to waiting. Unknown close effects or close failure are
-not retried or reported as a clean exit; confirmed SDK death or startup failure
-records the error, cleans owned resources and exits non-zero, without replaying
+A known busy preflight race returns to waiting without stopping any module.
+Busy reappearing after module stopping fails closed rather than reopening waiting
+with stopped observers. Unknown close effects or close failure are
+not retried or reported as a clean exit; confirmed SDK death
+records the error, drains owned resources and exits non-zero, without replaying
 possibly accepted input. A session that requests shutdown must end its turn
 rather than wait for the exit. Unanswered questions or running work can block
-exit indefinitely: there is no cancel, timeout or auto-answer.
+exit indefinitely: there is no cancel, timeout or auto-answer. An ordinary startup
+failure does not prove native death; it uses the same safety checks before its
+nonzero exit.
 
-Per [R7](product-requirements.md#r7), only native session idleness is waited for;
-module activity, sends and close receipts never block exit. The current native
-in-flight request protection stays.
+Per [R7](product-requirements.md#r7), native safety precedes
+[opt-in module drain](module-contract.md#safe-module-shutdown). During waiting,
+module event capture and existing role MCP remain live. During drain, the Engine
+rejects new mutations but retains native handles for settlement reads. Drain
+failure or timeout retains resources and blocks exit; legacy modules retain
+their best-effort cleanup contract.
 
 `/health` and `/version` share the process instance ID; `/version` reports the
 package version and manifest `sourceSha`. Development checkouts instead report
@@ -316,7 +325,7 @@ deciding on another action, never automatically replay it.
 
 | Capability | Current | Confirmed target |
 | --- | --- | --- |
-| Shutdown | Implemented: waits for native activity and protected in-flight calls, not module work or close receipts. | Native-session-based exit ([R7](product-requirements.md#r7)). |
+| Shutdown | Implemented: waits for native activity and protected in-flight calls, then drains opted-in modules before releasing native handles. | Native safety followed by safe module drain ([R7](product-requirements.md#r7)). |
 | Module delivery | Implemented: local trusted packages, main-process import, cold load, HTTP/static routes, data events and four frontend extension kinds. Modules implement their own HTTP MCP on digest-bound paths under the host port; roles supply those endpoints to native sessions. | Cold module packages and per-module MCP paths ([R1](product-requirements.md#r1)); supported package forms are in the [module contract](module-contract.md#1-supported-scope). |
 | System page | Not implemented. | A full host page from the main menu showing versions and installed/loaded modules read-only, with safe exit ([R6](product-requirements.md#r6)). |
 | Next-start message | Not implemented. | An optional module saves a prompt for the next start and makes one send attempt. |

@@ -1273,14 +1273,15 @@ test('graceful shutdown refuses new work but keeps decisions, queue controls and
   }
 });
 
-test('module drain retains settlement calls during waiting and failed shutdown without reopening new work', async t => {
+test('module drain retains settlement calls during waiting, closing and failed shutdown without reopening new work', async t => {
   const gate = Promise.withResolvers<void>();
+  const draining = Promise.withResolvers<void>();
   const teardown: string[] = [];
   const stopping = new GracefulShutdown({
-    prepareStop: () => gate.promise, busyCount: async () => 0,
-    stopNative: async () => { teardown.push('native'); },
+    prepareStop: () => { draining.resolve(); return gate.promise; }, busyCount: async () => 0,
+    stopNative: async beforeClose => { await beforeClose(); teardown.push('native'); },
     closeTransport: async () => { teardown.push('transport'); },
-    exit: () => { teardown.push('exit'); }, report: () => {},
+    exit: () => { teardown.push('exit'); }, report: () => {}, delayMs: 0,
   });
   t.after(() => stopping.dispose());
   setTestDependencies({ engine, shutdown: stopping });
@@ -1289,6 +1290,10 @@ test('module drain retains settlement calls during waiting and failed shutdown w
   await callModuleIntent('session/directory', { limit: 1 });
   await callModuleIntent('respondAsk', { sessionId: 's', requestId: 'existing', answer: 'settled', wasFreeform: false });
   await assert.rejects(callModuleIntent('session/new', { cwd: '/synthetic' }), /shutting down/);
+  await assert.rejects(callModuleIntent('prompt', { sessionId: 's', text: 'new work' }), /shutting down/);
+  await draining.promise;
+  assert.equal(stopping.snapshot().phase, 'closing');
+  await callModuleIntent('session/directory', { limit: 1 });
   await assert.rejects(callModuleIntent('prompt', { sessionId: 's', text: 'new work' }), /shutting down/);
   gate.reject(new Error('Module drain outcome unknown'));
   await nextTurn();
@@ -1326,7 +1331,7 @@ test('an acknowledged shutdown cannot close around a held global mutation', asyn
   const entered = new Promise<void>(resolve => { begin = resolve; });
   const stopped: string[] = [];
   const shutdown = new GracefulShutdown({
-    busyCount: async () => 0, stopNative: async () => { stopped.push('native'); },
+    busyCount: async () => 0, stopNative: async beforeClose => { await beforeClose(); stopped.push('native'); },
     closeTransport: async () => { stopped.push('transport'); }, exit: () => { stopped.push('exit'); },
     report: error => { assert.fail(String(error)); }, delayMs: 0,
   });

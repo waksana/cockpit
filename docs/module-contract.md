@@ -1569,25 +1569,35 @@ legacy `dispose` establishes this contract.
 
 The host-owned graceful shutdown sequence is:
 
-1. Abort `context.stopping`, stop role assignment intake, reject new opted-in module HTTP
+1. Refuse new independent native work and role assignments, then wait for all
+   native sessions and protected Host calls to settle. Existing module routes,
+   role MCP tools and event subscriptions remain live: late replies and file
+   captures must still work. Engine revalidates the entire native cohort under
+   its mutation-admission gate before any module stopping signal.
+2. Abort `context.stopping`, reject new opted-in module HTTP
    work, and revoke its native/control/prompt event subscriptions. Modules must
    immediately gate their own timers, polling, inbound connections and producers.
-2. Join in-progress activation, including a late result after cancellation, and
+3. Join in-progress activation, including a late result after cancellation, and
    call every opted-in module's `onStop` once. The hook settles already-started
    external sends and durable receipts, including explicit unknown-outcome
    records; it must not begin new business or wait for future event callbacks.
-3. Join the opted-in module's already-started `onReady`, HTTP, event, role hook
+4. Join the opted-in module's already-started `onReady`, HTTP, event, role hook
    and host-call promises. The hook must also join any detached work it owns;
    the host cannot discover arbitrary promises, threads or external effects.
-4. After module drain succeeds, retain the existing native busy, queue and
+5. After module drain succeeds, retain the existing native busy, queue and
    in-flight-operation safeguards, stop native runtime, then run module
    `dispose` and close host transports. The public HTTP service is not torn down
-   before module drain by the host's shutdown controller.
+   before module drain by the host's shutdown controller. A preflight busy race
+   returns to waiting without stopping modules. Once module stopping begins,
+   a native busy rejection or uncertain close fails closed; it never returns to
+   waiting with already-stopped observers.
 
 For opted-in modules, `context.signal` and existing request streams remain alive
 during drain. `context.host.call` permits only `session/get`, `session/chat`,
 `session/directory`, `session/tool-scope` and `respondAsk`; creation, load, prompt,
-role mutation and new independent work are rejected. Already-started host calls
+role mutation and new independent work are rejected. Native reads remain usable
+under the Engine mutation gate; `respondAsk` is useful during waiting, but cannot
+start a new turn after the native-idle barrier. Already-started host calls
 remain joined. These settlement calls also remain available to a still-draining
 module after a failed shutdown; the process cannot automatically exit in that
 state. Once its drain completes, its bridge is revoked. `dispose` is final

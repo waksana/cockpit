@@ -45,6 +45,7 @@ export class SessionKernel {
   birthGate: Promise<void> = Promise.resolve();
   births = 0;
   lifecycle = false;
+  draining = false;
   started = false;
   stopped = false;
   startPromise?: Promise<void>;
@@ -116,17 +117,17 @@ export class SessionKernel {
 
   emit(event: ServerEvent): void { this.bus.emit('event', event); }
 
-  async state(id: string): Promise<SessionHandle> {
+  async state(id: string, readDuringDrain = false): Promise<SessionHandle> {
     this.assertAvailable();
     if (this.stopped) throw engineStopped('Engine is stopped; start it before performing session operations');
-    if (this.lifecycle) throw transition('Engine lifecycle transition is in progress');
+    if (this.lifecycle && !(readDuringDrain && this.draining)) throw transition('Engine lifecycle transition is in progress');
     if (this.removing.has(id)) throw transition('Session removal is in progress');
     let st = this.sessions.get(id);
     if (!st) {
       const metadata = await this.untilFatal(() => this.runtime.getSessionMetadata(id));
       if (!metadata) throw sessionNotFound();
       this.assertAvailable();
-      if (this.stopped || this.lifecycle || this.removing.has(id)) {
+      if (this.stopped || (this.lifecycle && !(readDuringDrain && this.draining)) || this.removing.has(id)) {
         throw transition('Session lifecycle transition is in progress');
       }
       st = this.sessions.get(id);
@@ -136,7 +137,7 @@ export class SessionKernel {
         this.sessions.set(id, st);
       }
     }
-    if (st.closing) throw transition('Session transition is in progress');
+    if (st.closing && !(readDuringDrain && this.draining)) throw transition('Session transition is in progress');
     return st;
   }
 
@@ -156,7 +157,7 @@ export class SessionKernel {
 
   assertReadable(st?: SessionHandle): void {
     this.assertAvailable();
-    if (this.stopped || this.lifecycle || st?.closing) throw transition('Native session metadata is unavailable during a lifecycle transition');
+    if (this.stopped || (!this.draining && (this.lifecycle || st?.closing))) throw transition('Native session metadata is unavailable during a lifecycle transition');
   }
 
   async liveSession(st: SessionHandle): Promise<CopilotSession | null> {
