@@ -149,6 +149,14 @@ return structured denials and unknown checks, not a reservation. See
 The source addition in `changes.json` does not publish the SDK; consumers must
 wait for a separately authorized registry release before depending on it.
 
+Safe in-process service shutdown additionally requires
+`context.shutdownVersion === 1` and the `shutdown.v1` deployment capability.
+`context.stopping` announces quiescence; returning `onStop` opts into awaited
+drain before native/transport teardown. Legacy `dispose` alone remains best-effort.
+See [safe module shutdown](module-contract.md#safe-module-shutdown) for the exact
+settlement-call boundary, 60-second fail-closed policy and late-completion rules.
+Check capabilities on the actual host; an installed SDK does not establish them.
+
 Backend prompt correlation requires `promptReceiptVersion: 1`, independently of
 SDK version. The `prompt` result's optional `messageId` preserves the native
 acceptance receipt, not the event UUID or an assistant message ID. Follow

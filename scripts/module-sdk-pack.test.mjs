@@ -21,8 +21,15 @@ const fixtures = [
   ` },
   ...['backend', 'backend-current'].map(name => ({ name, types: ['node'], lib: ['ES2022'], source: `
     import { Readable } from 'node:stream';
-    import type { ModuleBackend, ModuleHostApi, ModuleHostIntentBody, ModuleHostIntentResult, ModuleResponse, RoleAssignmentFailure } from '@waksana/cockpit-module-sdk/backend';
+    import type { ModuleBackend, ModuleBackendContext, ModuleHostApi, ModuleHostIntentBody, ModuleHostIntentResult, ModuleResponse, RoleAssignmentFailure } from '@waksana/cockpit-module-sdk/backend';
     const backend: ModuleBackend = { routes: [] };
+    declare const context: ModuleBackendContext;
+    const shutdownVersion: 1 = context.shutdownVersion;
+    const stopping: AbortSignal = context.stopping;
+    const draining: ModuleBackend = { routes: [], async onStop() {
+      await context.host.call('session/get', { sessionId: 's' });
+    }, async dispose() {} };
+    void [shutdownVersion, stopping, draining];
     const response: ModuleResponse = { body: Readable.from('ok') };
     const created: ModuleHostIntentResult<'session/new'> = { sessionId: 's' };
     // @ts-expect-error sessionId is part of the canonical host result.

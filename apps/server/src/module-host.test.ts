@@ -54,7 +54,7 @@ test('prompt acceptance observers expose only live receipt facts and are revoked
   const base = host.bootstrap().modules[0]!.apiBase;
   assert.deepEqual((await app.inject(`${base}/seen`)).json(),
     [{ sessionId: 'native-session', messageId: 'actual-receipt', origin: 'module', acceptedAt: 123 }]);
-  host.close();
+  await host.close();
   assert.equal(observers.size, 0);
 });
 
@@ -101,7 +101,7 @@ test('module publish captures immutable data with host-owned routing and stops w
   assert.ok(Object.isFrozen(snapshot.nested[0]));
   assert.throws(() => { snapshot.nested[0]!.value = 3; }, TypeError);
   assert.equal(f.listeners.size, 0, 'publication never subscribes to native history');
-  host.close();
+  await host.close();
   publish({ after: 'stop' });
   publish(undefined);
   assert.equal(events.length, 1);
@@ -163,7 +163,7 @@ test('module publish honestly reports and throws unavailable or failing transpor
     await host.register(app);
     assert.throws(() => publish(null), onEvent ? /transport failed/ : { code: 'MODULE_EVENT_UNAVAILABLE' });
     assert.equal(reports.length, 1);
-    host.close();
+    await host.close();
     publish(null);
     assert.equal(reports.length, 1);
   }
@@ -175,9 +175,10 @@ test('failed and timed-out backend activations cannot publish using retained con
   const installed = [];
   for (const [id, result] of [
     ['failed-publisher', 'throw new Error("activation failed")'],
-    ['timed-publisher', 'return new Promise(() => {})'],
+    ['timed-publisher', 'return gate.promise'],
   ]) installed.push(await installLocalModule(await f.package(moduleEntries(id, `
     let context;
+    export const gate = Promise.withResolvers();
     export function activate(ctx) { context=ctx; ctx.publish(null); ${result}; }
     export function publish() { context.publish({ late: true }); }
   `)), { trustLocalCode: true, enable: true }));
@@ -188,6 +189,7 @@ test('failed and timed-out backend activations cannot publish using retained con
   assert.equal(host.bootstrap().errors.length, 2);
   for (const module of installed) (await import(pathToFileURL(join(module.root, 'backend.mjs')).href)).publish();
   assert.deepEqual(events, []);
+  for (const module of installed) (await import(pathToFileURL(join(module.root, 'backend.mjs')).href)).gate.resolve({ routes: [] });
 });
 
 test('passive inventory includes backend-only names and excludes installed but unselected modules', async t => {
@@ -552,7 +554,7 @@ test('response streams are owned before abort and response validation, including
     probes.get(kind)!.release!();
     await waitUntil(() => probes.get(kind)?.stream?.closed === true, 'Late handler leaked its file stream');
   }
-  assert.equal((Reflect.get(host, 'scopes') as Set<AbortController>).size, 0);
+  assert.ok([...probes.values()].every(probe => probe.signal.aborted));
   const loaded = Reflect.get(host, 'loaded') as Array<{ streams: Set<Readable> }>;
   assert.ok(loaded.every(module => module.streams.size === 0), 'Late streams must not repopulate a closed host registry');
 });

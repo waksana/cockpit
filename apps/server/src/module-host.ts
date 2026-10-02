@@ -12,6 +12,7 @@ import { cockpitHome, type Engine } from '@cockpit/core';
 import { ServerEvent, snapshotModuleEventPayload } from '@cockpit/protocol';
 import type { ModuleAsset, ModuleBackend, ModuleBackendContext, ModuleEventPayload, ModuleRoute, NativeObservation, ModuleHostApi } from '@cockpit/module-api/backend';
 import { ModuleRoles } from './module-roles.ts';
+import { ModuleLifetime, moduleDrainIntents } from './module-shutdown.ts';
 import { isDeclaredAsset, moduleDataRoot, MODULE_WORKER_LIMIT, readModuleInstallation, readModuleSettings, safeModulePath, type ModuleInstallation } from './module-install.ts';
 
 const DEFAULT_BODY_LIMIT = 1024 * 1024;
@@ -29,6 +30,7 @@ const backendSchema = z.object({
   routes: z.array(routeSchema).max(256),
   publicConfig: z.record(z.unknown()).optional(),
   onReady: z.custom<NonNullable<ModuleBackend['onReady']>>(value => typeof value === 'function').optional(),
+  onStop: z.custom<NonNullable<ModuleBackend['onStop']>>(value => typeof value === 'function').optional(),
   promptAccepted: z.custom<NonNullable<ModuleBackend['promptAccepted']>>(value => typeof value === 'function').optional(),
   roleAssignments: z.object({
     availability: z.custom<NonNullable<NonNullable<ModuleBackend['roleAssignments']>['availability']>>(value => typeof value === 'function').optional(),
@@ -54,6 +56,7 @@ interface Loaded {
   installation: ModuleInstallation;
   backend: ModuleBackend;
   controller: AbortController;
+  lifetime: ModuleLifetime;
   apiBase: string;
   streams: Set<Readable>;
   replies: Set<FastifyReply>;
@@ -96,9 +99,16 @@ export class ModuleHost {
   readonly roles: ModuleRoles;
   private readonly loaded: Loaded[] = [];
   private readonly errors = new Map<string, ModuleHostError>();
-  private readonly scopes = new Set<AbortController>();
-  private readonly disposed = new WeakSet<object>();
+  private readonly lifetimes = new Set<ModuleLifetime>();
+  private readonly retirements = new Set<Promise<void>>();
+  private readonly retiring = new WeakSet<ModuleLifetime>();
   private closed = false;
+  private stopping = false;
+  private closingTransport = false;
+  private stopPromise?: Promise<void>;
+  private closePromise?: Promise<void>;
+  private registering?: Promise<void>;
+  private shutdownFailure?: Error;
   private initialized = false;
   private app?: FastifyInstance;
   private readyNotified = false;
@@ -109,14 +119,27 @@ export class ModuleHost {
     onEvent?: (id: string, payload: ModuleEventPayload) => void;
     report?: (id: string, error: unknown) => void;
     activationTimeoutMs?: number;
+    shutdownTimeoutMs?: number;
     host?: ModuleHostApi;
     origin?: string;
   }) {
     this.roles = new ModuleRoles(options.hostRoot ?? cockpitHome(), options.origin ?? 'http://127.0.0.1:8771',
       () => this.closed ? [] : this.loaded.map(module => module.installation),
-      () => this.closed ? [] : this.loaded.flatMap(module => module.backend.roleAssignments ? [{
-        moduleId: module.installation.manifest.id, hooks: module.backend.roleAssignments, signal: module.controller.signal,
-      }] : []), async sessionId => {
+      () => this.closed ? [] : this.loaded.flatMap(module => {
+        const hooks = module.backend.roleAssignments;
+        if (!hooks) return [];
+        return [{
+          moduleId: module.installation.manifest.id, signal: module.controller.signal,
+          hooks: {
+            ...(hooks.availability ? { availability: (...args: Parameters<NonNullable<typeof hooks.availability>>) =>
+              module.lifetime.invoke(() => hooks.availability!(...args)) } : {}),
+            ...(hooks.permit ? { permit: (...args: Parameters<NonNullable<typeof hooks.permit>>) =>
+              module.lifetime.invoke(() => hooks.permit!(...args)) } : {}),
+            ...(hooks.saved ? { saved: (...args: Parameters<NonNullable<typeof hooks.saved>>) =>
+              module.lifetime.invoke(() => hooks.saved!(...args)) } : {}),
+          },
+        }];
+      }), async sessionId => {
         if (!this.options.host || this.closed) throw new Error('Module host is unavailable');
         return (await this.options.host.call('session/get', { sessionId })).meta !== null;
       });
@@ -153,11 +176,16 @@ export class ModuleHost {
     };
   }
 
-  async register(app: FastifyInstance): Promise<void> {
+  register(app: FastifyInstance): Promise<void> {
     if (this.initialized) throw new Error('Module host can only cold-load once');
     this.initialized = true;
+    this.registering = this.registerModules(app);
+    return this.registering;
+  }
+
+  private async registerModules(app: FastifyInstance): Promise<void> {
     this.app = app;
-    app.addHook('preClose', async () => { this.close(); });
+    app.addHook('preClose', async () => { await this.close(); });
     app.get('/_modules', async (_request, reply) => {
       reply.header('Cache-Control', 'private, no-store');
       return this.bootstrap();
@@ -169,38 +197,41 @@ export class ModuleHost {
     try { settings = await readModuleSettings(hostRoot); }
     catch (error) { this.report('host', error, 'activation'); return; }
     for (const [id, selected] of Object.entries(settings.selected)) {
-      if (this.closed) break;
+      if (this.stopping) break;
       if (!selected.enabled) continue;
-      const controller = new AbortController();
-      this.scopes.add(controller);
+      const lifetime = new ModuleLifetime(id);
+      const controller = lifetime.controller;
+      this.lifetimes.add(lifetime);
       let backend: ModuleBackend | undefined;
       let activated: ModuleBackend | undefined;
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         const installation = await readModuleInstallation(id, selected, hostRoot);
+        if (this.stopping) throw new Error('Module host is closing');
         const apiBase = `/_modules/${id}/${installation.digest}/api`;
         const context: ModuleBackendContext = Object.freeze({
           host: Object.freeze({ resourcePreparationVersion: 1, toolScopeVersion: 1, roleResourcePolicyVersion: 1,
             ...(this.options.observer.onPromptAccepted ? { promptOriginVersion: 1 as const } : {}),
             askResponseVersion: 1, chatReadVersion: 1, promptReceiptVersion: 1,
             roleAssignmentVersion: 1, roleAvailabilityVersion: 1, sessionDirectoryVersion: 1, sessionLoadVersion: 1, call: (name, body) => {
-            if (controller.signal.aborted || this.closed) throw new Error('Module is stopped');
+            if (controller.signal.aborted || this.closed || lifetime.drained) throw new Error('Module is stopped');
+            if (this.stopping && (!lifetime.awaitable || !moduleDrainIntents.has(name))) throw new Error('Module is stopping; only settlement host calls are allowed');
             if (!this.loaded.some(module => module.controller === controller)) throw new Error('Module host intents are not active');
             if (!['session/new', 'session/get', 'session/rename', 'roles/readiness', 'roles/availability', 'session/resources-prepare', 'prompt', 'respondAsk', 'session/chat', 'session/directory', 'session/load', 'roles/notify', 'session/tool-scope'].includes(name)) throw new Error('Module host intent is not allowed');
             if (!this.options.host) throw new Error('Module host intents are unavailable');
             this.roles.assertCallbackHostCall(name);
-            return this.options.host.call(name, body);
+            return lifetime.invoke(() => this.options.host!.call(name, body));
           } } satisfies ModuleHostApi),
-          apiVersion: 1, serviceReadyVersion: 1, moduleId: id, apiBase, dataRoot: await moduleDataRoot(id, hostRoot),
-          config: Object.freeze(structuredClone(selected.config)), signal: controller.signal,
+          apiVersion: 1, serviceReadyVersion: 1, shutdownVersion: 1, moduleId: id, apiBase, dataRoot: await moduleDataRoot(id, hostRoot),
+          config: Object.freeze(structuredClone(selected.config)), signal: controller.signal, stopping: lifetime.stopping.signal,
           report: (error: unknown) => this.report(id, error),
           invalidate: () => {
-            if (controller.signal.aborted || this.closed || !this.loaded.some(module => module.controller === controller)) return;
+            if (controller.signal.aborted || this.stopping || !this.loaded.some(module => module.controller === controller)) return;
             try { this.options.onInvalidate?.(id); }
             catch (error) { this.report(id, error); }
           },
           publish: (payload: ModuleEventPayload) => {
-            if (controller.signal.aborted || this.closed || !this.loaded.some(module => module.controller === controller)) return;
+            if (controller.signal.aborted || this.stopping || !this.loaded.some(module => module.controller === controller)) return;
             try {
               if (!this.options.onEvent) throw moduleError('MODULE_EVENT_UNAVAILABLE', 'Module event transport is unavailable', 503);
               const snapshot = snapshotModuleEventPayload(payload, types.isProxy);
@@ -213,11 +244,12 @@ export class ModuleHost {
         });
         const preparation = (async () => {
           const imported = await import(pathToFileURL(join(installation.root, installation.manifest.backend)).href) as { activate?: unknown };
+          if (this.stopping) throw new Error('Module host is closing');
           if (typeof imported.activate !== 'function') throw new Error('Module backend must export activate(context)');
           const value: unknown = await imported.activate(context);
-          if (value && typeof value === 'object') activated = value as ModuleBackend;
+          if (value && typeof value === 'object') lifetime.backend = activated = value as ModuleBackend;
           backend = backendSchema.parse(value);
-          if (controller.signal.aborted) { this.dispose(id, activated!); throw controller.signal.reason; }
+          if (controller.signal.aborted || lifetime.stopping.signal.aborted) throw new Error('Module activation was stopped');
           if (backend.publicConfig) {
             const encoded = JSON.stringify(backend.publicConfig);
             if (Buffer.byteLength(encoded) > 64 * 1024) throw new Error('Module public config exceeds 64 KiB');
@@ -236,28 +268,29 @@ export class ModuleHost {
           } finally { await candidate.close(); }
           return backend;
         })();
+        lifetime.preparation = preparation;
+        void preparation.then(() => { lifetime.activationSettled = true; }, () => { lifetime.activationSettled = true; });
         void preparation.catch(() => {
-          if (controller.signal.aborted && activated) this.dispose(id, activated);
+          if (lifetime.stopping.signal.aborted && activated) this.retire(lifetime);
         });
         backend = await Promise.race([
           preparation,
           new Promise<never>((_, reject) => {
             timer = setTimeout(() => {
               const error = new Error('Module activation timed out');
-              controller.abort(error);
+              lifetime.stopping.abort(error);
               reject(error);
             }, this.options.activationTimeoutMs ?? 10_000);
           }),
         ]);
-        if (this.closed) throw new Error('Module host is closing');
-        const loaded: Loaded = { installation, backend, controller, apiBase, streams: new Set(), replies: new Set() };
+        if (this.stopping) throw new Error('Module host is closing');
+        const loaded: Loaded = { installation, backend, controller, lifetime, apiBase, streams: new Set(), replies: new Set() };
         if (backend.promptAccepted) {
           if (!this.options.observer.onPromptAccepted) throw new Error('Module requires prompt acceptance observations');
           const callback = backend.promptAccepted;
           loaded.unsubscribePrompts = this.options.observer.onPromptAccepted(event => {
-            if (controller.signal.aborted) return;
-            try { void Promise.resolve(callback(structuredClone(event))).catch(error => this.report(id, error)); }
-            catch (error) { this.report(id, error); }
+            if (controller.signal.aborted || (this.stopping && lifetime.awaitable)) return;
+            void lifetime.invoke(() => callback(structuredClone(event))).catch(error => this.report(id, error));
           });
           controller.signal.addEventListener('abort', () => loaded.unsubscribePrompts?.(), { once: true });
         }
@@ -265,9 +298,8 @@ export class ModuleHost {
           const events = backend.events;
           const types = new Set(events.types);
           loaded.unsubscribe = this.options.observer.onNativeEvent((observation: NativeObservation) => {
-            if (controller.signal.aborted || !types.has(observation.event.type)) return;
-            try { void Promise.resolve(events.handle(observation)).catch(error => this.report(id, error)); }
-            catch (error) { this.report(id, error); }
+            if (controller.signal.aborted || (this.stopping && lifetime.awaitable) || !types.has(observation.event.type)) return;
+            void lifetime.invoke(() => events.handle(observation)).catch(error => this.report(id, error));
           }, { types: events.types });
         }
         if (backend.controlEvents) {
@@ -279,9 +311,8 @@ export class ModuleHost {
           const types = new Set(events.types);
           try {
             loaded.unsubscribeControl = this.options.observer.onEvent(event => {
-              if (controller.signal.aborted || !types.has(event.type)) return;
-              try { void Promise.resolve(events.handle(structuredClone(event))).catch(error => this.report(id, error)); }
-              catch (error) { this.report(id, error); }
+              if (controller.signal.aborted || (this.stopping && lifetime.awaitable) || !types.has(event.type)) return;
+              void lifetime.invoke(() => events.handle(structuredClone(event))).catch(error => this.report(id, error));
             });
           } catch (error) {
             loaded.unsubscribe?.();
@@ -291,9 +322,9 @@ export class ModuleHost {
         app.register(router => this.registerRouter(router, loaded));
         this.loaded.push(loaded);
       } catch (error) {
-        controller.abort(error);
-        this.scopes.delete(controller);
-        if (activated) this.dispose(id, activated);
+        lifetime.signalStop();
+        if (!lifetime.awaitable && (!lifetime.preparation || lifetime.activationSettled)) controller.abort(error);
+        if (activated) this.retire(lifetime);
         this.report(id, error, 'activation');
       } finally { if (timer) clearTimeout(timer); }
     }
@@ -301,15 +332,14 @@ export class ModuleHost {
 
   /** The server calls this only after runtime.start() and HTTP listen succeed. */
   ready(): void {
-    if (this.closed || this.readyNotified) return;
+    if (this.stopping || this.readyNotified) return;
     if (!this.app?.server.listening) throw new Error('Module service readiness requires a listening HTTP server');
     this.readyNotified = true;
     for (const module of this.loaded) {
-      if (this.closed) break;
+      if (this.stopping) break;
       if (module.controller.signal.aborted || !module.backend.onReady) continue;
       const id = module.installation.manifest.id;
-      try { void Promise.resolve(module.backend.onReady()).catch(error => this.report(id, error)); }
-      catch (error) { this.report(id, error); }
+      void module.lifetime.invoke(() => module.backend.onReady!()).catch(error => this.report(id, error));
     }
   }
 
@@ -317,7 +347,7 @@ export class ModuleHost {
     const scopes = new WeakMap<FastifyRequest, RequestScope>();
     const id = module.installation.manifest.id;
     router.addHook('onRequest', async (request, reply) => {
-      if (module.controller.signal.aborted) throw moduleError('MODULE_CLOSING', 'Module is closing', 503);
+      if (this.closingTransport || (this.stopping && module.lifetime.awaitable) || module.controller.signal.aborted) throw moduleError('MODULE_CLOSING', 'Module is closing', 503);
       const digest = request.headers['x-cockpit-module-digest'];
       const mediaRead = request.method === 'GET' || request.method === 'HEAD';
       if ((digest !== undefined || !mediaRead) && digest !== module.installation.digest) {
@@ -446,10 +476,11 @@ export class ModuleHost {
           let releaseStream: (() => void) | undefined;
           try {
             if (route.body === 'stream' && !(request.body instanceof Readable)) throw moduleError('MODULE_CONTENT_TYPE', 'Expected application/octet-stream', 415);
-            const result = await route.handler({
+            if (this.closingTransport || (this.stopping && module.lifetime.awaitable)) throw moduleError('MODULE_CLOSING', 'Module is closing', 503);
+            const result = await module.lifetime.invoke(() => route.handler({
               params: request.params as Record<string, string>, query: request.query as Record<string, unknown>,
               headers: request.headers, body: request.body, signal: scope.signal,
-            });
+            }));
             const body = result && typeof result === 'object' ? result.body : undefined;
             if (body instanceof Readable) {
               responseStream = body;
@@ -568,31 +599,99 @@ export class ModuleHost {
     return reply.send(Buffer.concat([Buffer.from(`self.__cockpitModuleWorker=${JSON.stringify(config)};\n`), bytes]));
   }
 
-  private dispose(id: string, backend: ModuleBackend): void {
-    if (this.disposed.has(backend)) return;
-    this.disposed.add(backend);
-    try {
-      if (typeof backend.dispose === 'function') void Promise.resolve(backend.dispose()).catch(error => this.report(id, error));
+  private deadline(work: Promise<void>, stage: string): Promise<void> {
+    const timeout = this.options.shutdownTimeoutMs ?? 60_000;
+    return new Promise<void>((resolve, reject) => {
+      const fail = (error: unknown) => {
+        const code = failure(error).code === 'MODULE_SHUTDOWN_TIMEOUT' ? 'MODULE_SHUTDOWN_TIMEOUT' : 'MODULE_SHUTDOWN_FAILED';
+        this.shutdownFailure ??= moduleError(code, `Module shutdown did not complete: ${stage}`, 503);
+        this.report('host', error);
+        reject(this.shutdownFailure);
+      };
+      const timer = setTimeout(() => fail(moduleError('MODULE_SHUTDOWN_TIMEOUT',
+        `Module shutdown exceeded ${timeout}ms: ${stage}`, 503)), timeout);
+      void work.then(() => {
+        clearTimeout(timer);
+        if (this.shutdownFailure) reject(this.shutdownFailure);
+        else resolve();
+      }, error => { clearTimeout(timer); fail(error); });
+    });
+  }
+
+  private retire(lifetime: ModuleLifetime): void {
+    if (this.stopping || this.retiring.has(lifetime)) return;
+    this.retiring.add(lifetime);
+    lifetime.signalStop();
+    if (!lifetime.awaitable) {
+      void lifetime.dispose(error => this.report(lifetime.id, error));
+      return;
     }
-    catch (error) { this.report(id, error); }
+    const retirement = this.deadline((async () => {
+      await lifetime.drain();
+      if (this.shutdownFailure) throw this.shutdownFailure;
+      await lifetime.dispose(error => this.report(lifetime.id, error));
+    })(), `${lifetime.id} activation cleanup`);
+    this.retirements.add(retirement);
+    void retirement.catch(error => this.report(lifetime.id, error));
   }
 
   stopRoleAssignments(): void { this.roles.stopAssignments(); }
 
-  close(): void {
+  stop(): Promise<void> {
+    if (this.stopPromise) return this.stopPromise;
+    const result = Promise.withResolvers<void>();
+    this.stopPromise = result.promise;
+    this.stopping = true;
     this.stopRoleAssignments();
-    if (this.closed) return;
-    this.closed = true;
-    for (const scope of this.scopes) scope.abort();
-    this.scopes.clear();
+    for (const lifetime of this.lifetimes) lifetime.signalStop();
     for (const module of this.loaded) {
-      try { module.unsubscribe?.(); } catch (error) { this.report(module.installation.manifest.id, error); }
-      try { module.unsubscribeControl?.(); } catch (error) { this.report(module.installation.manifest.id, error); }
-      try { module.unsubscribePrompts?.(); } catch (error) { this.report(module.installation.manifest.id, error); }
+      if (!module.lifetime.awaitable) continue;
+      this.unsubscribe(module);
+    }
+    void this.deadline((async () => {
+      await this.registering;
+      await Promise.all([...this.lifetimes].map(async lifetime => {
+        try { await lifetime.drain(); }
+        catch (error) {
+          this.report(lifetime.id, error);
+          throw moduleError('MODULE_SHUTDOWN_FAILED', `Module ${lifetime.id} drain failed`, 503);
+        }
+      }));
+      await Promise.all(this.retirements);
+    })(), `drain (${[...this.lifetimes].map(lifetime => lifetime.id).join(', ') || 'activation'})`).then(result.resolve, result.reject);
+    return result.promise;
+  }
+
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
+    this.closingTransport = true;
+    // Legacy resources remain available to protected native work until transport close.
+    for (const lifetime of this.lifetimes) if (lifetime.backend && !lifetime.awaitable) lifetime.controller.abort();
+    this.closePromise = (async () => {
+      await this.stop();
+      if (this.shutdownFailure) throw this.shutdownFailure;
+      this.closed = true;
+      await this.deadline(Promise.all([...this.lifetimes].map(lifetime =>
+        lifetime.dispose(error => this.report(lifetime.id, error)))).then(() => {}), 'dispose');
+      this.releaseResources();
+    })();
+    return this.closePromise;
+  }
+
+  private releaseResources(): void {
+    for (const module of this.loaded) {
+      this.unsubscribe(module);
       for (const stream of module.streams) stream.destroy();
       module.streams.clear();
       for (const reply of module.replies) reply.raw.destroy();
-      this.dispose(module.installation.manifest.id, module.backend);
+    }
+  }
+
+  private unsubscribe(module: Loaded): void {
+    const callbacks = [module.unsubscribe, module.unsubscribeControl, module.unsubscribePrompts];
+    module.unsubscribe = module.unsubscribeControl = module.unsubscribePrompts = undefined;
+    for (const callback of callbacks) {
+      try { callback?.(); } catch (error) { this.report(module.installation.manifest.id, error); }
     }
   }
 }
