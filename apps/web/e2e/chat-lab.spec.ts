@@ -112,6 +112,8 @@ test('public conversation uses Chat layout, preserves reading through topic/prep
   await viewport.focus();
   await page.keyboard.press('Home');
   await expect(page.getByRole('button', { name: '回到最新', exact: true })).toBeVisible();
+  // Home scrolls natively over multiple frames; capture a settled reading baseline.
+  await expect(viewport).toHaveJSProperty('scrollTop', 0);
   const anchor = (id?: string) => viewport.evaluate((element, id) => {
     const top = element.getBoundingClientRect().top;
     const row = Array.from(element.querySelectorAll('[data-message-id]'))
