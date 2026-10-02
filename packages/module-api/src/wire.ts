@@ -25,6 +25,39 @@ export type ModelOption = {
     supportsLongContext?: boolean | undefined;
 };
 export type ModuleHostIntentMap = {
+    "roles/availability": {
+        body: {
+            roles: {
+                moduleId: string;
+                roleId: string;
+            }[];
+            sessionId?: string | undefined;
+        };
+        result: {
+            reasons: {
+                capabilities: ("exclusive" | "instructions" | "mcp" | "skills")[];
+                code: string;
+                message: string;
+                roles: {
+                    moduleId: string;
+                    roleId: string;
+                }[];
+                source: {
+                    kind: "host";
+                } | {
+                    kind: "module";
+                    moduleId: string;
+                };
+                status: "denied" | "unknown";
+            }[];
+            roles: {
+                moduleId: string;
+                roleId: string;
+            }[];
+            sessionId?: string | undefined;
+            status: "available" | "unavailable" | "unknown";
+        };
+    };
     "roles/notify": {
         body: {
             notificationId: string;
@@ -700,6 +733,54 @@ export type RoleAssignmentMutationResult = {
         sessionId: string;
     };
 };
+export type RoleAvailability = {
+    reasons: {
+        capabilities: ("exclusive" | "instructions" | "mcp" | "skills")[];
+        code: string;
+        message: string;
+        roles: {
+            moduleId: string;
+            roleId: string;
+        }[];
+        source: {
+            kind: "host";
+        } | {
+            kind: "module";
+            moduleId: string;
+        };
+        status: "denied" | "unknown";
+    }[];
+    roles: {
+        moduleId: string;
+        roleId: string;
+    }[];
+    sessionId?: string | undefined;
+    status: "available" | "unavailable" | "unknown";
+};
+export type RoleAvailabilityQuery = {
+    roles: {
+        moduleId: string;
+        roleId: string;
+    }[];
+    sessionId?: string | undefined;
+};
+export type RoleAvailabilityReason = {
+    capabilities: ("exclusive" | "instructions" | "mcp" | "skills")[];
+    code: string;
+    message: string;
+    roles: {
+        moduleId: string;
+        roleId: string;
+    }[];
+    source: {
+        kind: "host";
+    } | {
+        kind: "module";
+        moduleId: string;
+    };
+    status: "denied" | "unknown";
+};
+export type RoleCapability = "exclusive" | "instructions" | "mcp" | "skills";
 export type RoleSelection = {
     moduleId: string;
     roleId: string;

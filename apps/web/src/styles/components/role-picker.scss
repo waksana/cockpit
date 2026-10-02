@@ -12,7 +12,7 @@
     font-weight: 600;
   }
 }
-.role-picker-options { display: grid; gap: var(--host-space-sm); }
+.role-picker-options { display: grid; gap: var(--host-space-sm); margin-top: var(--host-space-sm); }
 .role-option > .ui-choice-check { order: 1; }
 .role-option-heading {
   display: flex;
@@ -22,4 +22,4 @@
   > span { min-width: 0; max-width: 100%; }
 }
 .role-option-name { font-size: var(--host-text-body); font-weight: 600; overflow-wrap: anywhere; }
-.role-option-description { color: var(--host-color-muted); font-size: var(--host-text-meta); line-height: var(--host-leading-ui); overflow-wrap: anywhere; }
+.role-option-description { display: block; color: var(--host-color-muted); font-size: var(--host-text-meta); line-height: var(--host-leading-ui); overflow-wrap: anywhere; }

@@ -130,14 +130,14 @@ Backend packages export `activate(context)` and return `ModuleBackend`:
 | `events` | Declared native event type filters and read-only handlers. |
 | `controlEvents` | Declared `ServerEvent` type filters for existing native control projections; no extra native reads. |
 | `onReady` | Optional service-ready callback; requires `context.serviceReadyVersion === 1`. |
-| `roleAssignments` | Optional mutation-time `permit` and saved-selection `saved` hooks; requires `context.host.roleAssignmentVersion === 1`. |
+| `roleAssignments` | Optional mutation-time `permit` and saved-selection `saved` hooks (`roleAssignmentVersion: 1`), plus selection-time `availability` (`roleAvailabilityVersion: 1`). |
 | `dispose` | Non-blocking cleanup; it is not part of the host graceful-shutdown wait chain. |
 A module never receives the root Fastify instance, Engine internals, native session handles, or a security sandbox. Routes are validated before registration; failure or timeout is attributed to the module. Same-process modules can still block synchronously, exhaust memory, or call process-level APIs.
 
 ### Role assignment lifecycle
 
 Check `context.host.roleAssignmentVersion === 1` before relying on
-`ModuleBackend.roleAssignments`. Both members are optional:
+`ModuleBackend.roleAssignments`. These mutation members are optional:
 
 ```ts
 roleAssignments: {
@@ -184,6 +184,74 @@ read-only host calls; recursive role mutations fail immediately with
 aborts on module shutdown or a host shutdown request, without waiting for module
 code to finish before preserving a partial-effect receipt. Permission callbacks should be read-only: a later
 module may deny, and the host does not roll back module business side effects.
+
+### Selection availability
+
+Require `context.host.roleAvailabilityVersion === 1` (deployment capability
+`roleAvailability.v1`) before relying on structural exclusive compatibility or
+the optional `roleAssignments.availability(selection, signal)` hook. SDK source
+types are prepared independently; this capability check, not a package version,
+establishes Host support.
+
+Call `roles/availability { roles, sessionId? }` explicitly. Without `sessionId`,
+`roles` is a new session's proposed selection and no native identity exists.
+With it, `roles` contains additions; Host unions current saved roles, including
+for unloaded sessions, without loading them. The hook receives
+`{ operation: 'create' | 'add', sessionId?, roles, previousRoles }`, with the
+complete proposed selection. Current-target bindings must not be treated as
+another session's occupancy.
+
+```ts
+roleAssignments: {
+  availability(selection, signal) {
+    signal.throwIfAborted();
+    return { reasons: [{
+      code: 'BINDING_OCCUPIED',
+      message: 'This service is already bound to another existing session',
+      status: 'denied',
+      roles: selection.roles.filter(role => role.moduleId === 'my-module'),
+      capabilities: [],
+    }] };
+  },
+}
+```
+
+Return all confirmed reasons, or `reasons: []` when there is no objection.
+Each reason contains `code`, safe user-facing `message`, `status: 'denied' |
+'unknown'`, affected `roles`, and `capabilities` (`instructions`, `skills`,
+`mcp`, or `exclusive`; empty for non-capability constraints). Host stamps
+`source: { kind: 'module', moduleId }`; structural and target reasons use
+`{ kind: 'host' }`. Do not include private messages, tokens or credentials.
+Exceptions, invalid hook results and 30-second per-hook deadlines produce
+explicit unknown reasons, never an allow fallback or raw exception disclosure.
+Other modules' confirmed reasons remain in the result. Target metadata/read
+errors skip module checks rather than fabricate previous-role facts.
+
+The result is `{ status, roles, sessionId?, reasons }`: any confirmed denial
+makes `status: 'unavailable'`; otherwise an incomplete check is `unknown`;
+only no reasons means `available`. An unavailable result can also contain
+unknown checks: inspect the whole list. The Web new/add pickers render reasons,
+requery on selection changes and explicit refresh, and discard stale target or
+selection responses. MCP exposes `cockpit_role_availability` and the generic
+intent entry point; API and modules receive the same structure.
+
+This is an explicit, bounded query, **not a strictly side-effect-free read**.
+Modules may reconcile obsolete bindings using authoritative passive
+`session/get` results: unloaded still exists; only confirmed absence permits
+retirement; errors preserve unknown fences and history. Never load, prompt or
+send from a check. Use module-owned atomic uniqueness and generation fences
+before committing late reconciliation after awaits/abort. Queries do not reserve
+roles or hold mutation locks, so a positive result can become stale immediately.
+There is no background polling or automatic retry.
+
+Saving rechecks structural compatibility, availability and existing `permit`
+hooks under the existing module/session assignment locks before persistence.
+All check reasons are returned on rejection as `roleAvailability`; a single
+permission denial retains `ROLE_ASSIGNMENT_DENIED`, multiple failures use
+`ROLE_SELECTION_UNAVAILABLE`. No save, reload, stop or notification is performed
+on denial. A module without `availability` contributes no preflight objection;
+its mutation-only `permit` may still reject. Notification-only recovery keeps
+its separate receipt contract and is not a new reservation.
 
 Notifications describe saved selection, **not readiness**. They can register an
 unloaded or unready session; no prepare/load/reload/model change is implicit.
@@ -334,8 +402,15 @@ lists; `['*']` means all tools and `[]` means none.
 #### Exclusive role resources
 
 With `context.host.roleResourcePolicyVersion === 1`, a role may declare
-`"resourcePolicy":"exclusive"`. It must be selected alone and use explicit raw
-MCP tool names, not `*`. Native configuration discovery is disabled for that
+`"resourcePolicy":"exclusive"`. With `roleAvailabilityVersion: 1`, it may coexist
+only with non-exclusive roles declaring no `instructions`, no nonempty
+`skillDirectories`, and no nonempty `mcpServers`. An instructions file declaration
+counts even if its contents are empty; no model semantics or tool-name overlap is
+inferred. Multiple exclusive roles always conflict. Empty resource containers
+and pure service-binding roles are neutral, independent of module/role names.
+Older hosts require the exclusive role to be selected alone.
+
+Exclusive MCP tools use explicit raw names, not `*`. Native configuration discovery is disabled for that
 handle; only its role Skill directories and MCP definitions are supplied.
 Unrelated discovered/global MCP servers and the built-in GitHub server remain
 disabled, not authenticated or connected. Other sessions and global settings
@@ -348,7 +423,12 @@ continues to distinguish the optional saved `configured` scope from the actual
 Role instructions and user instructions remain; unrelated module-wide default
 instructions are not appended. Skill availability is not proof of body loading.
 
-Cold loading/reloading rebuilds this policy from the selected role. Enabling an
+Neutral roles add no instruction headers and never downgrade exclusive isolation.
+Creation, metadata additions, persistence and cold assembly share the same
+structural rule. Resource-file verification and actual native readiness remain
+separate from selection compatibility.
+
+Cold loading/reloading rebuilds this policy from the selected roles. Enabling an
 unrelated Skill/MCP or preparing it is rejected. MCP-only reload is rejected for
 exclusive handles: use a full idle session reload to recompute the exclusions.
 Actual native resources and tool metadata are checked, not merely hidden in UI.
@@ -444,7 +524,8 @@ reject such manifests, because the manifest schema is strict.
 
 | Intent | Shape |
 | --- | --- |
-| `roles/list {}` | `{ roles: [{ moduleId, roleId, moduleName, name, description? }] }` |
+| `roles/list {}` | `{ roles: [{ moduleId, roleId, moduleName, name, description?, resourcePolicy?, capabilities? }] }`; structural declarations, not readiness |
+| `roles/availability { roles, sessionId? }` | Structured selection reasons and `available` / `unavailable` / `unknown`; see [selection availability](#selection-availability) |
 | `roles/resources {}` | `{ modules: [{ id, name, roles: [{ id, name }], skills: [{ id, name, description?, roles }], mcpServers: [{ name, tools, roles }] }] }`; see below. |
 | `roles/skill-read { moduleId, resourceId }` | Reads one verified packaged `SKILL.md` by the opaque identity from `roles/resources`; returns `{ id, name, description?, body, module }`. |
 | `session/new { cwd, roles?, toolScope? }` | Creates one native session; result `{ sessionId }`; optional [immutable native tool scope](#session-tool-scope). |

@@ -25,6 +25,11 @@ isolated package snapshot, never committed back to source.
   Skill directories through cold load. Native prompt receipt observations expose
   the Host ingress class without copying message content or replacing native Chat.
   See [exclusive resources](module-contract.md#exclusive-role-resources).
+- Role selection now exposes all structural and module-provided denial/unknown
+  reasons before creation or addition. Neutral service-binding roles can coexist
+  with exclusive roles without weakening isolation; saving still rechecks under
+  assignment locks. Modules require `roleAvailabilityVersion: 1`; see
+  [selection availability](module-contract.md#selection-availability).
 - The independently versioned [module SDK](module-sdk.md) adds `settingsVersion: 1`
   and `settings` component middleware. Modules keep their own configuration and
   operations; the host supplies only the shared presentation boundary.

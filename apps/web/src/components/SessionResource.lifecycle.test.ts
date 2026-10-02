@@ -3,7 +3,7 @@ import assert from '../test/identityAssert';
 import { test, type TestContext } from 'node:test';
 import { createElement, type ReactNode } from 'react';
 import { createMemoryRouter, MemoryRouter, Route, RouterProvider, Routes, useNavigate } from 'react-router-dom';
-import type { IntentResult, McpServerStatus, SessionProjection } from '@cockpit/protocol';
+import { roleAvailability, type IntentResult, type McpServerStatus, type SessionProjection } from '@cockpit/protocol';
 import { useCockpit } from '../net/store';
 import { IntentHttpError } from '../net/client';
 import type { ChatSession } from '../net/types';
@@ -40,6 +40,7 @@ function mount(t: TestContext) {
   const api = { ...cockpitApi };
   // Global pages also read the module role catalog; fixtures opt in to its rows.
   cockpitApi.roleResources = async () => [];
+  cockpitApi.roleAvailability = async query => roleAvailability(query.roles, [], query.sessionId);
   useCockpit.setState({ connState: 'open', connectionGeneration: 1, sessions: [session], resourceRevisions: {} });
   const container = document.createElement('div');
   document.body.appendChild(container);

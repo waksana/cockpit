@@ -3,7 +3,7 @@
 
 import { ServerEvent, ServiceIdentity, ModuleInventory, Intents, NativeChatStreamRequest, classifyNativeModelSwitchResult,
   classifyNativeModeSetResult, classifyNativeRewindResult, MODULE_SKILL_NOT_FOUND, SKILL_NOT_FOUND,
-  ErrorCodes, isErrorCode } from '@cockpit/protocol';
+  ErrorCodes, isErrorCode, RoleAvailability } from '@cockpit/protocol';
 import type { NativeAttachment, IntentName, IntentBody, IntentResult, ExitPlanModeAction, NativeChatPage } from '@cockpit/protocol';
 import { BASE_URL, EVENTS_URL, CHAT_STREAM_URL, intentUrl } from '../lib/config';
 import { reportUxError, describeReason } from '../lib/errorReporter';
@@ -17,7 +17,7 @@ import { beginHostMutation } from '../lib/hostLeave';
 export const HOST_INTENT_MUTATES = {
   'settings/session-defaults': false, 'settings/session-defaults-set': true,
   'system/shutdown': true, 'system/status': false, 'runtime/snapshot': false,
-  'session/chat': false, 'session/new': true, 'roles/list': false, 'roles/resources': false,
+  'session/chat': false, 'session/new': true, 'roles/list': false, 'roles/resources': false, 'roles/availability': true,
   'roles/skill-read': false, 'roles/add': true, 'roles/notify': true, 'session/directory': false,
   'roles/readiness': false, 'session/tools-initialize': true, 'session/resources-prepare': true, 'session/fork': true,
   prompt: true, cancel: true, 'session/interrupt': true, 'session/control': true, setModel: true,
@@ -78,12 +78,14 @@ export class IntentHttpError extends Error {
   readonly code?: string;
   readonly sessionId?: string;
 
-  constructor(message: string, status: number, code?: string, sessionId?: string) {
+  readonly roleAvailability?: RoleAvailability;
+  constructor(message: string, status: number, code?: string, sessionId?: string, roleAvailability?: RoleAvailability) {
     super(message);
     this.name = 'IntentHttpError';
     this.status = status;
     this.code = code;
     this.sessionId = sessionId;
+    this.roleAvailability = roleAvailability;
   }
 }
 
@@ -248,7 +250,8 @@ export class NetClient {
         const message = typeof details.error === 'string' ? details.error
           : typeof details.message === 'string' ? details.message : `intent ${name} failed (${res.status})`;
         throw new IntentHttpError(message, res.status, typeof details.code === 'string' ? details.code : undefined,
-          typeof details.sessionId === 'string' ? details.sessionId : undefined);
+          typeof details.sessionId === 'string' ? details.sessionId : undefined,
+          RoleAvailability.safeParse(details.roleAvailability).data);
       }
       const result = Intents[name].result.parse(json);
       if (name === 'session/chat' && 'sessionId' in result && result.sessionId !== expectedSessionId) {
@@ -286,6 +289,9 @@ export class NetClient {
     return this.intent('session/new', { cwd, ...(roles ? { roles } : {}) }, options);
   }
   listRoles(options?: IntentOptions) { return this.intent('roles/list', {}, options); }
+  roleAvailability(query: IntentBody<'roles/availability'>, options?: IntentOptions) {
+    return this.intent('roles/availability', query, options);
+  }
   roleResources(options?: IntentOptions) { return this.intent('roles/resources', {}, options); }
   roleSkillRead(moduleId: string, resourceId: string, options?: IntentOptions) {
     return this.intent('roles/skill-read', { moduleId, resourceId }, options);
