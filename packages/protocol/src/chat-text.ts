@@ -1,5 +1,25 @@
 import { z } from 'zod';
 
+const digest = z.string().regex(/^[a-f0-9]{64}$/);
+const anchor = z.object({ id: z.string().min(1).max(256), version: digest }).strict();
+export const ChatTextPosition = z.discriminatedUnion('kind', [
+  z.object({
+    format: z.literal(2), kind: z.literal('checkpoint'), query: digest, anchor: anchor.nullable(),
+  }).strict(),
+  z.object({
+    format: z.literal(2), kind: z.literal('page'), query: digest,
+    native: z.string().max(16384).optional(), version: digest.optional(),
+    index: z.number().int().min(0).max(16), offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    head: anchor.nullable().optional(), until: anchor.nullable().optional(),
+  }).strict(),
+]).superRefine((value, context) => {
+  if (value.kind === 'page' && ((value.index > 0 || value.offset > 0) && !value.version
+    || value.index === 16 && value.offset !== 0)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'Partial positions require a page version and valid offset.' });
+  }
+});
+export type ChatTextPosition = z.infer<typeof ChatTextPosition>;
+
 export const ChatTextRead = z.object({
   sessionId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/),
   source: z.enum(['persisted', 'live']).default('persisted'),

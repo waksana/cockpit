@@ -61,7 +61,8 @@ jobs:
         env:
           COCKPIT_NATIVE_MODEL_SMOKE: '1'
           COCKPIT_NATIVE_TOOL_SCOPE: '1'
-        run: pnpm --filter @cockpit/server exec node --import tsx --test src/session-defaults-native.test.ts src/session-tool-scope-native.test.ts
+          COCKPIT_NATIVE_CHAT_TEXT: '1'
+        run: pnpm --filter @cockpit/server exec node --import tsx --test src/session-defaults-native.test.ts src/session-tool-scope-native.test.ts src/chat-text-native.test.ts
       - run: pnpm build
       - name: Isolated MCP graceful-shutdown smoke
         env:

@@ -17,7 +17,7 @@ export type { ChatMessage, ChatRole, SubagentInfo, ToolCall } from './validation
 
 export { CHAT_EVENT_TYPES, NativeChatEvent, NativeChatRead, NativeChatPage, NativeChatStreamRequest, NativeChatStreamEvent } from './native-chat.ts';
 import { NativeChatRead, NativeChatPage } from './native-chat.ts';
-export { ChatTextRead, ChatTextPage, ChatTextMessage } from './chat-text.ts';
+export { ChatTextRead, ChatTextPage, ChatTextMessage, ChatTextPosition } from './chat-text.ts';
 import { ChatTextRead, ChatTextPage } from './chat-text.ts';
 export {
   NativeModelSwitchResult, NativeModeSetResult, NativeCompactResult, NativeRewindResult,

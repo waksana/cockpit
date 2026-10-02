@@ -283,6 +283,19 @@ and read them via the native view; the four attachment schemas do not prove each
 media type/model is readable. The full MCP/native fork test is in the
 [fork guide](../apps/mcp/README.md#session-fork).
 
+**Portable text positions.** Run
+`COCKPIT_NATIVE_CHAT_TEXT=1 pnpm --filter @cockpit/server exec node --import tsx --test src/chat-text-native.test.ts`.
+The consumer saves a checkpoint and partial Chinese/emoji message outside the
+Host, stops its entire OS process, then starts a distinct Host PID against the
+same isolated native persistence. HTTP reads remain passive while unloaded,
+resume bounded multi-page fragments, and read post-restart appends using the
+original saved boundary. Concurrent appends, exact body reconstruction and a
+real rewind's missing anchor are covered. CI opts in; synthetic loopback BYOK
+requires no credentials. Unit tests additionally cover malformed/legacy
+positions, changed pages, empty native history and noise scan budgets. See the
+[text contract](native-chat.md#bounded-text-view) for caller-owned state and
+explicit recovery when the native cursor itself expires.
+
 **Default new-session model.** `packages/core/src/session-defaults.test.ts`,
 `apps/server/src/session-defaults.test.ts`, `apps/server/src/intents.test.ts` and
 `apps/mcp/src/tools/session-defaults.test.ts` cover create-only defaults, captured

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import { ChatTextRead, type NativeChatEvent, type NativeChatRead, type NativeChatPage } from '@cockpit/protocol';
 import { readChatText } from './chat-text.ts';
@@ -118,7 +119,97 @@ test('empty-session checkpoints read subsequent events and never interpret IDs a
   const next = await readChatText(q({ since: first.checkpoint }), read);
   assert.deepEqual(next.messages.map(item => item.eventId), ['first']);
   assert.ok(next.checkpoint);
-  await assert.rejects(readChatText(q({ since: 'first' }), read), /CURSOR_INVALID/);
+  await assert.rejects(readChatText(q({ since: 'first' }), read), /POSITION_FORMAT/);
+});
+
+const unpack = (token: string): Record<string, unknown> => JSON.parse(Buffer.from(token.slice(4), 'base64url').toString());
+const pack = (position: Record<string, unknown>) => `ct2.${Buffer.from(JSON.stringify(position)).toString('base64url')}`;
+function legacyToken(token: string, since?: string): string {
+  const { format: _format, ...old } = unpack(token);
+  old.query = createHash('sha256').update(JSON.stringify(['text-v1-primary', 'fixture', 'persisted', 'backward', since])).digest('hex');
+  return `${Buffer.from(JSON.stringify(old)).toString('base64url')}.${'x'.repeat(43)}`;
+}
+
+test('portable caller positions reject malformed shapes before reads and invalid native offsets after one bounded read', async () => {
+  const { read, calls } = fixture([event('unicode', '😀'.repeat(10_000))]);
+  const first = await readChatText(q({ maxBytes: 8192 }), read);
+  const position = unpack(first.cursor);
+  for (const cursor of ['ct2.@@', 'ct3.abc', 'ct2.e30', 'ct2.ew']) {
+    await assert.rejects(readChatText(q({ cursor }), read), /CURSOR_INVALID|POSITION_FORMAT/);
+  }
+  for (const changed of [
+    { format: 3 }, { index: -1 }, { index: 17 }, { offset: 0.5 }, { offset: Number.MAX_SAFE_INTEGER + 1 },
+    { native: 'x'.repeat(16385) }, { arbitraryPath: '/etc/passwd' }, { version: undefined },
+    { until: null }, { head: { id: 'x', version: 'not-a-digest' } },
+  ]) {
+    await assert.rejects(readChatText(q({ cursor: pack({ ...position, ...changed }) }), read), /CURSOR_INVALID/);
+  }
+  assert.equal(calls.length, 1);
+  for (const changed of [{ offset: 1 }, { offset: 20000 }, { index: 2, offset: 0 }]) {
+    await assert.rejects(readChatText(q({ cursor: pack({ ...position, ...changed }) }), read), /CURSOR_INVALID/);
+  }
+  assert.equal(calls.length, 4);
+});
+
+test('legacy v1 checkpoint imports only caller-owned coordinates and upgrades after native validation', async () => {
+  const events = [event('old')];
+  const { read } = fixture(events);
+  const first = await readChatText(q(), read);
+  assert.ok(first.checkpoint);
+  const legacy = legacyToken(first.checkpoint);
+  events.push(event('new'));
+  const page = await readChatText(q({ since: legacy }), read);
+  assert.deepEqual(page.messages.map(item => item.eventId), ['new']);
+  assert.ok(page.checkpoint?.startsWith('ct2.'));
+  events[0]!.data.content = 'changed';
+  await assert.rejects(readChatText(q({ since: legacy }), read), /CHECKPOINT_CHANGED/);
+});
+
+test('legacy partial cursor resumes its original legacy since range and emits portable continuation', async () => {
+  const events = [event('old')];
+  const { read } = fixture(events);
+  const baseline = await readChatText(q(), read);
+  assert.ok(baseline.checkpoint);
+  const since = legacyToken(baseline.checkpoint);
+  const content = '中文😀'.repeat(5000);
+  events.push(event('new', content));
+  const first = await readChatText(q({ since, maxBytes: 8192 }), read);
+  let cursor = legacyToken(first.cursor, since);
+  let body = first.messages[0]!.content;
+  for (let i = 0; i < 30; i++) {
+    const page = await readChatText(q({ since, cursor, maxBytes: 8192 }), read);
+    assert.ok(page.cursor.startsWith('ct2.'));
+    for (const item of page.messages) {
+      assert.equal(item.offset, body.length);
+      body += item.content;
+    }
+    if (page.checkpoint) {
+      assert.ok(page.checkpoint.startsWith('ct2.'));
+      break;
+    }
+    cursor = page.cursor;
+  }
+  assert.equal(body, content);
+});
+
+test('expired native partial continuation explicitly recovers the original since range within budgets', async () => {
+  const events = [event('old')];
+  const { read } = fixture(events);
+  const baseline = await readChatText(q(), read);
+  events.push(...Array.from({ length: 35 }, (_, i) => event(`new-${i}`)));
+  const first = await readChatText(q({ since: baseline.checkpoint, scanPages: 1 }), read);
+  await assert.rejects(readChatText(q({ since: baseline.checkpoint, cursor: first.cursor }),
+    async query => ({ ...await read(query), cursorStatus: 'expired' })), /original since without cursor/);
+  let cursor: string | undefined;
+  const delivered = new Set(first.messages.map(item => item.eventId));
+  for (let i = 0; i < 10; i++) {
+    const page = await readChatText(q({ since: baseline.checkpoint, cursor, scanPages: 1 }), read);
+    assert.ok(page.read.pages <= 1);
+    page.messages.forEach(item => delivered.add(item.eventId));
+    if (page.checkpoint) break;
+    cursor = page.cursor;
+  }
+  assert.equal(delivered.size, 35);
 });
 
 for (const direction of ['forward', 'backward'] as const) {
