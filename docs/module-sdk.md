@@ -141,6 +141,14 @@ major, legacy v2 or global-component behavior. See
 activation and revocation. SDK types alone do not prove a host advertises
 `page.v1` in its deployment descriptor.
 
+Selection-time role checking requires `roleAvailabilityVersion: 1` and the
+`roleAvailability.v1` deployment capability. The optional
+`roleAssignments.availability` hook and `roles/availability` public host call
+return structured denials and unknown checks, not a reservation. See
+[selection availability](module-contract.md#selection-availability).
+The source addition in `changes.json` does not publish the SDK; consumers must
+wait for a separately authorized registry release before depending on it.
+
 Backend prompt correlation requires `promptReceiptVersion: 1`, independently of
 SDK version. The `prompt` result's optional `messageId` preserves the native
 acceptance receipt, not the event UUID or an assistant message ID. Follow

@@ -312,7 +312,7 @@ test('module lifecycle abort interrupts a waiting permission without saving', as
   const run = service.run(assignment('one'), async () => { assert.fail('must not save after abort'); });
   await entered.promise;
   controller.abort(new Error('module stopped'));
-  await assert.rejects(run, /module stopped/);
+  await assert.rejects(run, /failed or was aborted/);
 });
 
 test('shutdown aborts pending notification without waiting for module code and preserves recovery', async t => {

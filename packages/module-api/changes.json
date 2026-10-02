@@ -1,5 +1,10 @@
 [
   {
+    "version": "0.14.0",
+    "kind": "additive",
+    "summary": "Add roleAvailabilityVersion: 1, structured selection-time availability queries and module hooks, including all confirmed denials and unknown checks. Allow structurally neutral service-binding roles alongside exclusive roles without weakening native isolation. SDK source preparation only; independent publication remains required."
+  },
+  {
     "version": "0.13.0",
     "kind": "additive",
     "summary": "Add opt-in exclusive role resources and body-free promptAccepted observations with explicit Host ingress origin. Native Chat remains authoritative; no notification or message-history replacement API."

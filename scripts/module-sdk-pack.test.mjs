@@ -43,9 +43,18 @@ const fixtures = [
       return messageId;
     });
     const roleVersion: 1 | undefined = host.roleAssignmentVersion;
+    const availabilityVersion: 1 | undefined = host.roleAvailabilityVersion;
+    const availability = host.call('roles/availability', { roles: [] });
     const directoryVersion: 1 | undefined = host.sessionDirectoryVersion;
     const loadVersion: 1 | undefined = host.sessionLoadVersion;
     const roleBackend: ModuleBackend = { routes: [], roleAssignments: {
+      availability: (selection, signal) => {
+        signal.throwIfAborted();
+        const target: string | undefined = selection.sessionId;
+        void target;
+        return { reasons: [{ code: 'OCCUPIED', message: 'Fixture denial', status: 'denied',
+          roles: selection.roles, capabilities: [] }] };
+      },
       permit: (assignment, signal) => {
         signal.throwIfAborted();
         return assignment.roles.length > 1 ? { allowed: false, reason: 'Conflict' } : { allowed: true };
@@ -55,7 +64,7 @@ const fixtures = [
     const directory = host.call('session/directory', { limit: 50 });
     const load = host.call('session/load', { sessionId: 's' });
     const notify = host.call('roles/notify', { notificationId: 'a'.repeat(64) });
-    void [roleVersion, directoryVersion, loadVersion, roleBackend, directory, load, notify];
+    void [roleVersion, availabilityVersion, availability, directoryVersion, loadVersion, roleBackend, directory, load, notify];
     declare const partial: RoleAssignmentFailure;
     const returned = partial.roleAssignment.mutationResult;
     if (returned?.operation === 'create') {

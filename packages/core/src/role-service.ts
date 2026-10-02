@@ -1,5 +1,7 @@
-import type { RoleAdditionResult, RoleReadiness, RoleSelection, SessionRole, RoleAssignmentNotificationResult } from '@cockpit/protocol';
-import { CockpitError, invalid, transition, unavailable } from './errors.ts';
+import { roleAvailability, roleCompatibilityReasons, assertRoleCompatibility,
+  type RoleAvailabilityQuery, type RoleAvailabilityReason,
+  type RoleAdditionResult, type RoleReadiness, type RoleSelection, type SessionRole, type RoleAssignmentNotificationResult } from '@cockpit/protocol';
+import { invalid, transition, unavailable } from './errors.ts';
 import { messageOf, settled } from './async.ts';
 import type { SessionKernel } from './kernel.ts';
 import type { SessionHandle } from './session-handle.ts';
@@ -15,6 +17,33 @@ export class RoleService {
   }
 
   listRoles() { return this.k.roles?.list() ?? []; }
+
+  async roleAvailability(query: RoleAvailabilityQuery) {
+    const { sessionId } = query;
+    let previousRoles: SessionRole[] = [];
+    const reasons: RoleAvailabilityReason[] = [];
+    if (sessionId) {
+      try {
+        previousRoles = await this.savedRoles(sessionId);
+        if (!this.k.sessions.get(sessionId)?.sdk && !await this.k.untilFatal(() => this.k.runtime.getSessionMetadata(sessionId))) {
+          reasons.push({ code: 'SESSION_NOT_FOUND', message: 'Target session does not exist', status: 'denied',
+            source: { kind: 'host' }, roles: [], capabilities: [] });
+        }
+      } catch {
+        // No invented previous selection or module cleanup when native facts are unavailable.
+        const knownRoles = [...new Map([...previousRoles, ...query.roles].map(role => [`${role.moduleId}/${role.roleId}`, role])).values()];
+        return roleAvailability(knownRoles, [...roleCompatibilityReasons(knownRoles, this.listRoles()), {
+          code: 'SESSION_CHECK_ERROR', message: 'Target session or saved roles could not be read; module checks were not run',
+          status: 'unknown', source: { kind: 'host' }, roles: [], capabilities: [],
+        }], sessionId);
+      }
+    }
+    const roles = [...new Map([...previousRoles, ...query.roles].map(role => [`${role.moduleId}/${role.roleId}`, role])).values()];
+    const input = { operation: sessionId ? 'add' as const : 'create' as const, sessionId, roles, previousRoles };
+    return this.k.roles?.availability
+      ? this.k.roles.availability(input, reasons)
+      : roleAvailability(roles, [...reasons, ...roleCompatibilityReasons(roles, this.listRoles())], sessionId);
+  }
 
   async listRoleResources() { return await this.k.roles?.resources?.() ?? []; }
 
@@ -138,20 +167,25 @@ export class RoleService {
     try {
       let selected = await this.k.roles.read(id);
       const catalog = this.k.roles.list();
-      const combined = new Map(selected.map(role => [`${role.moduleId}/${role.roleId}`, role]));
+      const combined = new Map<string, RoleSelection>(selected.map(role => [`${role.moduleId}/${role.roleId}`, role]));
       for (const addition of additions) {
         const role = catalog.find(value => value.moduleId === addition.moduleId && value.roleId === addition.roleId);
-        if (!role) throw new CockpitError('ROLE_NOT_FOUND', `Unknown module role: ${addition.moduleId}/${addition.roleId}`);
-        combined.set(`${role.moduleId}/${role.roleId}`, {
+        const entry = role ? {
           moduleId: role.moduleId, roleId: role.roleId, moduleName: role.moduleName, name: role.name,
-        });
+        } : addition;
+        combined.set(`${addition.moduleId}/${addition.roleId}`, entry);
       }
-      if (combined.size > 64) throw invalid('A session can select at most 64 roles');
       const unchanged = combined.size === selected.length;
       const save = async (): Promise<RoleAdditionResult> => {
+        assertRoleCompatibility([...combined.values()], catalog);
         if (unchanged) return { sessionId: id, status: 'unchanged', loaded: !!st.sdk, ...this.roleState(st, selected) };
+        const nextRoles = [...combined.values()].map(selection => {
+          const { moduleId, roleId, name, moduleName } = catalog.find(role =>
+            role.moduleId === selection.moduleId && role.roleId === selection.roleId)!;
+          return { moduleId, roleId, name, moduleName };
+        });
         try {
-          provider.save(id, [...combined.values()]);
+          provider.save(id, nextRoles);
           selected = await provider.read(id);
           if (selected.length !== combined.size || selected.some(role => !combined.has(`${role.moduleId}/${role.roleId}`))) {
             throw new Error('Saved role selection did not confirm the requested additions');

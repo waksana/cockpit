@@ -31,6 +31,7 @@ const backendSchema = z.object({
   onReady: z.custom<NonNullable<ModuleBackend['onReady']>>(value => typeof value === 'function').optional(),
   promptAccepted: z.custom<NonNullable<ModuleBackend['promptAccepted']>>(value => typeof value === 'function').optional(),
   roleAssignments: z.object({
+    availability: z.custom<NonNullable<NonNullable<ModuleBackend['roleAssignments']>['availability']>>(value => typeof value === 'function').optional(),
     permit: z.custom<NonNullable<NonNullable<ModuleBackend['roleAssignments']>['permit']>>(value => typeof value === 'function').optional(),
     saved: z.custom<NonNullable<NonNullable<ModuleBackend['roleAssignments']>['saved']>>(value => typeof value === 'function').optional(),
   }).strict().optional(),
@@ -182,10 +183,10 @@ export class ModuleHost {
           host: Object.freeze({ resourcePreparationVersion: 1, toolScopeVersion: 1, roleResourcePolicyVersion: 1,
             ...(this.options.observer.onPromptAccepted ? { promptOriginVersion: 1 as const } : {}),
             askResponseVersion: 1, chatReadVersion: 1, promptReceiptVersion: 1,
-            roleAssignmentVersion: 1, sessionDirectoryVersion: 1, sessionLoadVersion: 1, call: (name, body) => {
+            roleAssignmentVersion: 1, roleAvailabilityVersion: 1, sessionDirectoryVersion: 1, sessionLoadVersion: 1, call: (name, body) => {
             if (controller.signal.aborted || this.closed) throw new Error('Module is stopped');
             if (!this.loaded.some(module => module.controller === controller)) throw new Error('Module host intents are not active');
-            if (!['session/new', 'session/get', 'session/rename', 'roles/readiness', 'session/resources-prepare', 'prompt', 'respondAsk', 'session/chat', 'session/directory', 'session/load', 'roles/notify', 'session/tool-scope'].includes(name)) throw new Error('Module host intent is not allowed');
+            if (!['session/new', 'session/get', 'session/rename', 'roles/readiness', 'roles/availability', 'session/resources-prepare', 'prompt', 'respondAsk', 'session/chat', 'session/directory', 'session/load', 'roles/notify', 'session/tool-scope'].includes(name)) throw new Error('Module host intent is not allowed');
             if (!this.options.host) throw new Error('Module host intents are unavailable');
             this.roles.assertCallbackHostCall(name);
             return this.options.host.call(name, body);

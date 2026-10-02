@@ -5,6 +5,7 @@ import { cockpitApi, loadRoleCatalog } from '../../net/api';
 import type { ChatSession } from '../../net/types';
 import { useKeyedAction, useKeyedResource } from '../../lib/useKeyedResource';
 import { useHostUnsavedChanges } from '../../lib/hostLeave';
+import { useRoleAvailability } from './useRoleAvailability';
 
 export const sameRole = (a: RoleSelection, b: RoleSelection) => a.moduleId === b.moduleId && a.roleId === b.roleId;
 export function roleAdditionBlocked(session?: ChatSession) {
@@ -25,6 +26,7 @@ export function useSessionRoles(session: ChatSession) {
   const savedRoles = session.roles ?? [];
   const available = catalog.usable ? catalog.data?.filter(role => !savedRoles.some(saved => sameRole(role, saved))) ?? [] : [];
   const additions = selected.filter(role => available.some(option => sameRole(role, option)));
+  const availability = useRoleAvailability(catalog.data ?? [], additions, open && catalog.usable, sid, savedRoles);
   const connected = action.connected && snapshotReady;
   const blocked = roleAdditionBlocked(session) || !connected;
   const resultNeedsReload = result?.rolesNeedReload
@@ -51,7 +53,7 @@ export function useSessionRoles(session: ChatSession) {
   const submit = () => {
     const current = useCockpit.getState().sessions.find(row => row.sessionId === sid);
     if (blocked || roleAdditionBlocked(current) || action.busy || needsInspection
-      || !catalog.usable || !additions.length || additions.length > 64) return;
+      || !catalog.usable || !availability.allowed || !additions.length || additions.length > 64) return;
     setOperation('save');
     setNeedsInspection(true);
     setResult(null);
@@ -69,5 +71,5 @@ export function useSessionRoles(session: ChatSession) {
     });
   };
   return { open, setOpen, opened, setOpened, catalog, action, selected, setSelected, result, needsInspection, operation,
-    refreshed, available, additions, connected, blocked, resultNeedsReload, refresh, submit };
+    refreshed, available, additions, connected, blocked, resultNeedsReload, refresh, submit, availability };
 }

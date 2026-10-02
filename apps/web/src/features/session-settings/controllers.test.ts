@@ -2,7 +2,7 @@ import { act, render, type RenderResult } from '../../test/dom';
 import assert from 'node:assert/strict';
 import { test, type TestContext } from 'node:test';
 import { createElement, type ReactNode } from 'react';
-import type { IntentResult } from '@cockpit/protocol';
+import { roleAvailability, type IntentResult, type RoleAvailabilityQuery } from '@cockpit/protocol';
 import { useCockpit } from '../../net/store';
 import { cockpitApi } from '../../net/api';
 import type { ChatSession } from '../../net/types';
@@ -14,6 +14,7 @@ function mount(t: TestContext) {
   const previous = useCockpit.getState();
   useCockpit.setState({ connState: 'open', connectionGeneration: 1, snapshotReady: true, sessions: [session] });
   t.mock.method(globalThis, 'fetch', async () => assert.fail('Synthetic controller tests cannot use a backend'));
+  t.mock.method(cockpitApi, 'roleAvailability', async (query: RoleAvailabilityQuery) => roleAvailability(query.roles, [], query.sessionId));
   let view: RenderResult | undefined;
   t.after(() => { useCockpit.setState(previous, true); });
   return (children: ReactNode) => act(async () => {
@@ -84,7 +85,7 @@ test('production roles controller allows busy metadata additions but locks uncer
   function Harness() { control = useSessionRoles(target); return null; }
   await render(createElement(Harness));
   assert.equal(catalogs, 0);
-  await act(async () => control.setOpened(true));
+  await act(async () => { control.setOpened(true); control.setOpen(true); });
   assert.equal(catalogs, 1);
   await act(async () => control.setSelected([role]));
   assert.equal(control.blocked, false);

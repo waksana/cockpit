@@ -3,7 +3,7 @@
 // its own result, so none of these raise a global notice. Tests and synthetic
 // fixtures replace individual methods on this object.
 
-import type { DirListing, IntentResult, McpServerGlobal, ModuleRoleResources, RoleSelection, SkillGlobal } from '@cockpit/protocol';
+import type { DirListing, IntentResult, McpServerGlobal, ModuleRoleResources, RoleSelection, SkillGlobal, RoleAvailabilityQuery } from '@cockpit/protocol';
 import { OWNED, type NetClient } from './client';
 import { OperationRejected, recordOperationFailure } from '../lib/operationErrors';
 import { copy } from '../lib/copy';
@@ -39,6 +39,8 @@ export function createCockpitApi(store: ReturnType<typeof createCockpitStore>) {
     setSessionDefaults: (modelId: string) => read(net => net.intent('settings/session-defaults-set', { modelId }, OWNED)),
     listDir: (path?: string): Promise<DirListing> => read(net => net.listDir(path, OWNED)),
     listRoles: (): Promise<IntentResult<'roles/list'>['roles']> => read(net => net.listRoles(OWNED)).then(result => result.roles),
+    roleAvailability: (query: RoleAvailabilityQuery, signal?: AbortSignal) =>
+      read(net => net.roleAvailability(query, { ...OWNED, signal })),
     roleResources: (): Promise<ModuleRoleResources[]> => read(net => net.roleResources(OWNED)).then(result => result.modules),
     roleSkillRead: (moduleId: string, resourceId: string): Promise<IntentResult<'roles/skill-read'>> =>
       read(net => net.roleSkillRead(moduleId, resourceId, OWNED)),

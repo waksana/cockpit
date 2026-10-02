@@ -1,10 +1,19 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { RoleSelection } from '@cockpit/protocol';
+import { RoleSelection, RoleAvailabilityQuery } from '@cockpit/protocol';
 import { protocolIntent as intent } from '../cockpit.js';
 import { ResponseFormat, cappedJson, fail, ok, intentJson } from '../shared.js';
 
 export function registerRoleTools(server: McpServer): void {
+  server.registerTool('cockpit_role_availability', {
+    title: 'Check role selection availability',
+    description: 'Explicit preflight for a new selection (omit sessionId) or additions (include sessionId, including unloaded sessions). Returns every confirmed denial and unknown check with source, roles and capability categories. May reconcile stale module bindings; never loads, prompts or sends. No reservation or readiness claim; saving rechecks authoritative permission under locks. Requery explicitly when circumstances change.',
+    inputSchema: RoleAvailabilityQuery.shape,
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+  }, async input => {
+    try { return ok(cappedJson(await intent('roles/availability', input))); }
+    catch (error) { return fail(String(error)); }
+  });
   server.registerTool('cockpit_list_roles', {
     title: 'List module roles', description: 'Discover module roles for creation or metadata-only addition to existing sessions. Multiple roles from one module are allowed.',
     inputSchema: { response_format: ResponseFormat },

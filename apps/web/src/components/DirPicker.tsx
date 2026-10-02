@@ -10,7 +10,8 @@ import { OperationErrorResult } from './OperationResult';
 import { StateNotice } from './StateNotice';
 import { ActionRow } from './UI';
 import type { RoleSelection } from '@cockpit/protocol';
-import { RolePicker } from './RolePicker';
+import { RolePicker, RoleReasons } from './RolePicker';
+import { useRoleAvailability } from '../features/session-settings/useRoleAvailability';
 
 interface DirPickerProps {
   initialPath?: string;
@@ -26,6 +27,7 @@ export function DirPicker(props: DirPickerProps) {
 function DirectoryDialog({ initialPath, onCreate, onCreated, onCancel }: DirPickerProps) {
   const roleResource = useKeyedResource('module-roles', loadRoleCatalog);
   const [selectedRoles, setSelectedRoles] = useState<RoleSelection[]>([]);
+  const availability = useRoleAvailability(roleResource.data ?? [], selectedRoles, roleResource.usable);
   const [requestedPath, setRequestedPath] = useState(initialPath);
   const [editedPath, setEditedPath] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
@@ -47,7 +49,7 @@ function DirectoryDialog({ initialPath, onCreate, onCreated, onCancel }: DirPick
   };
   const rolesAvailable = selectedRoles.every(selected => roleResource.data?.some(role =>
     role.moduleId === selected.moduleId && role.roleId === selected.roleId));
-  const canCreate = resource.valid && roleResource.valid && rolesAvailable && Boolean(path) && edit === path && !locked;
+  const canCreate = resource.valid && roleResource.valid && rolesAvailable && availability.allowed && Boolean(path) && edit === path && !locked;
   const create = () => {
     if (!canCreate || !path) return;
     let sessionId: string;
@@ -90,7 +92,8 @@ function DirectoryDialog({ initialPath, onCreate, onCreated, onCancel }: DirPick
       onClick={() => void roleResource.refresh()}>重试加载角色</Button>}
     {roleResource.valid && !rolesAvailable && <StateNotice kind="error">所选角色已不可用，请关闭窗口后重新选择。</StateNotice>}
     {!!roleResource.data?.length && <RolePicker roles={roleResource.data} selected={selectedRoles}
-      disabled={locked || !roleResource.valid} onChange={setSelectedRoles} />}
+      disabled={locked || !roleResource.valid} onChange={setSelectedRoles} availability={availability} />}
+    {action.errorCause instanceof IntentHttpError && <RoleReasons result={action.errorCause.roleAvailability} />}
     {action.error && <OperationErrorResult label="创建会话" error={action.error} cause={action.errorCause} />}
     {incompleteSessionId && <p>已创建、状态待核对的会话：
       <Button onClick={() => { onCreated(incompleteSessionId); onCancel(); }}>

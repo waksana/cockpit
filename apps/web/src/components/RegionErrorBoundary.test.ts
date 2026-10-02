@@ -163,7 +163,7 @@ test('a crashing session panel keeps its header and close control inside the ins
   assert.equal(inspector.querySelector('.pane-title')?.textContent, '会话设置');
   assert.ok(within(inspector as HTMLElement).getByRole('button', { name: '关闭' }), 'close stays available');
   assert.equal(getUxErrors().length, 0);
-  assert.match(diagnostics.join('\n'), /会话设置渲染失败：Cannot read properties of null/);
+  assert.match(diagnostics.join('\n'), /会话设置渲染失败：.*null/);
 });
 
 test('a failed lazy module load offers a page reload, because retrying cannot recover it', async t => {

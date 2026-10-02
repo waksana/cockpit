@@ -6,22 +6,30 @@ import { ModuleLabel, ModuleSourceBadge, RoleBadge } from './ModuleLabel';
 import { RolePicker } from './RolePicker';
 import { Sidebar } from './Sidebar';
 import type { ChatSession } from '../net/types';
+import { roleAvailability } from '@cockpit/protocol';
+import type { RoleAvailabilityResource } from '../features/session-settings/useRoleAvailability';
 
 const roles = [
   { moduleId: 'cockpit-task', moduleName: 'Task', roleId: 'owner', name: 'Owner', description: 'Coordinate independent tasks.' },
   { moduleId: 'cockpit-task', moduleName: 'Task', roleId: 'executor', name: 'Executor', description: 'Deliver one assigned task.' },
   { moduleId: 'other', moduleName: 'module_Original__Name', roleId: 'owner', name: 'cockpit-Exact-owner' },
 ];
+const availability: RoleAvailabilityResource = {
+  allowed: true, valid: true, usable: true, connected: true, pending: false, failed: false,
+  error: null, errorCause: undefined, status: null, refresh: async () => true,
+  data: { selection: roleAvailability([], []),
+    candidates: new Map(roles.map(role => [`${role.moduleId}/${role.roleId}`, roleAvailability([role], [])])) },
+};
 
 test('role picker names roles and modules separately, retains multiselection and accessible descriptions', () => {
   const html = renderToStaticMarkup(createElement(RolePicker, {
-    roles, selected: [roles[0], roles[2]], disabled: false,
+    roles, selected: [roles[0], roles[2]], disabled: false, availability,
     onChange: () => { throw new Error('Rendering cannot select a role'); },
   }));
   assert.equal((html.match(/type="checkbox"/g) ?? []).length, 3);
   assert.equal((html.match(/checked=""/g) ?? []).length, 2);
   assert.equal((html.match(/data-selected="true"/g) ?? []).length, 2);
-  assert.equal((html.match(/aria-describedby=/g) ?? []).length, 2);
+  assert.equal((html.match(/aria-describedby=/g) ?? []).length, 3);
   assert.match(html, /class="module-label-name">module_Original__Name</);
   assert.match(html, />cockpit-Exact-owner</);
   assert.doesNotMatch(html, /可选，可多选|readiness|role="switch"/);
@@ -32,7 +40,7 @@ test('role picker names roles and modules separately, retains multiselection and
 
 test('disabled role picker uses native fieldset disabling without dropping selected roles', () => {
   const html = renderToStaticMarkup(createElement(RolePicker, {
-    roles, selected: [roles[1]], disabled: true, onChange: () => {},
+    roles, selected: [roles[1]], disabled: true, onChange: () => {}, availability,
   }));
   assert.match(html, /<fieldset class="role-picker" disabled=""/);
   assert.equal((html.match(/checked=""/g) ?? []).length, 1);

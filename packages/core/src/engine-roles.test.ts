@@ -4,6 +4,7 @@ import { setImmediate as nextTurn } from 'node:timers/promises';
 import type { CopilotSession } from '@github/copilot-sdk';
 import { Engine, type EngineRuntime } from './engine.ts';
 import type { RoleProvider } from './roles.ts';
+import { roleAvailability } from '@cockpit/protocol';
 import {
   type McpState,
   type ServerSkill,
@@ -41,6 +42,38 @@ async function roleAdditionFixture(t: TestContext) {
   native.state.events.push(user('synthetic-history'));
   return { ...h, id, native, catalog, saved, provider };
 }
+
+test('availability reads saved roles of unloaded targets without loading and distinguishes missing from read errors', async t => {
+  const h = await roleAdditionFixture(t);
+  await h.engine.addRoles(h.id, [h.catalog[0]!]);
+  await h.engine.unload(h.id);
+  const resumes = h.runtime.resumeSession.mock.callCount();
+  const calls: Array<Parameters<NonNullable<RoleProvider['availability']>>[0]> = [];
+  h.provider.availability = async (input, reasons = []) => {
+    calls.push(input);
+    return roleAvailability(input.roles, reasons, input.sessionId);
+  };
+  const checked = await h.engine.roleAvailability({ sessionId: h.id, roles: [h.catalog[1]!] });
+  assert.equal(checked.status, 'available');
+  assert.equal(calls[0]?.previousRoles.length, 1);
+  assert.equal(calls[0]?.roles.length, 2);
+  assert.equal(h.runtime.resumeSession.mock.callCount(), resumes);
+  const missing = await h.engine.roleAvailability({ sessionId: 'does-not-exist', roles: [h.catalog[0]!] });
+  assert.equal(missing.reasons[0]?.code, 'SESSION_NOT_FOUND');
+  const count = calls.length;
+  h.runtime.getSessionMetadata.mock.mockImplementation(async () => { throw new Error('PRIVATE NATIVE FAILURE'); });
+  const failed = await h.engine.roleAvailability({ sessionId: h.id, roles: [h.catalog[0]!] });
+  assert.equal(failed.status, 'unknown');
+  assert.equal(calls.length, count);
+  assert.doesNotMatch(JSON.stringify(failed), /PRIVATE NATIVE/);
+  h.provider.list = () => h.catalog.map((role, index) => ({
+    ...role, ...(index === 0 ? { resourcePolicy: 'exclusive' as const } : { capabilities: ['skills' as const] }),
+  }));
+  const conflict = await h.engine.roleAvailability({ sessionId: h.id, roles: [h.catalog[1]!] });
+  assert.equal(conflict.status, 'unavailable');
+  assert.equal(conflict.roles.length, 2, 'metadata failure retains already-read saved role facts');
+  assert.deepEqual(conflict.reasons.map(reason => reason.code), ['ROLE_EXCLUSIVE_CONFLICT', 'SESSION_CHECK_ERROR']);
+});
 
 test('ordinary creation publishes its settled operation count without a role callback', async t => {
   const h = harness(t);

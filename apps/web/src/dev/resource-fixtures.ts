@@ -148,6 +148,10 @@ export function installResourceFixture(store: ReturnType<typeof createCockpitSto
   Object.assign(cockpitApi, {
     setModel: async (id, model, settings) => { await request(); return workspaceApi.setModel(id, model, settings); },
     listRoles: async () => { await request(); return options.empty ? [] : catalog; },
+    roleAvailability: async query => {
+      await request();
+      return { roles: query.roles, sessionId: query.sessionId, status: 'available', reasons: [] };
+    },
     roleReadiness: async id => {
       const session = find(id);
       return { sessionId: id, roles: session.roles ?? [], appliedRoles: session.appliedRoles ?? [],

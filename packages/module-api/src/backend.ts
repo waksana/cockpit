@@ -7,6 +7,7 @@ import type {
   NativeChatEvent,
   ServerEvent,
   RoleSelection,
+  RoleAvailabilityReason,
   PromptAccepted,
 } from './contract.ts';
 
@@ -19,6 +20,8 @@ export interface ModuleHostApi {
   readonly promptOriginVersion?: 1;
   /** Atomic role permission and durable saved-selection notifications. */
   readonly roleAssignmentVersion?: 1;
+  /** Structural exclusive compatibility and bounded selection-time module checks. */
+  readonly roleAvailabilityVersion?: 1;
   /** Bounded, passive native session metadata directory. */
   readonly sessionDirectoryVersion?: 1;
   /** Explicit load without closing or reloading an existing handle. */
@@ -51,6 +54,15 @@ export interface RoleAssignmentNotification extends RoleAssignment {
   /** Stable across explicit notification-only replay; consumers must deduplicate. */
   notificationId: string;
 }
+
+export interface RoleAvailabilityCheck {
+  operation: 'create' | 'add';
+  /** Absent for a new-session preflight; present for mutations and additions. */
+  sessionId?: string;
+  roles: RoleSelection[];
+  previousRoles: RoleSelection[];
+}
+export type ModuleRoleAvailabilityReason = Omit<RoleAvailabilityReason, 'source'>;
 
 export interface NativeObservation {
   sessionId: string;
@@ -114,6 +126,15 @@ export interface ModuleBackend {
   /** Live acceptance facts only. Errors do not undo or retry an accepted native send. */
   promptAccepted?(event: PromptAccepted): void | Promise<void>;
   roleAssignments?: {
+    /**
+     * Explicit preflight and locked mutation recheck. No reservation or readiness.
+     * May reconcile stale module bindings using authoritative passive existence
+     * reads; never load/prompt/send. Honor signal and fence late cleanup writes.
+     * Return all known reasons; [] means no module objection at this instant.
+     * Throw/timeout becomes an unknown reason without erasing other checks.
+     */
+    availability?(selection: RoleAvailabilityCheck, signal: AbortSignal):
+      { reasons: ModuleRoleAvailabilityReason[] } | Promise<{ reasons: ModuleRoleAvailabilityReason[] }>;
     /** Absent means allow. Called at mutation time, not just by a UI preflight. */
     permit?(assignment: RoleAssignment, signal: AbortSignal):
       { allowed: true } | { allowed: false; reason: string }

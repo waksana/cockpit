@@ -5,8 +5,9 @@ import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { RoleSelection, RoleAdditionResult, RoleAssignmentMutationResult, RoleAssignmentFailureDetails,
+  RoleAvailabilityReason, roleAvailability,
   type RoleAssignmentNotificationResult } from '@cockpit/protocol';
-import type { ModuleBackend, RoleAssignment, RoleAssignmentNotification } from '@cockpit/module-api/backend';
+import type { ModuleBackend, RoleAssignment, RoleAssignmentNotification, RoleAvailabilityCheck } from '@cockpit/module-api/backend';
 
 export interface AssignmentHandler {
   moduleId: string;
@@ -32,6 +33,9 @@ const identities = (roles: RoleAssignment['roles']) =>
 const same = (a: RoleAssignment['roles'], b: RoleAssignment['roles']) =>
   JSON.stringify(identities(a)) === JSON.stringify(identities(b));
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
+const availabilitySchema = z.object({
+  reasons: z.array(RoleAvailabilityReason.omit({ source: true })).max(128),
+}).strict();
 
 /** Durable notification receipts, not a native session registry or readiness cache. */
 export class RoleAssignments {
@@ -161,7 +165,36 @@ export class RoleAssignments {
     } finally { clearTimeout(timer); signal.removeEventListener('abort', abort); }
   }
 
-  async run<T>(input: RoleAssignment, action: () => Promise<T>, notified?: (result: RoleAssignmentNotificationResult) => void): Promise<T> {
+  async availability(input: RoleAvailabilityCheck, initial: RoleAvailabilityReason[] = []) {
+    this.assertAllowed();
+    const selections = (roles: RoleSelection[]) => roles.map(({ moduleId, roleId }) => ({ moduleId, roleId }));
+    input = { ...input, roles: selections(input.roles), previousRoles: selections(input.previousRoles) };
+    const reasons = [...initial];
+    for (const handler of this.handlers().filter(handler => input.roles.some(role => role.moduleId === handler.moduleId))) {
+      if (!handler.hooks.availability) continue;
+      try {
+        const result = availabilitySchema.parse(await this.callback(handler,
+          signal => handler.hooks.availability!(structuredClone(input), signal)));
+        reasons.push(...result.reasons.map(reason => ({
+          ...reason, source: { kind: 'module' as const, moduleId: handler.moduleId },
+        })));
+      } catch (error) {
+        reasons.push(this.unknown(handler, input, error));
+      }
+    }
+    return roleAvailability(input.roles, reasons, input.sessionId);
+  }
+
+  private unknown(handler: AssignmentHandler, input: RoleAvailabilityCheck, error: unknown): RoleAvailabilityReason {
+    const timeout = error instanceof Error && 'code' in error && error.code === 'ROLE_ASSIGNMENT_TIMEOUT';
+    return { code: timeout ? 'ROLE_ASSIGNMENT_TIMEOUT' : 'ROLE_CHECK_ERROR',
+      message: `Module ${handler.moduleId} role check ${timeout ? 'timed out' : 'failed or was aborted'}; availability is unconfirmed`,
+      status: 'unknown', source: { kind: 'module', moduleId: handler.moduleId },
+      roles: input.roles.filter(role => role.moduleId === handler.moduleId), capabilities: [] };
+  }
+
+  async run<T>(input: RoleAssignment, action: () => Promise<T>, notified?: (result: RoleAssignmentNotificationResult) => void,
+    initial: RoleAvailabilityReason[] = []): Promise<T> {
     this.assertAllowed();
     const selections = (roles: RoleAssignment['roles']) => [...new Map(roles.map(({ moduleId, roleId }) =>
       [`${moduleId}/${roleId}`, { moduleId, roleId }])).values()];
@@ -170,28 +203,42 @@ export class RoleAssignments {
     return this.locked([...modules, `session:${input.sessionId}`], async () => {
       this.stopping.signal.throwIfAborted();
       const handlers = this.handlers().filter(handler => modules.includes(handler.moduleId));
-      if (!handlers.length) return action();
+      const checked = await this.availability(input, initial);
+      const reasons = checked.reasons;
       const notificationId = createHash('sha256')
         .update(JSON.stringify([input.sessionId, identities(input.roles)])).digest('hex');
       const notificationModules = handlers.filter(handler => handler.hooks.saved).map(handler => handler.moduleId);
       const unchanged = same(input.roles, input.previousRoles);
       const previous = unchanged ? await this.readReceipt(notificationId) : undefined;
-      if (previous && previous.phase !== 'not-saved'
+      if (!reasons.length && previous && previous.phase !== 'not-saved'
         && notificationModules.every(moduleId => previous.modules.includes(moduleId))) {
         const receipt = await this.recover(notificationId);
         notified?.({ notificationId, status: receipt.status });
         return action();
       }
-      await this.pendingConflicts(modules, previous?.notificationId);
       const assignment = structuredClone(input);
       for (const handler of handlers) {
         if (!handler.hooks.permit) continue;
-        const result = await this.callback(handler, signal => handler.hooks.permit!(structuredClone(assignment), signal));
-        if (result?.allowed !== true) {
-          const reason = result?.allowed === false && typeof result.reason === 'string' ? result.reason : 'Module returned an invalid role permission result';
-          throw Object.assign(new Error(reason), { code: 'ROLE_ASSIGNMENT_DENIED', statusCode: 409 });
+        try {
+          const result = await this.callback(handler, signal => handler.hooks.permit!(structuredClone(assignment), signal));
+          if (result?.allowed !== true) {
+            if (result?.allowed !== false || typeof result.reason !== 'string' || !result.reason.trim()) {
+              throw new Error('Invalid permission result');
+            }
+            reasons.push({ code: 'ROLE_ASSIGNMENT_DENIED', message: result.reason.slice(0, 2000), status: 'denied',
+              source: { kind: 'module', moduleId: handler.moduleId },
+              roles: input.roles.filter(role => role.moduleId === handler.moduleId), capabilities: [] });
+          }
+        } catch (error) {
+          reasons.push(this.unknown(handler, input, error));
         }
       }
+      if (reasons.length) throw Object.assign(new Error(reasons.map(reason => reason.message).join('; ')), {
+        code: reasons.length === 1 ? reasons[0]!.code : 'ROLE_SELECTION_UNAVAILABLE',
+        statusCode: 409, roleAvailability: roleAvailability(input.roles, reasons, input.sessionId),
+      });
+      if (!handlers.length) return action();
+      await this.pendingConflicts(modules, previous?.notificationId);
       for (const handler of handlers) handler.signal.throwIfAborted();
       this.stopping.signal.throwIfAborted();
       if (!notificationModules.length) return action();

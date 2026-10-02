@@ -478,6 +478,40 @@ export type RoleSelection = z.infer<typeof RoleSelection>;
 export const SessionRole = RoleSelection.extend({ name: z.string(), moduleName: z.string() });
 export type SessionRole = z.infer<typeof SessionRole>;
 
+export const RoleCapability = z.enum(['instructions', 'skills', 'mcp', 'exclusive']);
+export type RoleCapability = z.infer<typeof RoleCapability>;
+export const RoleCatalogEntry = SessionRole.extend({
+  description: z.string().optional(),
+  resourcePolicy: z.literal('exclusive').optional(),
+  capabilities: z.array(RoleCapability).optional(),
+});
+export type RoleCatalogEntry = z.infer<typeof RoleCatalogEntry>;
+export const RoleAvailabilityReason = z.object({
+  code: z.string().min(1).max(200),
+  message: z.string().min(1).max(2000),
+  status: z.enum(['denied', 'unknown']),
+  source: z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('host') }).strict(),
+    z.object({ kind: z.literal('module'), moduleId: z.string().min(1) }).strict(),
+  ]),
+  roles: z.array(RoleSelection).max(64),
+  capabilities: z.array(RoleCapability),
+}).strict();
+export type RoleAvailabilityReason = z.infer<typeof RoleAvailabilityReason>;
+export const RoleAvailabilityQuery = z.object({
+  sessionId: z.string().min(1).optional(),
+  roles: z.array(RoleSelection).max(64),
+}).strict();
+export type RoleAvailabilityQuery = z.infer<typeof RoleAvailabilityQuery>;
+export const RoleAvailability = z.object({
+  status: z.enum(['available', 'unavailable', 'unknown']),
+  reasons: z.array(RoleAvailabilityReason),
+  roles: z.array(RoleSelection),
+  sessionId: z.string().optional(),
+});
+export type RoleAvailability = z.infer<typeof RoleAvailability>;
+export { roleCompatibilityReasons, roleAvailability, assertRoleCompatibility } from './role-compatibility.ts';
+
 const RoleIds = z.array(z.string()).min(1)
   .describe('IDs of this module\'s roles that declare the resource, sorted and deduplicated.');
 // Resources a loaded module's roles assemble into sessions selecting them. Not native global configuration.
@@ -822,7 +856,12 @@ export const Intents = {
   },
   'roles/list': {
     body: z.object({}).strict(),
-    result: z.object({ roles: z.array(SessionRole.extend({ description: z.string().optional() })) }),
+    result: z.object({ roles: z.array(RoleCatalogEntry) }),
+  },
+  'roles/availability': {
+    description: 'Explicit selection-time query for new sessions (omit sessionId) or additions to saved roles (include sessionId). Returns all confirmed denials and unknown checks with their sources, involved roles and capability categories. Modules may perform bounded stale-binding reconciliation; not a pure read, lock, reservation or readiness claim. Never loads, prompts or sends. Saving rechecks under the assignment locks. Errors do not erase other confirmed reasons.',
+    body: RoleAvailabilityQuery,
+    result: RoleAvailability,
   },
   'roles/resources': {
     description: 'Read the Skills and MCP servers that currently loaded modules\' roles assemble into sessions selecting those roles, by module and contributing role. Read-only: not native global configuration, enablement, connection or readiness, and it cannot be toggled globally. Omits endpoints, digests and file paths.',

@@ -1,5 +1,5 @@
 import type { SessionConfig } from '@github/copilot-sdk';
-import type { ModuleRoleResources, ModuleRoleSkill, ModuleSkillSource, ModuleSource, RoleSelection, SessionRole, RoleAssignmentNotificationResult, ToolScope } from '@cockpit/protocol';
+import type { ModuleRoleResources, ModuleRoleSkill, ModuleSkillSource, ModuleSource, RoleSelection, SessionRole, RoleAssignmentNotificationResult, ToolScope, RoleCatalogEntry, RoleAvailability, RoleAvailabilityReason } from '@cockpit/protocol';
 
 export interface RoleAssembly {
   roles: SessionRole[];
@@ -27,7 +27,9 @@ export interface RoleProvider {
   replayAssignment?(notificationId: string): Promise<{ notificationId: string; sessionId: string; status: 'notified' | 'unchanged' | 'not-saved' }>;
   globalMcpSources?(config: object): ModuleSource[] | undefined;
   globalSkillSources?(path: string): Promise<ModuleSkillSource[] | undefined>;
-  list(): Array<SessionRole & { description?: string }>;
+  list(): RoleCatalogEntry[];
+  availability?(input: { operation: 'create' | 'add'; sessionId?: string; roles: RoleSelection[]; previousRoles: RoleSelection[] },
+    reasons?: RoleAvailabilityReason[]): Promise<RoleAvailability>;
   /** Read-only catalog of resources each loaded module's roles assemble; not native global configuration. */
   resources?(): Promise<ModuleRoleResources[]>;
   /** Read one verified packaged role Skill by its opaque, version-bound catalog identity. */

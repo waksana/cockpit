@@ -126,6 +126,7 @@ mockHttp((res, req) => {
     if (name === 'session/get') return send({ meta });
     if (name === 'session/plan') return send(plan);
     if (name === 'roles/list') return send({ roles: [{ moduleId: 'board', roleId: 'owner', name: 'Owner', moduleName: 'Board' }] });
+    if (name === 'roles/availability') return send({ roles: [], status: 'available', reasons: [] });
     if (name === 'roles/readiness') return send({ sessionId: 'B', loaded: false, ready: false, roles: [], reasons: ['Session is unloaded'] });
     if (name === 'session/usage') return send({
       sessionId: 'B', sampledAt: 123, context: null,
@@ -433,8 +434,11 @@ test('role tools route exactly once with public camelCase bodies', async () => {
   await call('cockpit_new_session', { cwd: '/fixture', roles });
   assert.deepEqual(requests.at(-1)!.body, { cwd: '/fixture', roles });
   assert.equal((await json('cockpit_list_roles', { response_format: 'json' }) as { roles: unknown[] }).roles.length, 1);
+  assert.equal((await json('cockpit_role_availability', { roles: [] }) as { status: string }).status, 'available');
+  assert.deepEqual({ path: requests.at(-1)!.path, body: requests.at(-1)!.body },
+    { path: '/intent/roles/availability', body: { roles: [] } });
   assert.equal((await json('cockpit_role_readiness', { session_id: 'B', roles }) as { ready: boolean }).ready, false);
-  assert.equal(requests.length, 3);
+  assert.equal(requests.length, 4);
   assert.deepEqual(requests.at(-1)!.body, { sessionId: 'B', roles });
 });
 
@@ -525,7 +529,7 @@ test('registry exposes native controls without parked file, organization or rest
     'cockpit_list_global_mcp', 'cockpit_set_global_mcp_default', 'cockpit_refresh_mcp',
     'cockpit_reload_session_mcp', 'cockpit_list_global_skills', 'cockpit_list_session_skills',
     'cockpit_refresh_skills', 'cockpit_list_dir',
-    'cockpit_list_roles', 'cockpit_role_readiness', 'cockpit_add_roles',
+    'cockpit_list_roles', 'cockpit_role_readiness', 'cockpit_add_roles', 'cockpit_role_availability',
   ];
   assert.deepEqual(names.sort(), expected.sort());
   assert.equal(new Set(names).size, names.length);

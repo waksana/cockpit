@@ -75,6 +75,7 @@ const engine: ServerEngine = {
   sessionDirectory: async (...args) => record('sessionDirectory', args, { sessions: [] }),
   replayRoleAssignment: async (...args) => record('replayRoleAssignment', args, { notificationId: args[0], sessionId: 's', status: 'notified' as const }),
   listRoles: (...args) => record('listRoles', args, []),
+  roleAvailability: async (...args) => record('roleAvailability', args, { status: 'available' as const, reasons: [], roles: args[0].roles }),
   listRoleResources: async (...args) => record('listRoleResources', args, []),
   readRoleSkill: async (...args) => record('readRoleSkill', args, {
     id: 'role-skill-id', name: 'role-skill', body: '# Role skill', module: { id: 'fixture', name: 'Fixture' },
@@ -211,6 +212,7 @@ const cases = {
   'session/directory': { body: { limit: 50 }, method: 'sessionDirectory', args: [50, undefined] },
   'roles/notify': { body: { notificationId: 'a'.repeat(64) }, method: 'replayRoleAssignment', args: ['a'.repeat(64)] },
   'roles/list': { body: {}, method: 'listRoles', args: [] },
+  'roles/availability': { body: { roles: [] }, method: 'roleAvailability', args: [{ roles: [] }] },
   'roles/resources': { body: {}, method: 'listRoleResources', args: [] },
   'roles/skill-read': { body: { moduleId: 'fixture', resourceId: 'role-skill-id' },
     method: 'readRoleSkill', args: ['fixture', 'role-skill-id'] },

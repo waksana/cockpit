@@ -3,11 +3,12 @@ import { closeSync, constants, fsyncSync, mkdirSync, openSync, readFileSync, ren
 import { readFile, realpath, stat } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 import {
-  MODULE_SKILL_NOT_FOUND, SessionRole, ToolScope,
+  MODULE_SKILL_NOT_FOUND, SessionRole, ToolScope, assertRoleCompatibility, roleCompatibilityReasons,
+  type RoleCapability, type RoleAvailabilityReason,
   type ModuleRoleResources, type ModuleRoleSkill, type ModuleSkillSource, type ModuleSource, type RoleSelection, type RoleAssignmentNotificationResult,
 } from '@cockpit/protocol';
 import type { RoleAssembly, RoleProvider, SessionInstructions } from '@cockpit/core';
-import type { RoleAssignment } from '@cockpit/module-api/backend';
+import type { RoleAssignment, RoleAvailabilityCheck } from '@cockpit/module-api/backend';
 import { RoleAssignments, type AssignmentHandler } from './role-assignments.ts';
 import type { ModuleInstallation } from './module-install.ts';
 import { MODULE_INSTRUCTIONS_LIMIT, safeModulePath } from './module-install.ts';
@@ -86,7 +87,10 @@ export class ModuleRoles implements RoleProvider {
   stopAssignments() { this.assignments.stop(); }
   assertCallbackHostCall(name: string) { this.assignments.assertHostCallAllowed(name); }
   withAssignment<T>(assignment: RoleAssignment, action: () => Promise<T>, notified?: (result: RoleAssignmentNotificationResult) => void) {
-    return this.assignments.run(assignment, action, notified);
+    return this.assignments.run(assignment, action, notified, roleCompatibilityReasons(assignment.roles, this.list()));
+  }
+  availability(input: RoleAvailabilityCheck, reasons: RoleAvailabilityReason[] = []) {
+    return this.assignments.availability(input, [...reasons, ...roleCompatibilityReasons(input.roles, this.list())]);
   }
   replayAssignment(notificationId: string) { return this.assignments.replay(notificationId); }
 
@@ -94,6 +98,12 @@ export class ModuleRoles implements RoleProvider {
     return this.installations().flatMap(({ manifest }) => (manifest.roles ?? []).map(role => ({
       moduleId: manifest.id, moduleName: manifest.name, roleId: role.id, name: role.name,
       ...(role.description ? { description: role.description } : {}),
+      ...(role.resourcePolicy ? { resourcePolicy: role.resourcePolicy } : {}),
+      capabilities: [
+        ...(role.instructions !== undefined ? ['instructions' as const] : []),
+        ...(role.skillDirectories?.length ? ['skills' as const] : []),
+        ...(Object.keys(role.mcpServers ?? {}).length ? ['mcp' as const] : []),
+      ] satisfies RoleCapability[],
     }))).sort((a, b) => `${a.moduleId}/${a.roleId}`.localeCompare(`${b.moduleId}/${b.roleId}`));
   }
 
@@ -277,6 +287,8 @@ export class ModuleRoles implements RoleProvider {
   }
 
   save(sessionId: string, roles: SessionRole[]): void {
+    assertRoleCompatibility(roles, this.list());
+    roles = roles.map(({ moduleId, roleId, name, moduleName }) => ({ moduleId, roleId, name, moduleName }));
     const previous = this.readMetadataSync(sessionId);
     this.saveMetadata(sessionId, Array.isArray(previous) ? roles : { ...previous, roles });
   }
@@ -323,6 +335,7 @@ export class ModuleRoles implements RoleProvider {
   }
 
   async assemble(sessionId: string, selections: RoleSelection[]): Promise<RoleAssembly> {
+    assertRoleCompatibility(selections, this.list());
     const roles: SessionRole[] = [];
     let resourcePolicy: 'exclusive' | undefined;
     const skills = new Map<string, { name: string; path: string; hash: string; module: ModuleSource }>();
@@ -338,7 +351,6 @@ export class ModuleRoles implements RoleProvider {
       const role = installation?.manifest.roles?.find(role => role.id === selection.roleId);
       if (!installation || !role) throw new Error(`Module role unavailable: ${selection.moduleId}/${selection.roleId}`);
       if (role.resourcePolicy === 'exclusive') {
-        if (selected.length !== 1) throw new Error('An exclusive resource role must be selected alone');
         resourcePolicy = role.resourcePolicy;
         for (const server of Object.values(role.mcpServers ?? {})) {
           if (server.tools.some(name => !/^[A-Za-z0-9_]+$/.test(name))) {
@@ -357,12 +369,13 @@ export class ModuleRoles implements RoleProvider {
       roles.push({ ...selection, moduleName: manifest.name, name: role.name });
       const text = role.instructions ? await verified(role.instructions) : '';
       if (Buffer.byteLength(text) > 64 * 1024) throw new Error(`Role instructions exceed 64 KiB: ${manifest.id}/${role.id}`);
-      const source = role.instructions ? join(root, role.instructions) : `${manifest.id}/${role.id}`;
-      const group = instructions.get(source) ?? { headers: [], text };
-      group.headers.push(`## Module ${manifest.id} / role ${role.id} (${role.name})\nNative session ID: ${sessionId}`);
-      instructions.set(source, group);
-      instructionSources.push({ label: `Module ${manifest.id} / role ${role.id} (${role.name})`,
-        ...(role.instructions ? { sublabel: source } : {}) });
+      if (role.instructions) {
+        const source = join(root, role.instructions);
+        const group = instructions.get(source) ?? { headers: [], text };
+        group.headers.push(`## Module ${manifest.id} / role ${role.id} (${role.name})\nNative session ID: ${sessionId}`);
+        instructions.set(source, group);
+        instructionSources.push({ label: `Module ${manifest.id} / role ${role.id} (${role.name})`, sublabel: source });
+      }
       for (const directory of role.skillDirectories ?? []) {
         const absolute = join(root, safeModulePath(directory));
         if (!await stat(absolute).then(value => value.isDirectory())) throw new Error(`Role skill root missing: ${directory}`);

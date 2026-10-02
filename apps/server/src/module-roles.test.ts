@@ -74,7 +74,7 @@ test('saved role callbacks can inspect passive native scope without leaving an i
   const calls: string[] = [];
   const host = new ModuleHost({ observer: f.observer, host: { call: async (name, body) => {
     assert.equal(name, 'session/tool-scope');
-    assert.ok('sessionId' in body);
+    assert.ok('sessionId' in body && typeof body.sessionId === 'string');
     calls.push(body.sessionId);
     return { sessionId: body.sessionId, loaded: false, configured: null, applied: null, tools: null } as never;
   } } });
@@ -417,11 +417,14 @@ test('conflicting resources and unsafe manifest paths fail instead of overriding
 
 test('scope persists in existing role metadata, survives fresh providers and role additions, and is immutable', async t => {
   const f = await moduleFixture(t);
-  const roles = new ModuleRoles(f.hostRoot, 'http://127.0.0.1', () => []);
+  const installation = await installLocalModule(await f.package(moduleEntries('fixture', undefined, {
+    roles: [{ id: 'extra', name: 'Extra' }],
+  })), { trustLocalCode: true });
+  const roles = new ModuleRoles(f.hostRoot, 'http://127.0.0.1', () => [installation]);
   const scope = { builtins: [], mcpServers: [{ name: 'service', tools: ['read'] }] };
   roles.saveToolScope('scoped', scope);
   assert.deepEqual(await roles.read('scoped'), []);
-  const role = { moduleId: 'fixture', moduleName: 'Fixture', roleId: 'extra', name: 'Extra' };
+  const role = { moduleId: 'fixture', moduleName: 'Fixture fixture', roleId: 'extra', name: 'Extra' };
   roles.save('scoped', [role]);
   const cold = new ModuleRoles(f.hostRoot, 'http://127.0.0.1', () => []);
   assert.deepEqual(await cold.readToolScope('scoped'), scope);

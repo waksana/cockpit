@@ -55,7 +55,7 @@ export type ServerEngine = Pick<Engine,
   | 'refreshMcp' | 'reloadSessionMcp' | 'listSessionMcp' | 'toggleSessionMcp'
   | 'listGlobalSkills' | 'setGlobalSkill' | 'readSkillBody' | 'listSessionSkills' | 'toggleSessionSkill' | 'refreshSkills'
   | 'addSchedule' | 'stopSchedule' | 'listSchedules' | 'listDir'
-  | 'listRoles' | 'listRoleResources' | 'readRoleSkill' | 'roleReadiness' | 'addRoles'
+  | 'listRoles' | 'roleAvailability' | 'listRoleResources' | 'readRoleSkill' | 'roleReadiness' | 'addRoles'
   | 'getSessionDefaults' | 'setSessionDefaults' | 'getSessionToolScope'
 >;
 let engine: ServerEngine;
@@ -326,6 +326,7 @@ const handlers: IntentHandlers = {
     : b.roles ? engine.newSession(b.cwd, b.roles) : engine.newSession(b.cwd)) }),
   'session/tool-scope': async (b) => engine.getSessionToolScope(b.sessionId),
   'roles/list': async () => ({ roles: engine.listRoles() }),
+  'roles/availability': b => engine.roleAvailability(b),
   'roles/resources': async () => ({ modules: await engine.listRoleResources() }),
   'roles/skill-read': async (b) => await engine.readRoleSkill(b.moduleId, b.resourceId),
   'roles/add': b => engine.addRoles(b.sessionId, b.roles),
@@ -553,6 +554,7 @@ app.post('/intent/*', async (req, reply) => {
       ...(e && typeof e === 'object' && 'code' in e && typeof e.code === 'string' ? { code: e.code } : {}),
       ...(e && typeof e === 'object' && 'sessionId' in e && typeof e.sessionId === 'string' ? { sessionId: e.sessionId } : {}),
       ...(e && typeof e === 'object' && 'roleAssignment' in e ? { roleAssignment: e.roleAssignment } : {}),
+      ...(e && typeof e === 'object' && 'roleAvailability' in e ? { roleAvailability: e.roleAvailability } : {}),
     };
   } finally {
     reply.raw.removeListener('close', cancel);

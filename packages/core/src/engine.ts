@@ -562,6 +562,7 @@ export class Engine {
 
   // Roles and resource preparation
   listRoles() { return this.roleService.listRoles(); }
+  roleAvailability(query: import('@cockpit/protocol').RoleAvailabilityQuery) { return this.roleService.roleAvailability(query); }
   listRoleResources() { return this.roleService.listRoleResources(); }
   readRoleSkill(moduleId: string, resourceId: string) { return this.roleService.readRoleSkill(moduleId, resourceId); }
 

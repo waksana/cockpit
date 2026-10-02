@@ -2,7 +2,8 @@ import { useId } from 'react';
 import type { ChatSession } from '../net/types';
 import { useSessionRoles } from '../features/session-settings/useSessionRoles';
 import { RoleBadge } from './ModuleLabel';
-import { RolePicker } from './RolePicker';
+import { RolePicker, RoleReasons } from './RolePicker';
+import { IntentHttpError } from '../net/client';
 import { Button, RefreshButton } from './Button';
 import { HeadingAction, SectionHeading } from './UI';
 import { ResourceStatus, StateNotice } from './StateNotice';
@@ -11,7 +12,7 @@ import { copy } from '../lib/copy';
 
 function RolesSection({ session }: { session: ChatSession }) {
   const { open, setOpen, opened, setOpened, catalog, action, setSelected, result, needsInspection,
-    operation, refreshed, available, additions, connected, blocked, resultNeedsReload, refresh, submit } = useSessionRoles(session);
+    operation, refreshed, available, additions, connected, blocked, resultNeedsReload, refresh, submit, availability } = useSessionRoles(session);
   const pickerId = useId();
   return <section className="info-section">
     <SectionHeading className="info-section-name" actions={<>
@@ -32,6 +33,7 @@ function RolesSection({ session }: { session: ChatSession }) {
       {action.error && operation === 'refresh' && <OperationResult state="failed">
         {copy.failed('刷新模块角色', action.error)}
       </OperationResult>}
+      {action.errorCause instanceof IntentHttpError && <RoleReasons result={action.errorCause.roleAvailability} />}
       {needsInspection && !action.busy && (action.error && operation === 'save'
         ? <OperationErrorResult label="保存角色" error={action.error} cause={action.errorCause}
           action={{ label: '刷新模块角色', onClick: refresh, disabled: !connected }} />
@@ -56,11 +58,11 @@ function RolesSection({ session }: { session: ChatSession }) {
         {catalog.usable && (!catalog.data?.length ? <StateNotice kind="empty">没有可用的模块角色。</StateNotice>
           : !available.length ? <StateNotice kind="empty">目录中的角色均已选择，无法重复追加。</StateNotice>
             : <RolePicker roles={available} selected={additions} disabled={blocked || action.busy || needsInspection}
-              onChange={setSelected} />)}
+              onChange={setSelected} availability={availability} />)}
         {additions.length > 64 && <StateNotice kind="error">每次最多追加 64 个角色。</StateNotice>}
         <div className="ck-actions">
           <Button variant="primary"
-            disabled={blocked || action.busy || needsInspection || !catalog.usable || !additions.length || additions.length > 64}
+            disabled={blocked || action.busy || needsInspection || !catalog.usable || !availability.allowed || !additions.length || additions.length > 64}
             aria-busy={action.busy && operation === 'save'} onClick={submit}>保存追加角色</Button>
         </div>
         {action.busy && operation === 'save' && <OperationResult state="busy">{copy.busy('保存角色')}</OperationResult>}

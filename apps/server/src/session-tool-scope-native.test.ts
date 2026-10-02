@@ -94,6 +94,7 @@ test('native immutable tool scope: direct calls, MCP/model changes, role reload 
         mcpServers: { 'fixture-service': { type: 'http', path: '/mcp', tools: ['read'] } } },
       { id: 'exclusive-empty', name: 'Exclusive empty', resourcePolicy: 'exclusive', instructions: 'foreground.md' },
       { id: 'exclusive-empty-map', name: 'Exclusive empty map', resourcePolicy: 'exclusive', mcpServers: {} },
+      { id: 'neutral', name: 'Neutral service binding' },
     ] });
     entries.push({ path: 'foreground.md', content: 'Synthetic foreground instructions remain appended without a Skill/view tool.' });
     entries.push({ path: 'skills/owned/SKILL.md', content: '---\nname: owned-skill\ndescription: Synthetic role skill\n---\nOwned guidance' });
@@ -248,7 +249,9 @@ test('native immutable tool scope: direct calls, MCP/model changes, role reload 
     assert.equal((await engine.getMeta(id))?.appliedRoles?.length, 2);
     await current.runtime.rpc.mcp.config.enable({ names: ['unrelated'] });
     const beforeExclusiveRequests = requests.length;
-    const exclusive = await engine.newSession(dirs.work!, [{ moduleId: 'fixture', roleId: 'exclusive' }]);
+    const exclusive = await engine.newSession(dirs.work!, [
+      { moduleId: 'fixture', roleId: 'exclusive' }, { moduleId: 'fixture', roleId: 'neutral' },
+    ]);
     const exclusiveCheck = async () => {
       const scope = await engine!.getSessionToolScope(exclusive);
       assert.equal(scope.configured, null, 'Role-derived restrictions are not a separately saved user tool scope');
@@ -287,7 +290,7 @@ test('native immutable tool scope: direct calls, MCP/model changes, role reload 
     }
     await assert.rejects(engine.newSession(dirs.work!, [
       { moduleId: 'fixture', roleId: 'exclusive' }, { moduleId: 'fixture', roleId: 'extra' },
-    ]), /selected alone/);
+    ]), /conflicts with/);
     await current.runtime.rpc.mcp.config.disable({ names: ['unrelated'] });
     await current.runtime.rpc.mcp.config.add({ name: 'fixture.service',
       config: { type: 'http', url: `${mcpUrl}/alias`, tools: ['read'] } });

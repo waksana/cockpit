@@ -565,6 +565,7 @@ const intentFixtures = {
   'session/new': { body: { cwd: minimalMeta.cwd }, result: sid },
   'session/tool-scope': { body: sid, result: { ...sid, loaded: false, configured: null, applied: null, tools: null } },
   'roles/list': { body: {}, result: { roles: [] } },
+  'roles/availability': { body: { roles: [] }, result: { status: 'available', reasons: [], roles: [] } },
   'roles/resources': { body: {}, result: { modules: [{ id: 'fixture', name: 'Fixture',
     roles: [{ id: 'owner', name: 'Owner' }],
     skills: [{ id: 'review-id', name: 'review', description: 'Review', roles: ['owner'] }],
