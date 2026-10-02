@@ -21,6 +21,7 @@ test('host deployment capabilities include the real shared settings boundary', (
   assert.ok(descriptor.product.capabilities.includes('settings.v1'));
   assert.ok(descriptor.product.capabilities.includes('globalComponent.v1'));
   assert.ok(descriptor.product.capabilities.includes('sessionListItem.v1'));
+  assert.ok(descriptor.product.capabilities.includes('interfaceMiddleware.v1'));
 });
 
 test('host deployment capabilities describe both actual frontend contracts and generic draft owners', () => {

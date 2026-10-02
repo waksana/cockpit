@@ -127,6 +127,7 @@ Backend packages export `activate(context)` and return `ModuleBackend`:
 | `context` | `apiVersion: 1`, `serviceReadyVersion: 1`, `shutdownVersion: 1`, `moduleId`, `dataRoot`, `apiBase`, read-only `config`, `signal`, `stopping`, `report`, `invalidate`, `publish`, and `host.call`. |
 | `routes` | Validated `method`/`path` plus optional JSON or stream body and `bodyLimit`; handlers receive params/query/headers/body/signal and return status/headers/body or a stream. |
 | `publicConfig` | Explicit browser-readable config only; the host never exposes all `config` by default. |
+| `middleware` | Optional typed wrappers for existing public Host intents; requires `interfaceMiddlewareVersion: 1` and `onStop`. |
 | `events` | Declared native event type filters and read-only handlers. |
 | `controlEvents` | Declared `ServerEvent` type filters for existing native control projections; no extra native reads. |
 | `onReady` | Optional service-ready callback; requires `context.serviceReadyVersion === 1`. |
@@ -134,6 +135,98 @@ Backend packages export `activate(context)` and return `ModuleBackend`:
 | `onStop` | Optional awaited drain; opts into [safe module shutdown](#safe-module-shutdown), requiring `context.shutdownVersion === 1`. |
 | `dispose` | Final cleanup; awaited for `onStop` modules, best-effort and non-blocking for legacy modules. |
 A module never receives the root Fastify instance, Engine internals, native session handles, or a security sandbox. Routes are validated before registration; failure or timeout is attributed to the module. Same-process modules can still block synchronously, exhaust memory, or call process-level APIs.
+
+### Public interface middleware
+
+Require `context.host.interfaceMiddlewareVersion === 1` and
+`context.shutdownVersion === 1` before opening module data. The deployment
+capabilities are `interfaceMiddleware.v1` and `shutdown.v1`; SDK installation
+alone proves neither. Return a `middleware` object keyed by an existing
+`ModuleHostIntent` and an `onStop` hook:
+
+```ts
+return {
+  routes: [],
+  onStop() { /* Stop module-owned producers; Host joins started wrappers. */ },
+  middleware: {
+    async prompt(invocation, next) {
+      invocation.signal.throwIfAborted();
+      const text = invocation.body.text;
+      const result = await next({ text });
+      // Persist a module-owned receipt here when needed.
+      // result.messageId is native acceptance, not completed model work.
+    },
+  },
+};
+```
+
+`ModuleIntentMiddlewares`, `ModuleIntentMiddleware<Name>`,
+`ModuleIntentInvocation<Name>` and `ModuleIntentChanges<Name>` are exported
+from the SDK backend entry. This is a general interface mechanism, not an
+attachment callback or a file service. The allowlist is exactly the SDK's
+public Host-call projection, not every HTTP intent. Unknown/private names,
+non-functions and declarations without `onStop` fail module activation without
+exiting the Host. Registrations become active only after successful activation.
+They are global for the loaded module, not restricted to sessions with its roles.
+
+The Host composes wrappers by ascending module ID (ASCII), independently of
+installation/activation order. Each module can declare one wrapper per intent.
+The first module is outermost; after-`next` work unwinds in reverse order.
+There are no priorities, runtime registrations or cross-module dependencies.
+Web/API/MCP requests and module `host.call` use the same validated dispatch
+boundary exactly once. Native schedules and internal SDK prompts are not Host
+interface calls and are not intercepted.
+
+The invocation contains the interface `name`, a fresh per-call `invocationId`,
+Host-observed `origin` (`user`, `module` or `api`), a detached input `body`
+snapshot and an abort `signal`. The ID is shared across layers, not a durable
+idempotency key. Origin is inherited from ingress; wrappers cannot upgrade it.
+Mutating the snapshot does not change the request. Pass a partial input patch
+to `next(changes)` or use `next()` unchanged. Host revalidates each replacement
+against the original strict schema. `sessionId`, `requestId`, `notificationId`
+and `mode` are protected: do not include them in a patch, even unchanged.
+Other fields retain their public interface meaning; the framework grants no
+business-specific permission to reinterpret attachments or roles.
+
+Successful calls must continue. The wrapper's return value is ignored, and a
+normal return without `next` fails with `MODULE_MIDDLEWARE_INVALID`. Each
+continuation is single-use and closes when the wrapper settles; duplicate and
+late calls fail with the same code and never create another native call.
+Recursive `host.call` of an interface already in the current middleware chain
+also fails (including cycles through another interface). Call `next`, not
+`host.call`, to continue. Other public calls remain available subject to their
+ordinary role-hook and lifecycle restrictions.
+
+Await `next` before consuming the result or finishing persistence. The Host
+also joins a started continuation if a broken wrapper forgets to await it or
+throws, so sends cannot escape shutdown accounting. `next` returns a detached
+copy of the validated downstream result for module use. Host retains the actual
+result; modifying that copy or returning a fabricated result cannot change
+`messageId`, `queued`, partial effects or any other native result field.
+Downstream errors still fail the call even if a wrapper catches them.
+
+Wrappers may reject by throwing. There is no success fallback, rollback or
+automatic retry. An error **after** `next` may follow a real native effect:
+modules should persist the known receipt and callers must not resend on an
+uncertain outcome. An abort never undoes an already-started send. Middleware
+failure affects the request, is reported against the module and does not exit
+the Host.
+
+Input preparation does not reserve native admission. Native dispatch still
+uses the original Engine safeguards, and service admission is checked again
+after asynchronous preparation. Shutdown aborts invocation signals and refuses
+new `next` dispatch; `cancel`, `session/interrupt` and `session/control` requests
+also abort outstanding prompt preparation for their target before the native
+control attempt. This is conservative even if that control subsequently fails.
+Disconnecting a prompt request aborts preparation, not an already-started native
+send. No result is inferred from cancellation.
+
+Started wrappers, downstream work and after-`next` persistence are joined by
+the existing [safe shutdown](#safe-module-shutdown) drain. `onReady` runs only
+after registration; role hooks keep their existing host-call restrictions.
+During drain, permitted settlement calls go directly to the native interface
+without entering stopped wrappers. Stop/failure does not hot-unload or
+automatically retry a module; the existing fail-closed shutdown deadline applies.
 
 ### Role assignment lifecycle
 
