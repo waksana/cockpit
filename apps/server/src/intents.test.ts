@@ -93,6 +93,14 @@ const engine: ServerEngine = {
     assert.ok(signal instanceof AbortSignal);
     return record('chat', [query], { ...historyPage, source: query.source, direction: query.direction });
   },
+  chatText: async (query, signal) => {
+    assert.ok(signal instanceof AbortSignal);
+    return record('chatText', [query], {
+      sessionId: query.sessionId, source: query.source, direction: query.direction,
+      view: 'text' as const, order: 'newest-first' as const, messages: [], cursor: 'text-cursor',
+      hasMore: false, scanLimited: false, read: { pages: 1, rpc: 1, events: 1 },
+    });
+  },
   prompt: async (...args) => record('prompt', args, { ok: true, queued: true }),
   cancel: async (...args) => record('cancel', args, undefined),
   interrupt: async (...args) => record('interrupt', args, { ok: true as const, interrupted: true }),
@@ -202,6 +210,10 @@ after(() => app.close());
 
 type Case = { body: unknown; method: string | null; args: unknown[] };
 const cases = {
+  'session/chat/text': {
+    body: Intents['session/chat/text'].body.parse({ sessionId: 's' }), method: 'chatText',
+    args: [Intents['session/chat/text'].body.parse({ sessionId: 's' })],
+  },
   'system/shutdown': { body: { confirm: true }, method: null, args: [] },
   'system/status': { body: {}, method: 'sessionStatus', args: [] },
   'runtime/snapshot': { body: {}, method: 'snapshot', args: [] },
@@ -339,7 +351,7 @@ for (const [name, fixture] of Object.entries(cases)) {
     if (name === 'runtime/snapshot') assert.deepEqual(response.json(), projectedSnapshot());
     if (name === 'session/chat') assert.deepEqual(response.json(), historyPage);
     if (name === 'session/load') assert.deepEqual(response.json(), { ok: true, sessionId: 's' });
-    if (name === 'session/chat') {
+    if (name === 'session/chat' || name === 'session/chat/text') {
       assert.equal(response.headers['cache-control'], 'private, no-store');
       assert.equal(response.headers['x-content-type-options'], 'nosniff');
     }

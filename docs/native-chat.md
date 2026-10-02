@@ -128,6 +128,119 @@ ephemeral events. Process whole pages before advancing saved cursors. Event IDs
 deduplicate overlap; assistant `messageId` identifies authoritative replacement.
 UUID lexical order is not conversation order.
 
+## Bounded text view
+
+`POST /intent/session/chat/text` and the raw MCP tool name
+`cockpit_read_session_text` provide a separate opt-in body view. Existing
+`session/chat`, `cockpit_read_session`, Web Chat and module SDK contracts are
+unchanged. Modules can select this MCP tool without an SDK publication.
+
+```json
+{"sessionId":"session-id","source":"persisted","direction":"backward","max":16,"maxBytes":16384,"scanPages":4}
+```
+
+MCP uses `session_id`, `limit`, `max_bytes`, `scan_pages`; `source`, `direction`,
+`cursor`, `since` and `bootstrap` keep their names. It returns compact JSON, without a
+Markdown wrapper or a duplicate structured copy.
+
+| Bound | Default / maximum | Meaning |
+| --- | --- | --- |
+| `max` | 16 / 64 | Returned message fragments, not native events. |
+| `maxBytes` | 16384 / 65536 (minimum 8192) | UTF-8 bytes of the entire compact JSON result, including cursors and metadata. Not the MCP envelope. |
+| `scanPages` | 4 / 16 | Native page reads, including partial-page replay; each requests at most 16 events. |
+
+Results contain `view:"text"`, exact `sessionId`/`source`/`direction`, `messages`,
+`cursor`, `hasMore`, `scanLimited` and `read:{rpc,pages,events}`. Counters include
+replayed events and bootstrap's extra tail RPC, but not metadata existence
+lookups or SDK-internal work. `events` counts events returned by native pages,
+not internal scans (especially for live filters). Backward messages are **newest-first**, forward
+messages **oldest-first**. An empty filtered page is not necessarily the end:
+continue with its cursor when `hasMore` is true. `scanLimited` marks exhaustion
+of the native-page budget, not output-message or byte limits.
+
+Only primary durable `user.message` and `assistant.message` nonblank `content`
+is selected. Text beside tool calls is retained verbatim; reasoning, encrypted
+fields, tool arguments/results, ephemeral tokens and subagent text are excluded.
+Persisted reads filter bounded native pages locally; live reads also request
+native primary/body filters. Pending asks and current activity belong to
+`session/get`, not inferred text or completion summaries.
+
+Each fragment preserves `eventId`, native `messageId` when present, role and
+timestamp. `offset`, `nextOffset` and `totalCharacters` count UTF-16 code units;
+splits never divide a surrogate pair. `nextOffset:null` finishes that message.
+To read its remainder, pass **the returned cursor**, not a guessed message ID or
+offset. It also preserves all unreturned messages in that native page. Four
+attachment descriptors at most expose only short type/display-name/path/MIME
+fields; `omittedFields` and `omittedAttachments` disclose omissions. Long paths
+are omitted, never truncated into misleading references. No files, blob bytes,
+image bytes or attachment selections are fetched.
+
+Cursors are opaque, process-authenticated, bound to session/source/direction and
+this fixed view/filter version. Limits may change on continuation. Host restart
+expires them. Partial native pages are reread from their original cursor and
+checked against their full-page hash before using the saved index/body offset.
+Native expiry, nonadvancement and changed partial pages fail explicitly without
+fallback. Appending to an unanchored latest partial page can also invalidate it;
+discard that page's fragments and explicitly resynchronize. Between complete
+pages, history invalidation follows the SDK's native cursor contract; this is
+not a transaction or a global history snapshot/version service. No claim is
+made to detect an upstream mutation that the native cursor API does not expose.
+
+Fresh live backward `bootstrap:true` captures a tail before reading and returns
+a separate text `liveCursor` for forward increments. History and increments may
+overlap; deduplicate by `eventId`/fragment offset and handle native message
+replacement by `messageId`. Forward reads at the current end retain a cursor
+for later increments. This reader does not wait, poll or load sessions.
+
+### Passive incremental checkpoints
+
+The SDK has no passive tail snapshot or public event-ID seek. Backward cursors
+cannot become forward cursors, nor can live positions be relabeled persisted.
+Instead, the text API supports a generic **backward incremental range** with
+`since`: an authenticated checkpoint records one actual native boundary event
+and its hash, not a stored transcript, numeric seek or timestamp ordering.
+
+1. Establish a baseline with `{"session_id":"S","source":"persisted","limit":16}`.
+   Consume all returned text and, if no `checkpoint` is returned, keep reading
+   its `cursor` until the bounded native page/fragment is complete and a
+   checkpoint is available. Older history remains separately pageable.
+2. When notified of new activity, call
+   `{"session_id":"S","source":"persisted","since":"CHECKPOINT"}` without cursor.
+   This starts at the newest native page and reads backward toward that exact
+   boundary. Returned new text is newest-first, not chronological forward.
+3. If `hasMore:true`, continue with the same `since` plus the returned `cursor`.
+   Empty filtered pages and incomplete long-body fragments do not advance the
+   processed boundary. Only after reaching the old boundary does the result
+   expose a new `checkpoint` and `hasMore:false` for this incremental range.
+   Save that checkpoint **after** processing every fragment/page in the range.
+4. An append during older-page traversal is not lost: the new checkpoint uses
+   this range's original newest event, so the next `since` call includes later
+   appends. Partial-page mutation can explicitly reject the read; restart the
+   range from its previous checkpoint and deduplicate delivered event/offsets.
+
+The initial baseline selects recent history, not a promise to process all older
+history. A notification's newest event ID is **not** a checkpoint or proof that
+its text has been read. The host stores no business read/notification position.
+`since` requires backward direction, cannot combine with bootstrap, and remains
+bound to the exact source/session. A missing or changed anchor rejects the
+range (including rewind/deletion), never succeeds with an empty update.
+An initially empty session's checkpoint explicitly covers its empty baseline.
+
+Persisted checkpoints remain usable after the source session unloads or the
+native child runtime restarts, while the host signer stays alive. **Host process
+restart expires all text cursors/checkpoints**: consumers must explicitly
+establish a new recent baseline; automatic catch-up across that restart is not
+provided. No private index, persisted key/state or implicit session resume is
+introduced. Loaded consumers can instead use the separate live bootstrap /
+forward `liveCursor` path, which is not a passive checkpoint.
+
+These are **output and RPC bounds**, not upstream event-body memory/time bounds:
+the SDK can materialize huge native events before host filtering. Large-message
+fragments reread and hash the entire native page, without a chat cache/index or
+native body-offset API. Exceptionally oversized native identity/cursor metadata
+fails explicitly with a raw-reader path rather than returning an invalid
+reference or overflowing the byte budget.
+
 ## `POST /chat/stream`
 
 The selected visible browser window opens one authenticated, CSRF-protected SSE stream

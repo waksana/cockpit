@@ -17,6 +17,8 @@ export type { ChatMessage, ChatRole, SubagentInfo, ToolCall } from './validation
 
 export { CHAT_EVENT_TYPES, NativeChatEvent, NativeChatRead, NativeChatPage, NativeChatStreamRequest, NativeChatStreamEvent } from './native-chat.ts';
 import { NativeChatRead, NativeChatPage } from './native-chat.ts';
+export { ChatTextRead, ChatTextPage, ChatTextMessage } from './chat-text.ts';
+import { ChatTextRead, ChatTextPage } from './chat-text.ts';
 export {
   NativeModelSwitchResult, NativeModeSetResult, NativeCompactResult, NativeRewindResult,
   classifyNativeModelSwitchResult, classifyNativeModeSetResult, classifyNativeCompactResult, classifyNativeRewindResult,
@@ -828,6 +830,11 @@ export const Intents = {
     description: 'Read one native event page without a server chat cache or projection. max counts events, not display messages or bytes. Keep source/direction with opaque cursors. Passive reads do not load sessions; live reads require an existing handle. Bootstrap captures a live cursor before a fresh backward page. An expired cursor is not a continuation. Binary tool media is omitted, never automatically retained; no file library or image lookup is provided.',
     body: NativeChatRead,
     result: NativeChatPage,
+  },
+  'session/chat/text': {
+    description: 'Read bounded primary user/assistant text from native history, without loading sessions or changing raw chat. Backward is newest-first. Compact JSON UTF-8 bytes, native pages (16 events each), and message fragments are bounded independently. Pass the opaque cursor with the same session/source/direction; partial messages retain IDs and UTF-16 offsets. Expired or changed pages fail explicitly. No reasoning, tools, image bytes, summaries or history cache. Live bootstrap returns a separate forward cursor; deduplicate overlap by eventId/offset. Use session/get for current asks and activity.',
+    body: ChatTextRead,
+    result: ChatTextPage,
   },
   'runtime/snapshot': {
     description: 'Read global models, readiness, permission policy (always auto-approve), and session metadata in one passive query. Interaction modes do not change permissions.',

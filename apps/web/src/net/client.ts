@@ -31,6 +31,7 @@ export const HOST_INTENT_MUTATES = {
   'skills/global': false, 'skills/read': false, 'skills/session': false,
   'skills/session-toggle': true, 'skills/global-toggle': true, 'skills/refresh': true,
   'fs/listDir': false, 'schedule/add': true, 'schedule/stop': true, 'schedule/list': false,
+  'session/chat/text': false,
 } satisfies Record<IntentName, boolean>;
 
 function knownMutationResult<K extends IntentName>(name: K, result: IntentResult<K>): boolean {

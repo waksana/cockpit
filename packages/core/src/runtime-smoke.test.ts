@@ -7,9 +7,10 @@ import { test, type TestContext } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import type { CopilotClient, CopilotSession, GetAuthStatusResponse, SessionConfig, SessionEvent, SessionMetadata } from '@github/copilot-sdk';
-import { NativeChatRead } from '@cockpit/protocol';
+import { ChatTextRead, NativeChatRead } from '@cockpit/protocol';
 import type { Engine, EngineRuntime, NativeObservation } from './engine.ts';
-import { CHAT_EVENT_TYPES } from './native-chat.ts';
+import { CHAT_EVENT_TYPES, readNativeChat } from './native-chat.ts';
+import { readChatText } from './chat-text.ts';
 import { errorWithCode } from '../test-support/errors.ts';
 import { fixtureModelCatalog, memorySessionDefaults } from '../test-support/session-defaults.ts';
 
@@ -267,6 +268,37 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
     process.kill(pid, 'SIGKILL');
   };
   const attachmentToken = 'synthetic-native-attachment-42';
+  const largeText = 'Synthetic text 中文😀\n'.repeat(3000);
+  let textCheckpoint: string | undefined;
+  const readLargeText = async (sessionId: string, live?: CopilotSession) => {
+    let cursor: string | undefined;
+    let content = '';
+    let eventId: string | undefined;
+    for (let fragments = 0; fragments < 100; fragments++) {
+      const page = await bounded(readChatText(ChatTextRead.parse({
+        sessionId, source: live ? 'live' : 'persisted', cursor, max: 1, maxBytes: 8192,
+      }), query => readNativeChat(query, {
+        persisted: params => runtime!.rpc.sessions.readPersistedEvents(params), live: live?.rpc.eventLog,
+      })));
+      assert.ok(Buffer.byteLength(JSON.stringify(page)) <= 8192);
+      assert.ok(page.read.pages <= 4 && page.read.events <= 64);
+      const item = page.messages[0];
+      if (item) {
+        assert.equal(item.role, 'assistant');
+        eventId ??= item.eventId;
+        assert.equal(item.eventId, eventId);
+        assert.equal(item.offset, content.length);
+        content += item.content;
+        if (item.nextOffset === null) {
+          assert.equal(content, largeText);
+          return;
+        }
+      }
+      assert.ok(page.hasMore);
+      cursor = page.cursor;
+    }
+    assert.fail('Large native text must finish within the bounded fixture fragment count');
+  };
   const server = createServer(async (req, res) => {
     try {
       assert.equal(req.method, 'POST');
@@ -290,7 +322,7 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
       const marker = text.includes('SMOKE_FATALCOMPACT') ? 'SMOKE_FATALCOMPACT'
         : JSON.stringify(body.messages[lastUser]?.content).match(/SMOKE_[A-Z]+/)?.[0];
       assert.ok(marker && ['SMOKE_ACCEPTED', 'SMOKE_ATTACHMENT', 'SMOKE_EDIT', 'SMOKE_ABORT',
-        'SMOKE_RECOVERY', 'SMOKE_RESUME', 'SMOKE_REPEAT', 'SMOKE_BUSY', 'SMOKE_QUESTION',
+        'SMOKE_RECOVERY', 'SMOKE_RESUME', 'SMOKE_REPEAT', 'SMOKE_BUSY', 'SMOKE_QUESTION', 'SMOKE_TEXT',
         'SMOKE_SCHEDULE', 'SMOKE_SCHEDULED', 'SMOKE_ENGINE', 'SMOKE_ENGINEAGAIN', 'SMOKE_ENGINEFIRST',
         'SMOKE_FATALPREP', 'SMOKE_FATALBUSY', 'SMOKE_FATALQUEUED', 'SMOKE_FATALCOMPACT', 'SMOKE_BACKGROUND'].includes(marker),
       'Only synthetic prompts are allowed');
@@ -331,7 +363,7 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
           command: '/usr/bin/sleep 5', mode: 'async', description: 'Synthetic fixture sleep',
         } : { path: join(dirs.work!, 'attachment.txt') }) },
       } : undefined;
-      const answer = `deterministic ${marker} done`;
+      const answer = marker === 'SMOKE_TEXT' ? largeText : `deterministic ${marker} done`;
       const id = `chatcmpl-smoke-${requests.length}`;
       const release = () => {
         res.writeHead(200, { 'content-type': body.stream ? 'text/event-stream' : 'application/json' });
@@ -520,6 +552,11 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
     await close(a);
     assert.equal(runtime.liveCount, 1);
     assert.equal((await bounded(b.sendAndWait('SMOKE_RECOVERY', 10_000)))?.data.content, 'deterministic SMOKE_RECOVERY done');
+    textCheckpoint = (await readChatText(ChatTextRead.parse({ sessionId: b.sessionId }),
+      query => readNativeChat(query, { persisted: params => runtime!.rpc.sessions.readPersistedEvents(params) }))).checkpoint;
+    assert.ok(textCheckpoint);
+    assert.equal((await bounded(b.sendAndWait('SMOKE_TEXT', 10_000)))?.data.content, largeText);
+    await readLargeText(b.sessionId, b);
     assert.deepEqual(runtimeChildren(), [firstPid], 'Closing A must not recycle B');
     await close(b);
     assert.equal(runtime.liveCount, 0);
@@ -528,6 +565,33 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
 
     const secondPid = await start(1);
     assert.notEqual(secondPid, firstPid);
+    await readLargeText(b.sessionId);
+    assert.equal(runtime.liveCount, 0);
+    let incrementCursor: string | undefined;
+    const incrementBodies = new Map<string, string>();
+    let advancedCheckpoint: string | undefined;
+    for (let count = 0; count < 100; count++) {
+      const page = await readChatText(ChatTextRead.parse({
+        sessionId: b.sessionId, since: textCheckpoint, cursor: incrementCursor, max: 1, maxBytes: 8192, scanPages: 1,
+      }), query => readNativeChat(query, { persisted: params => runtime!.rpc.sessions.readPersistedEvents(params) }));
+      assert.ok(Buffer.byteLength(JSON.stringify(page)) <= 8192);
+      for (const item of page.messages) {
+        const previous = incrementBodies.get(item.eventId) ?? '';
+        assert.equal(item.offset, previous.length);
+        incrementBodies.set(item.eventId, previous + item.content);
+      }
+      if (page.checkpoint) {
+        assert.equal(page.hasMore, false);
+        advancedCheckpoint = page.checkpoint;
+        break;
+      }
+      incrementCursor = page.cursor;
+    }
+    assert.ok(advancedCheckpoint);
+    assert.deepEqual([...incrementBodies.values()], [largeText, 'SMOKE_TEXT']);
+    assert.equal(runtime.liveCount, 0);
+    checks.push('large synthetic text fragments preserve exact body within 8192 JSON bytes, live and cold passive');
+    checks.push('persisted checkpoint increments survive native runtime restart and unloaded reads without source/cursor conversion');
     const requestCount = requests.length;
     for (const session of [a, b]) {
       const sessionId = session.sessionId;

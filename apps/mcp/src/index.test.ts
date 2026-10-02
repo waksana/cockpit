@@ -517,7 +517,7 @@ test('registry exposes native controls without parked file, organization or rest
   const names = tools.map(({ name }) => name);
   const expected = [
     'cockpit_capabilities', 'cockpit_call_intent', 'cockpit_service_status',
-    'cockpit_read_session', 'cockpit_send_prompt',
+    'cockpit_read_session', 'cockpit_read_session_text', 'cockpit_send_prompt',
     'cockpit_schedule_add', 'cockpit_list_schedules', 'cockpit_stop_schedule',
     'cockpit_list_session_mcp', 'cockpit_set_session_mcp', 'cockpit_set_session_skill',
     'cockpit_get_snapshot', 'cockpit_list_sessions', 'cockpit_get_session',
