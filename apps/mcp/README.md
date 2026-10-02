@@ -59,7 +59,7 @@ All semantic tools wrap the same backend API. They do not introduce a local stor
 policy, retry loop or confirmation layer.
 | Area | Tools |
 | --- | --- |
-| Sessions/read | `cockpit_list_sessions`, `cockpit_get_session`, `cockpit_read_session`, `cockpit_get_panels`, `cockpit_get_plan`, `cockpit_get_snapshot` |
+| Sessions/read | `cockpit_list_sessions`, `cockpit_get_session`, `cockpit_read_session`, `cockpit_read_session_text`, `cockpit_get_panels`, `cockpit_get_plan`, `cockpit_get_snapshot` |
 | Lifecycle | `cockpit_new_session`, `cockpit_delete_session`, `cockpit_unload_session`, `cockpit_reload_session`, `cockpit_rename_session` |
 | Conversation/queue | `cockpit_send_prompt`, `cockpit_cancel_turn`, `cockpit_remove_queued` |
 | Interaction requests | `cockpit_respond_ask`, `cockpit_respond_plan`, `cockpit_plan_supersede`, `cockpit_respond_elicitation` |
@@ -79,6 +79,13 @@ native sessions can disappear on unload; no transport silently recreates them.
 actions. `mcp/session`, plan, panels, session skill and schedule reads require loaded handles when
 the backend says so; `409 SESSION_UNLOADED` asks callers to use `cockpit_reload_session`, not to
 materialize sessions implicitly.
+
+For bounded primary user/assistant text instead of raw events, use
+`cockpit_read_session_text` with `session_id` (optional `limit`, `max_bytes`,
+`scan_pages`, `source`, `direction`, `cursor`, `since`, `bootstrap`). The canonical
+[text-view contract](../../docs/native-chat.md#bounded-text-view) specifies
+fragment continuation, UTF-8 budgets, ordering and native-read limitations.
+The raw `cockpit_read_session` defaults and shape are unchanged.
 
 Roles are metadata until applied. `cockpit_list_roles` discovers catalog roles.
 `cockpit_new_session` accepts `roles:[{moduleId,roleId}]`, and `cockpit_add_roles` appends saved

@@ -3,9 +3,10 @@ import { after, beforeEach, test, type TestContext } from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { NativeChatPage, NativeChatRead } from '@cockpit/protocol';
+import { ChatTextPage, ChatTextRead, NativeChatPage, NativeChatRead } from '@cockpit/protocol';
 import { z } from 'zod';
 import { readNativeChat } from '../../../../packages/core/src/native-chat.ts';
+import { readChatText } from '../../../../packages/core/src/chat-text.ts';
 import { mockHttp } from '../../test-support/mock-http.ts';
 
 type Readers = Parameters<typeof readNativeChat>[1];
@@ -55,6 +56,18 @@ const readers: Readers = {
 };
 
 mockHttp(async (response, request) => {
+  if (request.url === '/intent/session/chat/text') {
+    try {
+      const query = ChatTextRead.parse(JSON.parse(request.body.toString()));
+      const page = await readChatText(query, native =>
+        readNativeChat(native, unloaded ? { persisted: readers.persisted } : readers));
+      response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(page));
+    } catch (error) {
+      response.writeHead(409, { 'content-type': 'application/json' })
+        .end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
+    }
+    return;
+  }
   assert.equal(request.url, '/intent/session/chat');
   try {
     const query = NativeChatRead.parse(JSON.parse(request.body.toString()));
@@ -120,6 +133,34 @@ function countPageSerializations(t: TestContext): number[] {
   return lengths;
 }
 const giant = 'x'.repeat(50_600);
+
+test('text MCP maps compact byte-bounded passive fragments with no raw payload or auto-load', async () => {
+  events = [event('long', '中文😀'.repeat(12_000)), event('latest', 'latest')];
+  unloaded = true;
+  let cursor: string | undefined;
+  const fragments = new Map<string, string>();
+  for (let i = 0; i < 100; i++) {
+    const reply = Reply.parse(await client.callTool({
+      name: 'cockpit_read_session_text',
+      arguments: { session_id: 'fixture', cursor, max_bytes: 8192, scan_pages: 1, limit: 2 },
+    }));
+    assert.equal(reply.isError, undefined, reply.content[0].text);
+    const text = reply.content[0].text;
+    assert.ok(Buffer.byteLength(text) <= 8192);
+    const page = ChatTextPage.parse(JSON.parse(text));
+    for (const item of page.messages) {
+      const previous = fragments.get(item.eventId) ?? '';
+      assert.equal(item.offset, previous.length);
+      fragments.set(item.eventId, previous + item.content);
+    }
+    cursor = page.cursor;
+    if (!page.hasMore) break;
+    assert.ok(i < 99);
+  }
+  assert.equal(fragments.get('long'), '中文😀'.repeat(12_000));
+  assert.equal(fragments.get('latest'), 'latest');
+  assert.ok(nativeCalls.every(call => call.method === 'persisted'));
+});
 
 test('schema advertises a native default of 16 and local-only giant fragments', async () => {
   const tool = (await client.listTools()).tools[0]!;

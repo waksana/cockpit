@@ -578,6 +578,11 @@ const intentFixtures = {
   'roles/readiness': { body: sid, result: { ...sid, roles: [], loaded: false, ready: false, reasons: ['Session is unloaded'] } },
   'session/fork': { body: { sessionId: 'parent', toEventId: 'user-event', name: 'Child' }, result: sid },
   'session/chat': { body: { ...sid, source: 'persisted', direction: 'backward', max: 64, waitMs: 0, bootstrap: false }, result: nativePage },
+  'session/chat/text': {
+    body: { ...sid, source: 'persisted', direction: 'backward', max: 16, maxBytes: 16384, scanPages: 4, bootstrap: false },
+    result: { ...sid, source: 'persisted', direction: 'backward', view: 'text', order: 'newest-first',
+      messages: [], cursor: 'text-cursor', hasMore: false, scanLimited: false, read: { rpc: 1, pages: 1, events: 0 } },
+  },
   prompt: { body: { ...sid, text: 'continue', mode: 'enqueue',
     attachments: [{ type: 'file', path: '/fixture/native.txt' }] }, result: { ...ok, queued: true } },
   cancel: { body: sid, result: ok },

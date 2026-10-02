@@ -49,7 +49,7 @@ registerCapabilities(app);
 // native configuration or binding the port. Definite-assignment: always set before
 // any request handler that derefs them can run (boot() runs at module entry).
 export type ServerEngine = Pick<Engine,
-  | 'login' | 'snapshot' | 'status' | 'busyCount' | 'newSession' | 'forkSession' | 'chat' | 'stop'
+  | 'login' | 'snapshot' | 'status' | 'busyCount' | 'newSession' | 'forkSession' | 'chat' | 'chatText' | 'stop'
   | 'prompt' | 'cancel' | 'interrupt' | 'control' | 'setModel' | 'rename' | 'compact' | 'rewind' | 'setMode'
   | 'deleteSession' | 'unload' | 'load'
   | 'reload' | 'initializeSessionTools' | 'prepareSessionResources' | 'getPlan' | 'getUsage' | 'getPanels' | 'getPanel' | 'getResources' | 'respondAsk' | 'respondPlan'
@@ -343,6 +343,7 @@ const handlers: IntentHandlers = {
   'session/resources-prepare': b => engine.prepareSessionResources(b),
   'session/fork': (b) => engine.forkSession(b.sessionId, b.toEventId, b.name),
   'session/chat': (b, signal) => engine.chat(b, signal),
+  'session/chat/text': (b, signal) => engine.chatText(b, signal),
   prompt: async (b) => promptOrigin.getStore() && promptOrigin.getStore() !== 'api'
     ? engine.prompt(b.sessionId, b.text, b.mode, b.attachments, promptOrigin.getStore())
     : b.attachments === undefined ? engine.prompt(b.sessionId, b.text, b.mode)
@@ -507,7 +508,7 @@ function errorStatus(error: unknown): number {
 const readIntents = new Set<IntentName>([
   'settings/session-defaults',
   'roles/list', 'roles/resources', 'roles/skill-read', 'roles/readiness',
-  'system/status', 'runtime/snapshot', 'session/chat', 'session/list', 'session/directory', 'session/get', 'session/refresh',
+  'system/status', 'runtime/snapshot', 'session/chat', 'session/chat/text', 'session/list', 'session/directory', 'session/get', 'session/refresh',
   'session/resources', 'session/usage', 'session/plan', 'session/panels', 'session/panel',
   'mcp/global', 'mcp/session', 'skills/global', 'skills/read', 'skills/session',
   'schedule/list', 'fs/listDir',
@@ -553,11 +554,11 @@ app.post('/intent/*', async (req, reply) => {
   const release = readIntents.has(name) ? () => {} : retainResponse(reply);
   const controller = new AbortController();
   const cancel = () => { if (!reply.raw.writableFinished) controller.abort(); };
-  if (name === 'session/chat') {
+  if (name === 'session/chat' || name === 'session/chat/text') {
     reply.header('Cache-Control', 'private, no-store');
     reply.header('X-Content-Type-Options', 'nosniff');
   }
-  if (name === 'session/chat' || name === 'prompt') {
+  if (name === 'session/chat' || name === 'session/chat/text' || name === 'prompt') {
     reply.raw.on('close', cancel);
   }
   try {

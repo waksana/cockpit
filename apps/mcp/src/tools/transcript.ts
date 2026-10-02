@@ -1,5 +1,5 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { NativeChatPage, NativeChatRead } from '@cockpit/protocol';
+import { ChatTextPage, ChatTextRead, NativeChatPage, NativeChatRead } from '@cockpit/protocol';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { CHARACTER_LIMIT } from '../config.js';
@@ -89,6 +89,56 @@ export function registerTranscriptTools(server: McpServer): void {
       }
       return ok(input.response_format === 'json' ? json
         : `# ${input.session_id}\nNative event page (${result.source}, ${result.direction}):\n\n${json}`);
+    } catch (error) {
+      return fail(error instanceof Error ? error.message : String(error));
+    }
+  });
+  server.registerTool('cockpit_read_session_text', {
+    title: 'Read bounded native session text',
+    description: 'Read primary user/assistant nonempty text only, without summaries, reasoning, tool payloads, '
+      + 'child agents or attachment bytes. Persisted works passively on loaded/unloaded sessions; live requires loaded. '
+      + 'Backward defaults to newest-first; forward is oldest-first. Each native page has at most 16 events; '
+      + 'scan_pages bounds native reads, not hidden SDK work/bytes. read reports pages/events/RPCs, including replay. '
+      + 'Empty messages with hasMore/scanLimited can continue. max_bytes bounds the returned compact JSON UTF-8 text. '
+      + 'Pass cursor unchanged with the same session/source/direction; limits may change. Long messages return '
+      + 'eventId/messageId and UTF-16 offset/nextOffset fragments; cursor continues the remainder without losing '
+      + 'later messages. Partial pages are reread and version-checked, not cached. Changed/expired cursors fail '
+      + 'explicitly; host restart expires text cursors. bootstrap on a fresh live backward read returns liveCursor '
+      + 'for forward increments; deduplicate overlap by eventId/offset. '
+      + 'checkpoint is a safely completed backward boundary: pass it as since for a NEW backward incremental range '
+      + 'on the SAME source. Keep since unchanged while paging that range with cursor; only a returned checkpoint '
+      + 'after complete delivery advances your processed boundary. since reads may yield newest-first text, not forward '
+      + 'events. They work unloaded with persisted, without native cursor conversion or a history index. '
+      + 'Attachments are bounded descriptors, not '
+      + 'downloads; omittedFields/omittedAttachments are explicit. Use cockpit_get_session for current asks/activity. '
+      + 'Use cockpit_read_session for raw native events. Idle/unloaded does not establish task completion.',
+    inputSchema: z.object({
+      session_id: z.string().min(1),
+      source: z.enum(['persisted', 'live']).default('persisted'),
+      direction: z.enum(['forward', 'backward']).default('backward'),
+      cursor: z.string().min(1).max(32768).optional(),
+      since: z.string().min(1).max(4096).optional()
+        .describe('Returned checkpoint for a new backward incremental range; keep the same since while paging with cursor.'),
+      limit: z.number().int().min(1).max(64).default(16),
+      max_bytes: z.number().int().min(8192).max(65536).default(16384),
+      scan_pages: z.number().int().min(1).max(16).default(4),
+      bootstrap: z.boolean().default(false),
+    }).strict(),
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  }, async (input): Promise<ToolResult> => {
+    try {
+      const query = ChatTextRead.parse({
+        sessionId: input.session_id, source: input.source, direction: input.direction, cursor: input.cursor,
+        since: input.since,
+        max: input.limit, maxBytes: input.max_bytes, scanPages: input.scan_pages, bootstrap: input.bootstrap,
+      });
+      const result = ChatTextPage.parse(await intent('session/chat/text', query));
+      const json = JSON.stringify(result);
+      if (result.sessionId !== query.sessionId || result.source !== query.source || result.direction !== query.direction
+        || result.messages.length > query.max || Buffer.byteLength(json, 'utf8') > query.maxBytes) {
+        return fail('Backend returned a mismatched or over-budget text page.');
+      }
+      return ok(json);
     } catch (error) {
       return fail(error instanceof Error ? error.message : String(error));
     }

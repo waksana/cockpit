@@ -13,6 +13,8 @@ import { NativeChatRead, NativeRewindResult, ToolScope, SessionToolScope } from 
 import { OfficialRuntime } from './runtime.ts';
 import type { RuntimeAttachment } from './sdk-types.ts';
 import { readNativeChat } from './native-chat.ts';
+import { readChatText } from './chat-text.ts';
+import type { ChatTextRead, ChatTextPage } from '@cockpit/protocol';
 import { validateForkHistory } from './fork.ts';
 import type { RoleProvider } from './roles.ts';
 import {
@@ -476,6 +478,10 @@ export class Engine {
         this.k.emit({ type: 'session/removed', sessionId: id });
       });
     } finally { this.k.removing.delete(id); this.k.release(st); }
+  }
+
+  chatText(query: ChatTextRead, signal?: AbortSignal): Promise<ChatTextPage> {
+    return readChatText(query, page => this.chat(page, signal));
   }
 
   chat(query: NativeChatRead, signal?: AbortSignal): Promise<NativeChatPage> {
