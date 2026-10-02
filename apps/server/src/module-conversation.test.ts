@@ -184,7 +184,7 @@ test('module conversation bridge preserves canonical native decisions and bounde
     assert.equal(h.runtime.createSession.mock.callCount(), 0);
   });
 
-  moduleHost.close();
+  await moduleHost.close();
   assert.throws(() => host.call('respondAsk', {
     sessionId: 's', requestId: 'r', answer: 'yes', wasFreeform: false,
   }), /Module is stopped/);

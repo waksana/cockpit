@@ -37,7 +37,7 @@ test('independently packaged file module installs and serves uploads and new nat
   const host = new ModuleHost({ hostRoot, observer, report: (_id, error) => { errors.push(error); } });
   const app = Fastify();
   t.after(async () => {
-    host.close();
+    await host.close();
     await app.close();
     await writableTree(root);
     await rm(root, { recursive: true, force: true });
@@ -124,7 +124,7 @@ test('independently packaged file module installs and serves uploads and new nat
 
   await selectModule(module.id, { hostRoot, enabled: false });
   assert.equal(host.bootstrap().modules.length, 1, 'Selection changes cannot hot-unload an active module');
-  host.close();
+  await host.close();
   await app.close();
   assert.equal(observers.size, 0);
   const next = new ModuleHost({ hostRoot, observer });

@@ -124,14 +124,15 @@ release rules are in the [module SDK guide](module-sdk.md).
 Backend packages export `activate(context)` and return `ModuleBackend`:
 | Field | Contract |
 | --- | --- |
-| `context` | `apiVersion: 1`, `serviceReadyVersion: 1`, `moduleId`, `dataRoot`, `apiBase`, read-only `config`, `signal`, `report`, `invalidate`, `publish`, and `host.call`. |
+| `context` | `apiVersion: 1`, `serviceReadyVersion: 1`, `shutdownVersion: 1`, `moduleId`, `dataRoot`, `apiBase`, read-only `config`, `signal`, `stopping`, `report`, `invalidate`, `publish`, and `host.call`. |
 | `routes` | Validated `method`/`path` plus optional JSON or stream body and `bodyLimit`; handlers receive params/query/headers/body/signal and return status/headers/body or a stream. |
 | `publicConfig` | Explicit browser-readable config only; the host never exposes all `config` by default. |
 | `events` | Declared native event type filters and read-only handlers. |
 | `controlEvents` | Declared `ServerEvent` type filters for existing native control projections; no extra native reads. |
 | `onReady` | Optional service-ready callback; requires `context.serviceReadyVersion === 1`. |
 | `roleAssignments` | Optional mutation-time `permit` and saved-selection `saved` hooks (`roleAssignmentVersion: 1`), plus selection-time `availability` (`roleAvailabilityVersion: 1`). |
-| `dispose` | Non-blocking cleanup; it is not part of the host graceful-shutdown wait chain. |
+| `onStop` | Optional awaited drain; opts into [safe module shutdown](#safe-module-shutdown), requiring `context.shutdownVersion === 1`. |
+| `dispose` | Final cleanup; awaited for `onStop` modules, best-effort and non-blocking for legacy modules. |
 A module never receives the root Fastify instance, Engine internals, native session handles, or a security sandbox. Routes are validated before registration; failure or timeout is attributed to the module. Same-process modules can still block synchronously, exhaust memory, or call process-level APIs.
 
 ### Role assignment lifecycle
@@ -312,7 +313,7 @@ lifecycle/native failures remain explicit. It does not close/resume an existing
 loaded handle, create another session, send a prompt, or choose a new model.
 
 `onReady?()` is called once for each successful cold activation after native `runtime.start()` and public HTTP `listen()` both succeed, unless shutdown has already started or the module scope is closed. The module's declared routes are already active, so `context.host.call` can reach HTTP MCP endpoints mounted by the
-same module. `activate()`, Fastify `ready()`, injected requests, and earlier `agent/status: up` are not this signal. The callback promise does not block other modules, service startup, or graceful exit. Throws/rejections are reported through module errors and `/_modules.errors`; the host does not retry, unload, or send
+same module. `activate()`, Fastify `ready()`, injected requests, and earlier `agent/status: up` are not this signal. The callback promise does not block other modules or service startup; opt-in `onStop` modules are joined during [shutdown](#safe-module-shutdown). Throws/rejections are reported through module errors and `/_modules.errors`; the host does not retry, unload, or send
 an alternate event. Modules must check `serviceReadyVersion` before opening, creating, or migrating their own persistent data if they require this signal:
 ```ts
 if (context.serviceReadyVersion !== 1) {
@@ -901,7 +902,7 @@ Browser `context.request(path, init)` sends relative module API requests with ho
 authentication; origin and auth remain host responsibilities.
 
 Streaming uploads use declared stream bodies and accept only `application/octet-stream`, rejecting other types before parsing. JSON limits are not globally raised. If a module returns a Node `Readable`, the host owns response assignment, cancellation, and destruction, including streams returned after the client
-disconnects. Module HTTP requests do not automatically become native busy work or graceful-shutdown blockers.
+disconnects. Module HTTP requests do not become native busy work; pending handlers of `onStop` modules are joined during [shutdown](#safe-module-shutdown).
 
 `context.invalidate()` sends `module/invalidated { moduleId }` on existing `/events` for active loaded modules. It is a hint to reread module state, not business data, native chat, persisted state, replay log, per-module SSE, or a graceful-shutdown condition. Consumers reconnect by reading current state.
 
@@ -1428,8 +1429,66 @@ handler errors do not pollute native control state.
 `NativeObservation` is frozen and read-only. `cwd` and optional `workspacePath?: string | null` are independent. `workspacePath` is read from the SDK `CopilotSession.workspacePath`: a string is the native absolute workspace path, `null` means a handle exists but the SDK has no workspace, and omission means unknown (for
 example early creation/resume before the handle is available). Invalid paths or getter errors are reported as observation failures and delivered with the field omitted; the host does not fall back to `cwd`, cache, infer, load other sessions, add RPCs, or parse files.
 
-Observation covers existing SDK notifications for loaded sessions. It is not a background event-log reader. Native messages, context, queues, and configuration remain authoritative in Copilot. Graceful shutdown waits only for native work and necessary native in-flight operations. On shutdown, the host revokes module
-scope, subscriptions, and streams; it does not wait for module business queues or close acknowledgements. Modules must persist during normal operation, not rely on exit callbacks.
+Observation covers existing SDK notifications for loaded sessions. It is not a background event-log reader. Native messages, context, queues, and configuration remain authoritative in Copilot. Modules must persist during normal operation, not rely on exit callbacks.
+
+<a id="safe-module-shutdown"></a>
+### Opt-in safe module shutdown
+
+Require `context.shutdownVersion === 1` before starting a service and return
+`onStop?(): void | Promise<void>` to opt in. The deployment descriptor advertises
+`shutdown.v1`. Neither `apiVersion: 1`, `serviceReadyVersion: 1`, nor an async
+legacy `dispose` establishes this contract.
+
+The host-owned graceful shutdown sequence is:
+
+1. Abort `context.stopping`, stop role assignment intake, reject new opted-in module HTTP
+   work, and revoke its native/control/prompt event subscriptions. Modules must
+   immediately gate their own timers, polling, inbound connections and producers.
+2. Join in-progress activation, including a late result after cancellation, and
+   call every opted-in module's `onStop` once. The hook settles already-started
+   external sends and durable receipts, including explicit unknown-outcome
+   records; it must not begin new business or wait for future event callbacks.
+3. Join the opted-in module's already-started `onReady`, HTTP, event, role hook
+   and host-call promises. The hook must also join any detached work it owns;
+   the host cannot discover arbitrary promises, threads or external effects.
+4. After module drain succeeds, retain the existing native busy, queue and
+   in-flight-operation safeguards, stop native runtime, then run module
+   `dispose` and close host transports. The public HTTP service is not torn down
+   before module drain by the host's shutdown controller.
+
+For opted-in modules, `context.signal` and existing request streams remain alive
+during drain. `context.host.call` permits only `session/get`, `session/chat`,
+`session/directory`, `session/tool-scope` and `respondAsk`; creation, load, prompt,
+role mutation and new independent work are rejected. Already-started host calls
+remain joined. These settlement calls also remain available to a still-draining
+module after a failed shutdown; the process cannot automatically exit in that
+state. Once its drain completes, its bridge is revoked. `dispose` is final
+resource release, not a second opportunity for native calls or external sends.
+
+`onReady` does not block startup. An opted-in callback must observe
+`context.stopping` and release cancellation-dependent waits, since shutdown joins
+its promise. Activation is not service readiness: start producers in `onReady`,
+not in an uncommitted activation. A late activation is never added to the active
+catalog after shutdown starts; its returned cleanup is still joined.
+An activation timeout aborts `stopping`, not the final `signal`: until activation
+settles, the host cannot know whether the late result requires awaited cleanup.
+
+The default drain deadline is 60 seconds. Rejection or expiry fails closed with
+`MODULE_SHUTDOWN_FAILED` or `MODULE_SHUTDOWN_TIMEOUT`: the shutdown state records
+failure, necessary module/native/transport resources are retained, and no
+automatic exit, retry, force kill or success fallback occurs. The same stop/close
+promise is returned on repeated calls. Late completion cannot change a failed
+request into successful teardown. Final opted-in disposal has the same bounded,
+failure-reporting policy; resources already released after a successful drain
+are not rolled back. Inspect shutdown status and module errors before separately
+authorized operator recovery; there is no implicit resume/force operation.
+
+Legacy modules without `onStop` keep best-effort non-blocking `onReady` and
+`dispose` semantics. Their routes and subscriptions remain available to protected
+native work until transport close, when their old cancellation signal is revoked.
+They do not acquire a safe business-drain guarantee. A still-unresolved activation
+is different: the host cannot know the cleanup contract of its eventual result,
+so it remains a shutdown blocker rather than being treated as nonexistent.
 <a id="future-work"></a>
 ## 8. Future work
 The module model remains trusted main-process import with cold loading. Hot-load, hot-unload, hot-restart, and hot-update are not goals and should not be simulated through hidden prompts, private stores, or unknown API fields.

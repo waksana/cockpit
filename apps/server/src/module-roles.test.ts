@@ -190,7 +190,7 @@ test('module roles union shared HTTP tools, label raw instructions and persist i
   assert.deepEqual(await replacement.roles.read('native-id'), value.roles);
   assert.deepEqual(await host.roles.assemble('empty', []), { roles: [], config: {}, skills: [], mcpSources: {}, instructionSources: [],
     fingerprint: (await host.roles.assemble('empty', [])).fingerprint });
-  host.close();
+  await host.close();
   assert.deepEqual(await host.roles.read('native-id'), value.roles);
   await assert.rejects(host.roles.assemble('native-id', [owner]), /unavailable/);
 });
@@ -239,7 +239,7 @@ test('session instructions compose enabled module defaults, applied roles and us
   await chmod(defaultsFile, 0o600);
   await writeFile(defaultsFile, 'tampered');
   await assert.rejects(host.roles.sessionInstructions('native-id'), /Role resource changed: defaults\.md/);
-  host.close();
+  await host.close();
   assert.equal(await host.roles.sessionInstructions('native-id'), undefined, 'disabled or unloaded modules are omitted');
   const alone = new ModuleRoles(f.hostRoot, 'http://127.0.0.1:1', () => []);
   await writeFile(userFile, 'Only user text');

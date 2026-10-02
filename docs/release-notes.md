@@ -30,6 +30,10 @@ isolated package snapshot, never committed back to source.
   with exclusive roles without weakening isolation; saving still rechecks under
   assignment locks. Modules require `roleAvailabilityVersion: 1`; see
   [selection availability](module-contract.md#selection-availability).
+- Service modules can opt into `shutdownVersion: 1` and `onStop` to stop intake
+  and drain already-started sends and persistence before native/transport teardown.
+  Failed or timed-out drain preserves the process for inspection rather than
+  claiming a safe exit. See [safe shutdown](module-contract.md#safe-module-shutdown).
 - The independently versioned [module SDK](module-sdk.md) adds `settingsVersion: 1`
   and `settings` component middleware. Modules keep their own configuration and
   operations; the host supplies only the shared presentation boundary.

@@ -1273,6 +1273,34 @@ test('graceful shutdown refuses new work but keeps decisions, queue controls and
   }
 });
 
+test('module drain retains settlement calls during waiting and failed shutdown without reopening new work', async t => {
+  const gate = Promise.withResolvers<void>();
+  const teardown: string[] = [];
+  const stopping = new GracefulShutdown({
+    prepareStop: () => gate.promise, busyCount: async () => 0,
+    stopNative: async () => { teardown.push('native'); },
+    closeTransport: async () => { teardown.push('transport'); },
+    exit: () => { teardown.push('exit'); }, report: () => {},
+  });
+  t.after(() => stopping.dispose());
+  setTestDependencies({ engine, shutdown: stopping });
+  const accepted = await app.inject({ method: 'POST', url: '/intent/system/shutdown', payload: { confirm: true } });
+  assert.equal(accepted.json().shutdown.phase, 'waiting');
+  await callModuleIntent('session/directory', { limit: 1 });
+  await callModuleIntent('respondAsk', { sessionId: 's', requestId: 'existing', answer: 'settled', wasFreeform: false });
+  await assert.rejects(callModuleIntent('session/new', { cwd: '/synthetic' }), /shutting down/);
+  await assert.rejects(callModuleIntent('prompt', { sessionId: 's', text: 'new work' }), /shutting down/);
+  gate.reject(new Error('Module drain outcome unknown'));
+  await nextTurn();
+  assert.equal(stopping.snapshot().phase, 'failed');
+  await callModuleIntent('session/directory', { limit: 1 });
+  await assert.rejects(callModuleIntent('prompt', { sessionId: 's', text: 'new work' }), /shutting down/);
+  const status = await app.inject('/status');
+  assert.equal(status.statusCode, 503);
+  assert.equal(status.json().shutdown.phase, 'failed', 'inspection retains the failed shutdown evidence');
+  assert.deepEqual(teardown, []);
+});
+
 test('shutdown requires explicit confirmation and has no force, deployment or cancel mode', async () => {
   for (const body of [{}, { confirm: false }, { confirm: true, force: true }, { confirm: true, pending: false }]) {
     const response = await app.inject({ method: 'POST', url: '/intent/system/shutdown', payload: body });

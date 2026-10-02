@@ -102,11 +102,15 @@ export interface ModuleBackendContext {
    * Modules requiring readiness must check this before opening/migrating data.
    */
   readonly serviceReadyVersion: 1;
+  /** Opt-in onStop drain, distinct from legacy best-effort disposal. */
+  readonly shutdownVersion: 1;
   moduleId: string;
   dataRoot: string;
   apiBase: string;
   config: Readonly<Record<string, unknown>>;
   signal: AbortSignal;
+  /** Aborted when shutdown begins; stop accepting business before any await. */
+  readonly stopping: AbortSignal;
   report(error: unknown): void;
   invalidate(): void;
   /**
@@ -145,12 +149,23 @@ export interface ModuleBackend {
   publicConfig?: Readonly<Record<string, unknown>>;
   /**
    * Called once after the runtime has started and public HTTP is listening,
-   * unless the host is already stopping. Not awaited by startup or shutdown.
-   * Use context.signal for cancellation; recheck it after awaits.
+   * unless the host is already stopping. Not awaited by startup. An onStop module's
+   * pending callback is joined during shutdown; legacy callbacks remain best-effort.
+   * Observe context.stopping for shutdown and context.signal for final revocation.
    * Throws/rejections are reported as module errors, without retry or unload.
    * Requires context.serviceReadyVersion === 1; apiVersion alone is not enough.
    */
   onReady?(): void | Promise<void>;
+  /**
+   * Opt in to awaited shutdown. Invoked once after stopping is aborted and new
+   * HTTP/event ingress is gated, before native/transport teardown. Stop producers
+   * and settle started external sends/persistence, including unknown outcomes.
+   * Host joins pending onReady/HTTP/event callbacks. During drain only passive
+   * session reads and respondAsk remain available through host.call.
+   * Failure or the host's 60-second deadline prevents automatic teardown/exit.
+   * Requires context.shutdownVersion === 1. Legacy dispose alone is not a drain.
+   */
+  onStop?(): void | Promise<void>;
   events?: {
     types: readonly string[];
     handle(observation: NativeObservation): void | Promise<void>;
@@ -159,7 +174,8 @@ export interface ModuleBackend {
     types: readonly ServerEvent['type'][];
     handle(event: ServerEvent): void | Promise<void>;
   };
-  dispose?(): void;
+  /** Final resource release; awaited only when onStop opts into shutdownVersion 1. */
+  dispose?(): void | Promise<void>;
 }
 
 export type ActivateBackend = (context: ModuleBackendContext) => ModuleBackend | Promise<ModuleBackend>;

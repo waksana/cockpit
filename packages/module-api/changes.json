@@ -1,5 +1,10 @@
 [
   {
+    "version": "0.15.0",
+    "kind": "additive",
+    "summary": "Add opt-in shutdownVersion: 1, a stopping signal and awaited onStop drain before native/transport teardown. Preserve legacy best-effort disposal; fail closed on shutdown errors or deadline expiry. Includes the previously prepared role availability contract."
+  },
+  {
     "version": "0.14.0",
     "kind": "additive",
     "summary": "Add roleAvailabilityVersion: 1, structured selection-time availability queries and module hooks, including all confirmed denials and unknown checks. Allow structurally neutral service-binding roles alongside exclusive roles without weakening native isolation. SDK source preparation only; independent publication remains required."

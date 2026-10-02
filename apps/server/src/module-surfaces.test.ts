@@ -62,7 +62,7 @@ test('control observation and invalidation stay scoped and cannot outlive module
   for (const handler of listeners) handler({ type: 'session/removed', sessionId: 'synthetic' });
   const response = await app.inject(`/_modules/surface-fixture/${installed.digest}/api/calls`);
   assert.deepEqual(response.json(), { calls: 1 });
-  host.close();
+  await host.close();
   assert.equal(listeners.size, 0);
   const { afterStop } = await import(join(installed.root, 'backend.mjs'));
   afterStop();
@@ -95,7 +95,7 @@ test('a module worker has a stable narrow scope and is verified against the acti
   await chmod(join(installed.root, 'web/worker.js'), 0o600);
   await writeFile(join(installed.root, 'web/worker.js'), response.body.slice(-46).padEnd(46));
   assert.equal((await app.inject(bootstrap.modules[0].worker.entry)).statusCode, 500);
-  host.close();
+  await host.close();
   assert.equal((await app.inject(bootstrap.modules[0].worker.entry)).statusCode, 404);
 });
 

@@ -25,6 +25,7 @@ import { GracefulShutdown } from './shutdown.ts';
 import { registerChatStream } from './chat-stream.ts';
 import { serviceIdentity } from './identity.ts';
 import { ModuleHost } from './module-host.ts';
+import { moduleDrainIntents } from './module-shutdown.ts';
 import { promptOrigin, browserPromptOrigin } from './prompt-origin.ts';
 import { guardModuleHostStartup, type ModuleStartupGuard } from './module-lifetime.ts';
 import { HostSessionDefaults } from './session-defaults.ts';
@@ -117,7 +118,7 @@ function sseSend(reply: FastifyReply, ev: ServerEvent): boolean {
 }
 
 async function closeTransport(): Promise<void> {
-  moduleHost?.close();
+  await moduleHost?.close();
   for (const client of clients) client.raw.destroy();
   clients.clear();
   for (const reply of openingClients.keys()) reply.raw.destroy();
@@ -128,6 +129,7 @@ async function closeTransport(): Promise<void> {
 function createShutdown(): GracefulShutdown {
   return new GracefulShutdown({
     busyCount: () => engine.busyCount(),
+    prepareStop: () => moduleHost?.stop() ?? Promise.resolve(),
     stopNative: () => engine.stop(),
     closeTransport,
     exit: code => {
@@ -564,8 +566,9 @@ app.post('/intent/*', async (req, reply) => {
 
 export async function callModuleIntent<K extends IntentName>(name: K, body: IntentBody<K>): Promise<IntentResult<K>> {
   const state = shutdown.snapshot();
-  if (state.phase !== 'running') throw new Error('Host is shutting down');
-  const release = shutdown.retain();
+  if (state.phase !== 'running' && !(['waiting', 'failed'].includes(state.phase) && moduleDrainIntents.has(name))) throw new Error('Host is shutting down');
+  // A failed shutdown never proceeds to exit; retained module drain may still settle.
+  const release = state.phase === 'failed' ? () => {} : shutdown.retain();
   try { return await promptOrigin.run('module', () => dispatch(name, body)); }
   finally { release(); }
 }
@@ -580,10 +583,14 @@ async function main(runtime: Engine): Promise<void> {
     report: (id, error) => app.log.error({ moduleId: id, err: error }, 'local module failed'),
   });
   await moduleHost.register(app);
+  if (shutdown.snapshot().phase !== 'running') return;
   runtime.setRoleProvider(moduleHost.roles);
   await registerStaticWeb();
+  if (shutdown.snapshot().phase !== 'running') return;
   await runtime.start();
+  if (shutdown.snapshot().phase !== 'running') return;
   app.log.info(`engine up (login=${await runtime.login()})`);
+  if (shutdown.snapshot().phase !== 'running') return;
   await app.listen({ host: HOST, port: PORT });
   if (shutdown.snapshot().phase === 'running') moduleHost.ready();
 }
