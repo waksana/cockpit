@@ -38,6 +38,31 @@ const fixtures = [
     const askVersion: 1 | undefined = host.askResponseVersion;
     const chatVersion: 1 | undefined = host.chatReadVersion;
     const promptVersion: 1 | undefined = host.promptReceiptVersion;
+    const middlewareVersion: 1 | undefined = host.interfaceMiddlewareVersion;
+    const wrapped: ModuleBackend = { routes: [], onStop() {}, middleware: {
+      async prompt(invocation, next) {
+        const original: string = invocation.body.text;
+        const signal: AbortSignal = invocation.signal;
+        const receipt = await next({ text: original, attachments: [{ type: 'file', path: '/managed/fixture' }] });
+        const messageId: string | undefined = receipt.messageId;
+        // @ts-expect-error A wrapper cannot retarget the native session.
+        await next({ sessionId: 'other' });
+        // @ts-expect-error Native queue mode is not a business input enhancement.
+        await next({ mode: 'immediate' });
+        void [signal, messageId];
+      },
+      async respondAsk(invocation, next) {
+        const requestId: string = invocation.body.requestId;
+        // @ts-expect-error The operation's original decision identity is protected.
+        await next({ requestId: 'other' });
+        await next({ answer: requestId, wasFreeform: true });
+      },
+    } };
+    const invalidMiddleware: ModuleBackend = { routes: [], middleware: {
+      // @ts-expect-error Private Host intents are not available to module middleware.
+      'system/shutdown': async () => {},
+    } };
+    void [middlewareVersion, wrapped, invalidMiddleware];
     const toolScopeVersion: 1 | undefined = host.toolScopeVersion;
     const scoped: ModuleHostIntentBody<'session/new'> = { cwd: '/workspace',
       toolScope: { builtins: [], mcpServers: [{ name: 'service', tools: ['read'] }] } };

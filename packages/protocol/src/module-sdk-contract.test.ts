@@ -8,6 +8,7 @@ import {
   type NativeChatEvent as SdkNativeChatEvent,
   type ServerEvent as SdkServerEvent,
   type SessionMeta as SdkSessionMeta,
+  type ModuleHostIntent, type ModuleHostIntentBody, type ModuleHostIntentResult,
 } from '@waksana/cockpit-module-sdk';
 import {
   MAX_MODULE_EVENT_BYTES,
@@ -17,6 +18,7 @@ import {
   type NativeChatEvent,
   type ServerEvent,
   type SessionMeta,
+  type IntentBody, type IntentResult,
 } from './index.ts';
 
 type Assert<Type extends true> = Type;
@@ -35,6 +37,14 @@ type _HostDescriptorFitsSdk = Assert<NativeAttachmentDescriptor extends SdkNativ
 type _SdkDescriptorFitsHost = Assert<SdkNativeAttachmentDescriptor extends NativeAttachmentDescriptor ? true : false>;
 type _HostChatEventFitsSdk = Assert<NativeChatEvent extends SdkNativeChatEvent ? true : false>;
 type _SdkChatEventFitsHost = Assert<SdkNativeChatEvent extends NativeChatEvent ? true : false>;
+type ProjectedBodies = { [Name in ModuleHostIntent]: ModuleHostIntentBody<Name> };
+type HostBodies = { [Name in ModuleHostIntent]: IntentBody<Name> };
+type ProjectedResults = { [Name in ModuleHostIntent]: ModuleHostIntentResult<Name> };
+type HostResults = { [Name in ModuleHostIntent]: IntentResult<Name> };
+type _HostBodiesFitSdk = Assert<HostBodies extends ProjectedBodies ? true : false>;
+type _SdkBodiesFitHost = Assert<ProjectedBodies extends HostBodies ? true : false>;
+type _HostResultsFitSdk = Assert<HostResults extends ProjectedResults ? true : false>;
+type _SdkResultsFitHost = Assert<ProjectedResults extends HostResults ? true : false>;
 
 test('module SDK runtime constants are the protocol constants', () => {
   assert.equal(SDK_MAX_MODULE_EVENT_BYTES, MAX_MODULE_EVENT_BYTES);

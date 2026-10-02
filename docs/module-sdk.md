@@ -157,6 +157,16 @@ See [safe module shutdown](module-contract.md#safe-module-shutdown) for the exac
 settlement-call boundary, 60-second fail-closed policy and late-completion rules.
 Check capabilities on the actual host; an installed SDK does not establish them.
 
+Transparent backend interface wrapping requires
+`context.host.interfaceMiddlewareVersion === 1`, deployment capability
+`interfaceMiddleware.v1`, and the safe-shutdown contract above. Declare typed
+`ModuleBackend.middleware` wrappers for the existing public Host-call allowlist;
+provide `onStop`. See [public interface middleware](module-contract.md#public-interface-middleware)
+for input patches, fixed identities, deterministic ordering, single-use `next`,
+Host-owned results, reentrancy and cancellation. This source addition does not
+publish the SDK; consumers must wait for separately authorized registry
+publication and verify access before changing their exact SDK dependency.
+
 Backend prompt correlation requires `promptReceiptVersion: 1`, independently of
 SDK version. The `prompt` result's optional `messageId` preserves the native
 acceptance receipt, not the event UUID or an assistant message ID. Follow

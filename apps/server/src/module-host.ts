@@ -13,6 +13,7 @@ import { ServerEvent, snapshotModuleEventPayload } from '@cockpit/protocol';
 import type { ModuleAsset, ModuleBackend, ModuleBackendContext, ModuleEventPayload, ModuleRoute, NativeObservation, ModuleHostApi } from '@cockpit/module-api/backend';
 import { ModuleRoles } from './module-roles.ts';
 import { ModuleLifetime, moduleDrainIntents } from './module-shutdown.ts';
+import { ModuleMiddleware, isModuleHostIntent } from './module-middleware.ts';
 import { isDeclaredAsset, moduleDataRoot, MODULE_WORKER_LIMIT, readModuleInstallation, readModuleSettings, safeModulePath, type ModuleInstallation } from './module-install.ts';
 
 const DEFAULT_BODY_LIMIT = 1024 * 1024;
@@ -28,6 +29,9 @@ const routeSchema = z.object({
   .refine(route => route.body === 'stream' || (route.bodyLimit ?? DEFAULT_BODY_LIMIT) <= 16 * 1024 * 1024, 'JSON body limit cannot exceed 16 MiB');
 const backendSchema = z.object({
   routes: z.array(routeSchema).max(256),
+  middleware: z.custom<NonNullable<ModuleBackend['middleware']>>(value =>
+    !!value && typeof value === 'object' && !Array.isArray(value)
+    && Object.entries(value).every(([name, callback]) => isModuleHostIntent(name) && typeof callback === 'function')).optional(),
   publicConfig: z.record(z.unknown()).optional(),
   onReady: z.custom<NonNullable<ModuleBackend['onReady']>>(value => typeof value === 'function').optional(),
   onStop: z.custom<NonNullable<ModuleBackend['onStop']>>(value => typeof value === 'function').optional(),
@@ -47,7 +51,8 @@ const backendSchema = z.object({
     handle: z.custom<NonNullable<ModuleBackend['controlEvents']>['handle']>(value => typeof value === 'function'),
   }).strict().optional(),
   dispose: z.custom<NonNullable<ModuleBackend['dispose']>>(value => typeof value === 'function').optional(),
-}).strict();
+}).strict().refine(backend => !backend.middleware || !Object.keys(backend.middleware).length || !!backend.onStop,
+  'Interface middleware requires onStop and shutdownVersion 1');
 
 /** activation: the module did not load; runtime: a loaded module's lifecycle/background failure. */
 export interface ModuleHostError { id: string; stage: 'activation' | 'runtime'; code: string; error: string }
@@ -97,6 +102,7 @@ const mimeTypes: Record<string, string> = {
 
 export class ModuleHost {
   readonly roles: ModuleRoles;
+  readonly middleware = new ModuleMiddleware();
   private readonly loaded: Loaded[] = [];
   private readonly errors = new Map<string, ModuleHostError>();
   private readonly lifetimes = new Set<ModuleLifetime>();
@@ -211,15 +217,17 @@ export class ModuleHost {
         const apiBase = `/_modules/${id}/${installation.digest}/api`;
         const context: ModuleBackendContext = Object.freeze({
           host: Object.freeze({ resourcePreparationVersion: 1, toolScopeVersion: 1, roleResourcePolicyVersion: 1,
+            interfaceMiddlewareVersion: 1,
             ...(this.options.observer.onPromptAccepted ? { promptOriginVersion: 1 as const } : {}),
             askResponseVersion: 1, chatReadVersion: 1, promptReceiptVersion: 1,
             roleAssignmentVersion: 1, roleAvailabilityVersion: 1, sessionDirectoryVersion: 1, sessionLoadVersion: 1, call: (name, body) => {
             if (controller.signal.aborted || this.closed || lifetime.drained) throw new Error('Module is stopped');
             if (this.stopping && (!lifetime.awaitable || !moduleDrainIntents.has(name))) throw new Error('Module is stopping; only settlement host calls are allowed');
             if (!this.loaded.some(module => module.controller === controller)) throw new Error('Module host intents are not active');
-            if (!['session/new', 'session/get', 'session/rename', 'roles/readiness', 'roles/availability', 'session/resources-prepare', 'prompt', 'respondAsk', 'session/chat', 'session/directory', 'session/load', 'roles/notify', 'session/tool-scope'].includes(name)) throw new Error('Module host intent is not allowed');
+            if (!isModuleHostIntent(name)) throw new Error('Module host intent is not allowed');
             if (!this.options.host) throw new Error('Module host intents are unavailable');
             this.roles.assertCallbackHostCall(name);
+            this.middleware.assertNotReentrant(name);
             return lifetime.invoke(() => this.options.host!.call(name, body));
           } } satisfies ModuleHostApi),
           apiVersion: 1, serviceReadyVersion: 1, shutdownVersion: 1, moduleId: id, apiBase, dataRoot: await moduleDataRoot(id, hostRoot),
@@ -321,6 +329,9 @@ export class ModuleHost {
         }
         app.register(router => this.registerRouter(router, loaded));
         this.loaded.push(loaded);
+        if (backend.middleware) this.middleware.register({
+          id, middleware: { ...backend.middleware }, lifetime, report: error => this.report(id, error, 'request'),
+        });
       } catch (error) {
         lifetime.signalStop();
         if (!lifetime.awaitable && (!lifetime.preparation || lifetime.activationSettled)) controller.abort(error);

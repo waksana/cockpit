@@ -19,12 +19,14 @@ import { existsSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Engine, OfficialRuntime } from '@cockpit/core';
+import type { ModuleHostIntentBody } from '@cockpit/module-api/backend';
 import { ErrorCodes, Intents, errorCode, type ErrorCode, type IntentBody, type IntentName, type IntentResult, type ServerEvent, type Snapshot } from '@cockpit/protocol';
 import { isIntentName, registerCapabilities } from './capabilities.ts';
 import { GracefulShutdown } from './shutdown.ts';
 import { registerChatStream } from './chat-stream.ts';
 import { serviceIdentity } from './identity.ts';
 import { ModuleHost } from './module-host.ts';
+import { isModuleHostIntent } from './module-middleware.ts';
 import { moduleDrainIntents } from './module-shutdown.ts';
 import { promptOrigin, browserPromptOrigin } from './prompt-origin.ts';
 import { guardModuleHostStartup, type ModuleStartupGuard } from './module-lifetime.ts';
@@ -64,10 +66,11 @@ let moduleHost: ModuleHost | undefined;
 let moduleStartupGuard: ModuleStartupGuard | undefined;
 
 // No SDK construction, preferences, listeners, or production dependency override.
-export function setTestDependencies(deps: { engine: ServerEngine; shutdown?: GracefulShutdown }): void {
+export function setTestDependencies(deps: { engine: ServerEngine; shutdown?: GracefulShutdown; moduleHost?: ModuleHost }): void {
   if (process.env.COCKPIT_NO_BOOT !== '1') throw new Error('test dependencies require COCKPIT_NO_BOOT=1');
   shutdown.dispose();
   engine = deps.engine;
+  moduleHost = deps.moduleHost;
   shutdown = deps.shutdown ?? createShutdown();
 }
 
@@ -467,12 +470,27 @@ async function dispatch<K extends IntentName>(name: K, body: unknown, signal?: A
   if (!input.success) throw new IntentBoundaryError(input.error.message, 'INVALID_INTENT_BODY');
   // Zod's indexed schema union loses the key/value correlation; the mapped
   // handlers retain it. Assertions restore that correlation after validation.
-  const result = await handlers[name](input.data as IntentBody<K>, signal);
-  const output = Intents[name].result.safeParse(result);
-  if (!output.success) {
-    throw new IntentBoundaryError(`Invalid result for ${name}: ${output.error.message}`, 'INVALID_INTENT_RESULT');
+  const terminal = async <Name extends IntentName>(intent: Name, value: unknown) => {
+    // Middleware may await business work; admission must still hold at native dispatch.
+    if (intent === 'prompt' && shutdown.snapshot().phase !== 'running') {
+      throw new IntentBoundaryError('Host is shutting down; prompt was not sent', 'SERVICE_SHUTTING_DOWN');
+    }
+    const result = await handlers[intent](value as IntentBody<Name>, signal);
+    const output = Intents[intent].result.safeParse(result);
+    if (!output.success) throw new IntentBoundaryError(`Invalid result for ${intent}: ${output.error.message}`, 'INVALID_INTENT_RESULT');
+    return output.data as IntentResult<Name>;
+  };
+  if ((name === 'cancel' || name === 'session/interrupt' || name === 'session/control')
+    && 'sessionId' in input.data && typeof input.data.sessionId === 'string') moduleHost?.middleware.cancelPrompts(input.data.sessionId);
+  // During drain, settlement calls retain their native path without entering stopped modules.
+  if (moduleHost && isModuleHostIntent(name) && shutdown.snapshot().phase === 'running') {
+    // The generated SDK and Zod projections have identical bodies/results, but
+    // TypeScript cannot correlate their independently mapped generic keys.
+    return moduleHost.middleware.run(name, input.data as ModuleHostIntentBody<typeof name>,
+      value => terminal(name, value),
+      promptOrigin.getStore() ?? 'api', signal) as Promise<IntentResult<K>>;
   }
-  return output.data as IntentResult<K>;
+  return terminal(name, input.data as IntentBody<K>);
 }
 
 // A protocol code fixes the status; other errors may carry an explicit
@@ -538,6 +556,8 @@ app.post('/intent/*', async (req, reply) => {
   if (name === 'session/chat') {
     reply.header('Cache-Control', 'private, no-store');
     reply.header('X-Content-Type-Options', 'nosniff');
+  }
+  if (name === 'session/chat' || name === 'prompt') {
     reply.raw.on('close', cancel);
   }
   try {
@@ -545,9 +565,9 @@ app.post('/intent/*', async (req, reply) => {
       () => dispatch(name, req.body, controller.signal));
   } catch (e) {
     if (controller.signal.aborted && e === controller.signal.reason) {
-      req.log.debug({ intent: name }, 'client disconnected during native read');
+      req.log.debug({ intent: name }, 'client disconnected during intent');
       reply.code(499);
-      return { code: 'REQUEST_ABORTED', error: 'Client disconnected during native read.' };
+      return { code: 'REQUEST_ABORTED', error: 'Client disconnected during intent.' };
     }
     req.log.error({ err: e }, `intent ${name} failed`);
     reply.code(errorStatus(e));

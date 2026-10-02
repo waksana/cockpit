@@ -14,6 +14,8 @@ import type {
 export * from './contract.ts';
 
 export interface ModuleHostApi {
+  /** Transparent middleware over the existing public host intent allowlist. */
+  readonly interfaceMiddlewareVersion?: 1;
   /** Role-only native resource discovery and connection policy. */
   readonly roleResourcePolicyVersion?: 1;
   /** Body-free native prompt acceptance observations with trusted Host ingress class. */
@@ -125,8 +127,35 @@ export interface ModuleBackendContext {
   publish(payload: ModuleEventPayload): void;
 }
 
+/** Target/operation identities and dispatch mode are never input enhancements. */
+export type ModuleIntentChanges<Name extends ModuleHostIntent> =
+  Partial<Omit<ModuleHostIntentBody<Name>, 'sessionId' | 'requestId' | 'notificationId' | 'mode'>>;
+
+export interface ModuleIntentInvocation<Name extends ModuleHostIntent> {
+  readonly name: Name;
+  /** Per-call identity, shared by every layer; not a durable deduplication key. */
+  readonly invocationId: string;
+  readonly origin: PromptAccepted['origin'];
+  /** A detached snapshot. Changing it does not change the downstream input. */
+  readonly body: Readonly<ModuleHostIntentBody<Name>>;
+  /** Stop preparation when aborted; already-started native effects are not undone. */
+  readonly signal: AbortSignal;
+}
+
+export type ModuleIntentMiddleware<Name extends ModuleHostIntent> = (
+  invocation: ModuleIntentInvocation<Name>,
+  /** Await once. Receives a detached result; the Host retains the actual result. */
+  next: (changes?: ModuleIntentChanges<Name>) => Promise<ModuleHostIntentResult<Name>>,
+) => Promise<void>;
+
+export type ModuleIntentMiddlewares = {
+  [Name in ModuleHostIntent]?: ModuleIntentMiddleware<Name>;
+};
+
 export interface ModuleBackend {
   routes: readonly ModuleRoute[];
+  /** Global, cold-load declarations, ordered by module ID. Requires onStop. */
+  middleware?: ModuleIntentMiddlewares;
   /** Live acceptance facts only. Errors do not undo or retry an accepted native send. */
   promptAccepted?(event: PromptAccepted): void | Promise<void>;
   roleAssignments?: {
