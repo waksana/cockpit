@@ -1,5 +1,10 @@
 [
   {
+    "version": "0.16.0",
+    "kind": "additive",
+    "summary": "Add capability-gated sessionListItem middleware for Web v2 and v3 around the real session selection button, with noninteractive description content preserving host title, time, details and interactions. SDK source preparation only; independent publication remains required."
+  },
+  {
     "version": "0.15.0",
     "kind": "additive",
     "summary": "Add opt-in shutdownVersion: 1, a stopping signal and awaited onStop drain before native/transport teardown. Preserve legacy best-effort disposal; fail closed on shutdown errors or deadline expiry. Includes the previously prepared role availability contract."

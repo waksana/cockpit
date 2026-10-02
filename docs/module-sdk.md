@@ -206,6 +206,15 @@ releases still record and test their exact host compatibility in the
 used to build a module, run consumer pairing tests against the intended host, and
 do not infer compatibility by comparing host and SDK version numbers.
 
+Session-list descriptions require `sessionListItemVersion: 1` and the
+`sessionListItem.v1` deployment capability. The compatible addition exposes
+`SessionListItemProps` and the real `sessionListItem` middleware to both Web v2
+and v3; v3 also supports public component lookup. See the
+[session-list contract](module-contract.md#session-list-item) for phrasing-only
+content and preserved native interaction. The source version/change record does
+not authorize or establish SDK publication. Consumers must verify registry
+availability before changing their pinned dependency.
+
 ## Independent release
 
 Only maintainers release the SDK, after the exact commit passes required checks:

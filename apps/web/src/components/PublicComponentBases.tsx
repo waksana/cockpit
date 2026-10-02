@@ -1,7 +1,7 @@
 import { createElement, useContext, useSyncExternalStore } from 'react';
 import type {
   AttachmentProps, ComposerProps, ComposerEditorProps, ComposerInputProps, ManagementHeaderProps,
-  ManagementDetailHeaderProps, MessageProps, ModuleComponentProps, PublicButtonProps, SessionStatusProps, SettingsProps,
+  ManagementDetailHeaderProps, MessageProps, ModuleComponentProps, PublicButtonProps, SessionListItemProps, SessionStatusProps, SettingsProps,
 } from '@cockpit/module-api/frontend';
 import { ComposerDockContext, ComposerSurfaceContext, PublicComponentRuntime } from '../lib/publicComponentContext';
 import { ComposerCard, ComposerSurface } from './ComposerSurface';
@@ -28,6 +28,15 @@ export function SessionStatusBase({ status, needsDecision, activity, activityRef
   error, loaded, connected = false, children }: SessionStatusProps) {
   const items = sessionActivityIndicators({ status, needsDecision, activity, activityRefreshing, activityDisplay, compacting, error, loaded }, connected);
   return <span className="dialog-meta"><SessionActivity items={items} />{children}</span>;
+}
+export function SessionListItemBase({ sessionId, title, time, description, details, className, ...props }: SessionListItemProps) {
+  return <button type="button" className={['chatlist-chat ck-button', className].filter(Boolean).join(' ')}
+    data-session-id={sessionId} {...props}>
+    <span className="session-row-title" title={title}>{title}</span>
+    <span className="dialog-time">{time}</span>
+    {description != null && description !== false && <span className="session-row-description">{description}</span>}
+    <span className="session-row-details">{details}</span>
+  </button>;
 }
 export function AttachmentBase({ children, actions }: AttachmentProps) { return <>{children}{actions}</>; }
 export function SettingsBase({ children, ...props }: SettingsProps) { return <section {...props}>{children}</section>; }

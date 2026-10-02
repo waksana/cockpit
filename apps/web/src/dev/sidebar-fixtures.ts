@@ -4,6 +4,7 @@ import type { SessionRole } from '@cockpit/protocol';
 import { ModuleRuntime } from '../lib/moduleRuntime';
 import { activityFixture } from './activity-fixtures';
 import { workspaceSessions } from './workspace-fixtures';
+import { activate as sessionListExample } from './module-session-list-example';
 
 export function sidebarSessions(now = Date.now()) {
   const roles: SessionRole[] = [
@@ -70,17 +71,18 @@ export function sidebarSessions(now = Date.now()) {
   }];
 }
 
-export function createSidebarModuleFixture() {
+export function createSidebarModuleFixture(description = false) {
   const digest = 'b'.repeat(64);
   return new ModuleRuntime({
     pageUrl: 'https://fixture.invalid',
     fetch: async () => Response.json({ modules: [{
-      id: 'sidebar-fixture', name: 'Synthetic unread', version: '1.0.0', digest, config: {}, styles: [],
+      id: 'sidebar-fixture', name: 'Synthetic unread', version: '1.0.0', digest,
+      config: { description: 'Synthetic module description with long content that wraps on narrow screens without changing the session name' }, styles: [],
       apiBase: `/_modules/sidebar-fixture/${digest}/api`, entry: `/_modules/assets/sidebar-fixture/${digest}/entry.js`,
     }], errors: [] }),
-    load: async () => ({ activate: (() => ({
+    load: async () => ({ activate: ((context) => ({
       apiVersion: 2,
-      components: [{
+      components: [...(description ? sessionListExample(context).components : []), {
         id: 'unread', boundary: 'sessionStatus', wrap: Base => props => createElement(Base, {
           ...props, children: createElement('span', {
             'data-sidebar-unread': props.sessionId, 'aria-label': '7 unread', className: 'ck-badge',

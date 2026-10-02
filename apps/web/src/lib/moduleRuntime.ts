@@ -44,7 +44,7 @@ export interface LoadedModule {
 }
 export interface RegisteredRenderer { module: LoadedModule; renderer: MarkdownRenderer }
 type Boundary = keyof ModuleComponentProps;
-const BOUNDARIES = new Set<Boundary>(['message', 'messageList', 'chatMessage', 'sessionStatus', 'composer', 'composerEditor', 'composerInput', 'attachment',
+const BOUNDARIES = new Set<Boundary>(['message', 'messageList', 'chatMessage', 'sessionStatus', 'sessionListItem', 'composer', 'composerEditor', 'composerInput', 'attachment',
   'managementHeader', 'managementDetailHeader', 'settings', 'button', 'conversationFrame', 'conversationHeader', 'conversationTranscript']);
 const EMPTY_VIEW: HostSnapshot = Object.freeze({ sessionId: null, visible: false, connected: false });
 let moduleSequence = 0;
@@ -418,7 +418,7 @@ export class ModuleRuntime {
       this.navigation(path);
     };
     const makeContext = (version: 2 | 3): ModuleFrontendContext | LegacyModuleFrontendContext => ({
-      uiVersion: 1, uiSurfaceVersion: 1, menuVersion: 1, settingsVersion: 1, globalComponentVersion: 1, chatWindowVersion: 1, composerInputVersion: 1, draftLifecycleVersion: 1,
+      uiVersion: 1, uiSurfaceVersion: 1, menuVersion: 1, settingsVersion: 1, globalComponentVersion: 1, sessionListItemVersion: 1, chatWindowVersion: 1, composerInputVersion: 1, draftLifecycleVersion: 1,
       ...(version === 3
         ? {
           apiVersion: 3, draftSubmissionVersion: 2, publicComponentsVersion: 1, messagePresentationVersion: 1,
