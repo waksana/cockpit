@@ -133,7 +133,7 @@ function createShutdown(): GracefulShutdown {
   return new GracefulShutdown({
     busyCount: () => engine.busyCount(),
     prepareStop: () => moduleHost?.stop() ?? Promise.resolve(),
-    stopNative: () => engine.stop(),
+    stopNative: beforeClose => engine.stop(beforeClose),
     closeTransport,
     exit: code => {
       if (process.env.COCKPIT_NO_BOOT === '1') throw new Error(`A test app must inject its shutdown exit (${code})`);
@@ -586,9 +586,10 @@ app.post('/intent/*', async (req, reply) => {
 
 export async function callModuleIntent<K extends IntentName>(name: K, body: IntentBody<K>): Promise<IntentResult<K>> {
   const state = shutdown.snapshot();
-  if (state.phase !== 'running' && !(['waiting', 'failed'].includes(state.phase) && moduleDrainIntents.has(name))) throw new Error('Host is shutting down');
+  if (state.phase !== 'running' && !(['waiting', 'closing', 'failed'].includes(state.phase) && moduleDrainIntents.has(name))) throw new Error('Host is shutting down');
+  // During closing, ModuleLifetime joins settlement calls under the Engine fence.
   // A failed shutdown never proceeds to exit; retained module drain may still settle.
-  const release = state.phase === 'failed' ? () => {} : shutdown.retain();
+  const release = ['closing', 'failed'].includes(state.phase) ? () => {} : shutdown.retain();
   try { return await promptOrigin.run('module', () => dispatch(name, body)); }
   finally { release(); }
 }
@@ -666,7 +667,7 @@ async function boot(): Promise<void> {
   runtime.onFatal(error => { shutdown.runtimeFailed(error); });
   main(runtime).catch(error => {
     app.log.error({ err: error }, 'service startup failed');
-    shutdown.runtimeFailed(error instanceof Error ? error : new Error(String(error)));
+    shutdown.startupFailed(error instanceof Error ? error : new Error(String(error)));
   });
 }
 

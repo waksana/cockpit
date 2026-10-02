@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { setImmediate as nextTurn } from 'node:timers/promises';
 import Fastify from 'fastify';
-import { harness } from '../../../packages/core/test-support/engine-harness.ts';
+import { event, finishReply, harness } from '../../../packages/core/test-support/engine-harness.ts';
 import { ModuleHost } from './module-host.ts';
 import { installLocalModule } from './module-install.ts';
 import { moduleEntries, moduleFixture } from './test-support/module-fixture.ts';
@@ -25,16 +25,19 @@ async function setup(t: TestContext, backend: string) {
   const moduleApp = Fastify();
   const host = new ModuleHost({ hostRoot: f.hostRoot, observer: h.engine, host: { call: callModuleIntent } });
   await host.register(moduleApp);
+  const closed = Promise.withResolvers<void>();
+  const shutdownErrors: unknown[] = [];
   const shutdown = new GracefulShutdown({
     busyCount: () => h.engine.busyCount(), prepareStop: () => host.stop(),
-    stopNative: async () => { throw new Error('Fixture must not tear down native'); },
-    closeTransport: async () => {}, exit: () => { throw new Error('Fixture must not exit'); },
-    report: () => {},
+    stopNative: beforeClose => h.engine.stop(beforeClose),
+    closeTransport: () => host.close(), exit: () => { closed.resolve(); },
+    report: error => { shutdownErrors.push(error); }, delayMs: 0,
   });
   setTestDependencies({ engine: h.engine, moduleHost: host, shutdown });
+  t.after(h.engine.onFatal(error => shutdown.runtimeFailed(error)));
   t.after(() => shutdown.dispose());
   t.after(() => moduleApp.close());
-  return { h, host, probe, moduleApp };
+  return { h, host, probe, moduleApp, shutdown, closed: closed.promise, shutdownErrors };
 }
 
 test('Web, API/MCP transport and module calls enter exactly once with true native receipts and origins', async t => {
@@ -121,13 +124,16 @@ test('native admission is rechecked after enhancement, not inferred from pre-mid
   assert.equal(h.runtime.createSession.mock.callCount(), 0);
 });
 
-test('shutdown joins wrapper persistence after send and allows unwrapped settlement reads', async t => {
-  const { h, host, probe } = await setup(t, `
+test('shutdown waits for wrapper persistence and native completion before module drain', { timeout: 10_000 }, async t => {
+  const { h, probe, shutdown, closed, shutdownErrors } = await setup(t, `
     export const accepted = Promise.withResolvers();
     export const persisted = Promise.withResolvers();
     export let stopped = false;
     export let disposed = false;
-    export function activate(ctx) { return { routes: [], onStop() { stopped = true; },
+    export function activate(ctx) { return { routes: [], async onStop() {
+      stopped = true;
+      await ctx.host.call('session/directory', { limit: 1 });
+    },
       dispose() { disposed = true; }, middleware: {
         async 'session/get'(_invocation, next) { await next(); },
         async prompt(invocation, next) {
@@ -145,16 +151,44 @@ test('shutdown joins wrapper persistence after send and allows unwrapped settlem
   const receipt = await probe.accepted.promise;
   const stopping = await app.inject({ method: 'POST', url: '/intent/system/shutdown', payload: { confirm: true } });
   assert.equal(stopping.statusCode, 200);
-  assert.equal(probe.stopped, true);
-  let drained = false;
-  const drain = host.stop().then(() => { drained = true; });
+  assert.equal(probe.stopped, false);
+  s.emit(event('user.message', { content: 'synthetic', messageId: receipt.messageId }));
+  await finishReply(s, 'Synthetic late reply');
+  s.emit(event('session.idle', {}));
   await nextTurn();
-  assert.equal(drained, false);
+  assert.equal(shutdown.snapshot().phase, 'waiting');
+  assert.equal(probe.stopped, false);
   assert.equal(probe.disposed, false);
   probe.persisted.resolve();
   assert.deepEqual((await sending).json(), receipt);
-  await drain;
+  await closed;
+  assert.equal(probe.stopped, true);
+  assert.equal(probe.disposed, true);
+  assert.deepEqual(shutdownErrors, []);
   assert.equal(s.sdk.send.mock.callCount(), 1);
+});
+
+test('confirmed native death during successful module drain still closes Host once', { timeout: 10_000 }, async t => {
+  const { h, probe, shutdown, closed, shutdownErrors } = await setup(t, `
+    export const draining = Promise.withResolvers();
+    export const finish = Promise.withResolvers();
+    export let disposed = false;
+    export function activate() { return { routes: [], async onStop() {
+      draining.resolve(); await finish.promise;
+    }, dispose() { disposed = true; } }; }
+  `);
+  await h.load();
+  shutdown.request();
+  await probe.draining.promise;
+  const fatal = new Error('Owned native child exited');
+  h.runtime.emitFatal(fatal);
+  probe.finish.resolve();
+  await closed;
+  assert.equal(shutdown.snapshot().phase, 'closed');
+  assert.equal(probe.disposed, true);
+  assert.equal(h.runtime.closeSession.mock.callCount(), 0);
+  assert.equal(h.runtime.stop.mock.callCount(), 1);
+  assert.deepEqual(shutdownErrors, [fatal]);
 });
 
 test('registration requires public names and opted-in drain; a failed module does not stop Host', async t => {

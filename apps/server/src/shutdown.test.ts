@@ -17,7 +17,7 @@ function fixture(t: TestContext, prepareStop?: () => Promise<void>) {
   let busy = 1;
   const events: string[] = [], errors: unknown[] = [], exits: number[] = [];
   const busyCount = t.mock.fn(async () => busy);
-  const stopNative = t.mock.fn(async () => { events.push('native'); });
+  const stopNative = t.mock.fn(async (beforeClose: () => Promise<void>) => { await beforeClose(); events.push('native'); });
   const closeTransport = t.mock.fn(async () => { events.push('transport'); });
   const shutdown = new GracefulShutdown({
     busyCount, prepareStop, stopNative, closeTransport, delayMs: 10,
@@ -128,6 +128,41 @@ test('a native busy preflight can return to waiting without replaying an uncerta
   assert.deepEqual(f.exits, [0]);
 });
 
+test('native busy after preparation fails closed without reopening waiting or repeating module stop', async t => {
+  const prepareStop = t.mock.fn(async () => {});
+  const f = fixture(t, prepareStop);
+  f.idle();
+  f.stopNative.mock.mockImplementation(async beforeClose => {
+    await beforeClose();
+    throw Object.assign(new Error('Native work reappeared'), { code: 'SESSION_BUSY' });
+  });
+  f.shutdown.request();
+  await f.advance();
+  assert.equal(f.shutdown.snapshot().phase, 'failed');
+  assert.match(f.shutdown.snapshot().error!, /reappeared/);
+  f.shutdown.notify();
+  f.shutdown.runtimeFailed(new Error('Later native failure'));
+  await f.advance();
+  assert.equal(f.stopNative.mock.callCount(), 1);
+  assert.equal(prepareStop.mock.callCount(), 1);
+  assert.deepEqual(f.events, []);
+});
+
+test('startup failure with a live busy runtime waits without stopping modules', async t => {
+  const prepareStop = t.mock.fn(async () => {});
+  const f = fixture(t, prepareStop);
+  f.shutdown.startupFailed(new Error('Listen failed'));
+  await f.advance();
+  assert.equal(f.shutdown.snapshot().phase, 'waiting');
+  assert.equal(prepareStop.mock.callCount(), 0);
+  assert.deepEqual(f.events, []);
+  f.idle();
+  f.shutdown.notify();
+  await f.advance();
+  assert.equal(prepareStop.mock.callCount(), 1);
+  assert.deepEqual(f.exits, [1]);
+});
+
 test('an uncertain native close stays failed and cannot be automatically requested again', async t => {
   const f = fixture(t);
   f.idle();
@@ -184,7 +219,7 @@ test('disposing a test or detached controller cancels a pending exit timer', asy
   assert.deepEqual(f.events, []);
 });
 
-test('preparation starts synchronously, returns acceptance immediately, and precedes native shutdown', async t => {
+test('preparation starts only inside native preflight after idle and precedes native shutdown', async t => {
   const held = deferred();
   const prepareStop = t.mock.fn(() => {
     f.events.push('prepare');
@@ -194,10 +229,11 @@ test('preparation starts synchronously, returns acceptance immediately, and prec
   f.idle();
   const first = f.shutdown.request();
   assert.equal(first.phase, 'waiting');
-  assert.deepEqual(f.events, ['prepare']);
+  assert.deepEqual(f.events, []);
   assert.deepEqual(f.shutdown.request(), first);
   await f.advance();
-  assert.equal(f.stopNative.mock.callCount(), 0);
+  assert.equal(f.stopNative.mock.callCount(), 1);
+  assert.equal(f.shutdown.snapshot().phase, 'closing');
   assert.equal(prepareStop.mock.callCount(), 1);
 
   held.resolve();
@@ -207,7 +243,7 @@ test('preparation starts synchronously, returns acceptance immediately, and prec
   assert.equal(f.shutdown.snapshot().phase, 'closed');
 });
 
-test('completed preparation still waits for native busy and retained response work', async t => {
+test('preparation cannot start while native busy or retained response work remains', async t => {
   const held = deferred(), prepareStop = t.mock.fn(() => held.promise);
   const f = fixture(t, prepareStop);
   f.shutdown.request();
@@ -215,6 +251,7 @@ test('completed preparation still waits for native busy and retained response wo
   await f.advance();
   assert.equal(f.shutdown.snapshot().phase, 'waiting');
   assert.deepEqual(f.events, []);
+  assert.equal(prepareStop.mock.callCount(), 0);
   assert.ok(f.busyCount.mock.callCount() > 0);
 
   const release = f.shutdown.retain();
@@ -222,13 +259,14 @@ test('completed preparation still waits for native busy and retained response wo
   f.shutdown.notify();
   await f.advance();
   assert.deepEqual(f.events, []);
+  assert.equal(prepareStop.mock.callCount(), 0);
   release();
   await f.advance();
   assert.deepEqual(f.events, ['native', 'transport', 'exit']);
   assert.equal(prepareStop.mock.callCount(), 1);
 });
 
-test('a native busy preflight retries native cleanup without repeating preparation', async t => {
+test('a native busy preflight returns to waiting without starting preparation', async t => {
   const prepareStop = t.mock.fn(async () => {});
   const f = fixture(t, prepareStop);
   f.idle();
@@ -240,6 +278,7 @@ test('a native busy preflight retries native cleanup without repeating preparati
   await f.advance();
   assert.equal(f.shutdown.snapshot().phase, 'waiting');
   assert.equal(f.closeTransport.mock.callCount(), 0);
+  assert.equal(prepareStop.mock.callCount(), 0);
   f.idle();
   f.shutdown.request();
   await f.advance();
@@ -254,6 +293,7 @@ for (const code of ['MODULE_SHUTDOWN_FAILED', 'MODULE_SHUTDOWN_TIMEOUT', 'SESSIO
     const f = fixture(t, prepareStop);
     f.idle();
     f.shutdown.request();
+    await f.advance();
     const error = Object.assign(new Error('Module preparation failed'), { code });
     held.reject(error);
     await f.advance();
@@ -279,7 +319,9 @@ test('a synchronous preparation exception fails closed without escaping the requ
   const prepareStop = t.mock.fn((): Promise<void> => { throw error; });
   const f = fixture(t, prepareStop);
   f.idle();
-  assert.equal(f.shutdown.request().phase, 'failed');
+  assert.equal(f.shutdown.request().phase, 'waiting');
+  await f.advance();
+  assert.equal(f.shutdown.snapshot().phase, 'failed');
   f.shutdown.runtimeFailed(new Error('Native subsequently exited'));
   await f.advance();
   assert.equal(f.shutdown.snapshot().error, error.message);
@@ -295,7 +337,7 @@ for (const requested of [false, true]) {
     if (requested) f.shutdown.request();
     f.shutdown.runtimeFailed(new Error('Owned native child exited'));
     assert.equal(prepareStop.mock.callCount(), 1);
-    assert.equal(f.shutdown.snapshot().phase, 'waiting');
+    assert.equal(f.shutdown.snapshot().phase, 'closing');
     await f.advance();
     assert.deepEqual(f.events, []);
     f.shutdown.request();
@@ -305,7 +347,7 @@ for (const requested of [false, true]) {
     assert.deepEqual(f.events, ['native', 'transport', 'exit']);
     assert.deepEqual(f.exits, [1]);
     assert.equal(prepareStop.mock.callCount(), 1);
-    assert.equal(f.busyCount.mock.callCount(), 0);
+    assert.equal(f.busyCount.mock.callCount(), requested ? 1 : 0);
   });
 }
 
@@ -328,6 +370,7 @@ test('native failure still retains an HTTP response while preparation completes'
   const release = f.shutdown.retain();
   f.shutdown.request();
   f.shutdown.runtimeFailed(new Error('Owned native child exited'));
+  assert.equal(f.shutdown.snapshot().phase, 'waiting');
   held.resolve();
   await f.advance();
   assert.deepEqual(f.events, []);
@@ -340,12 +383,14 @@ test('native failure still retains an HTTP response while preparation completes'
 test('reentrant shutdown requests and runtime failure cannot start preparation twice', async t => {
   const held = deferred();
   const prepareStop = t.mock.fn(() => {
-    assert.equal(f.shutdown.request().phase, 'waiting');
+    assert.equal(f.shutdown.request().phase, 'closing');
     f.shutdown.runtimeFailed(new Error('Native failed during preparation'));
     return held.promise;
   });
   const f = fixture(t, prepareStop);
+  f.idle();
   f.shutdown.request();
+  await f.advance();
   assert.equal(prepareStop.mock.callCount(), 1);
   await f.advance();
   assert.deepEqual(f.events, []);
@@ -360,6 +405,7 @@ test('disposing pending preparation cannot trigger cleanup after it resolves', a
   const held = deferred(), f = fixture(t, () => held.promise);
   f.idle();
   f.shutdown.request();
+  await f.advance();
   f.shutdown.dispose();
   held.resolve();
   await f.advance();
@@ -369,7 +415,8 @@ test('disposing pending preparation cannot trigger cleanup after it resolves', a
 test('runtime failure reported reentrantly during native cleanup does not duplicate cleanup', async t => {
   const f = fixture(t, async () => {});
   f.idle();
-  f.stopNative.mock.mockImplementation(async () => {
+  f.stopNative.mock.mockImplementation(async beforeClose => {
+    await beforeClose();
     f.events.push('native');
     f.shutdown.runtimeFailed(new Error('Native child exited during close'));
   });
@@ -428,7 +475,7 @@ function shutdownProcess(t: TestContext, trigger: 'request' | 'fatal', exitThrow
     const shutdown = new GracefulShutdown({
       prepareStop: () => preparation,
       busyCount: async () => 0,
-      stopNative: async () => { events.push('native'); },
+      stopNative: async beforeClose => { await beforeClose(); events.push('native'); },
       closeTransport: async () => { events.push('transport'); },
       exit: () => {
         events.push('exit');
@@ -489,7 +536,7 @@ for (const trigger of ['request', 'fatal'] as const) {
       timeout: 10_000,
     }, async t => {
       const child = shutdownProcess(t, trigger);
-      assert.equal((await child.message()).phase, 'waiting');
+      assert.equal((await child.message()).phase, trigger === 'fatal' ? 'closing' : 'waiting');
       await child.alive();
       const failed = await child.send(code);
       assert.equal(failed.phase, 'failed');
@@ -507,7 +554,7 @@ for (const exitThrows of [false, true]) {
     timeout: 10_000,
   }, async t => {
     const child = shutdownProcess(t, 'fatal', exitThrows);
-    assert.equal((await child.message()).phase, 'waiting');
+    assert.equal((await child.message()).phase, 'closing');
     const completed = await child.send('resolve');
     assert.equal(completed.phase, exitThrows ? 'failed' : 'closed');
     assert.deepEqual(completed.events, ['native', 'transport', 'exit']);

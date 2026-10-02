@@ -43,6 +43,17 @@ const nativeBusyCases = [
   ['steering message', (s: ReturnType<typeof fakeSession>) => { s.state.queue.steeringMessages = ['native steer']; }],
 ] as const;
 for (const [name, makeBusy] of nativeBusyCases) {
+  test(`${name} prevents module drain before native teardown`, async t => {
+    const h = harness(t);
+    const s = await h.load();
+    makeBusy(s);
+    const drain = t.mock.fn(async () => {});
+    await assert.rejects(h.engine.stop(drain), protectedWork);
+    assert.equal(drain.mock.callCount(), 0);
+    assert.equal(h.runtime.closeSession.mock.callCount(), 0);
+    assert.equal(s.listeners.size, 1);
+  });
+
   test(`${name} protects an apparently idle session from native teardown`, async t => {
     const h = harness(t);
     const s = await h.load();
@@ -144,6 +155,66 @@ for (const action of ['stop'] as const) {
       }
     });
   }
+}
+
+test('module drain holds the mutation gate while native reads and handles remain usable', async t => {
+  const h = harness(t);
+  const s = await h.load();
+  await h.engine.stop(async () => {
+    assert.equal(h.runtime.closeSession.mock.callCount(), 0);
+    assert.equal((await h.engine.getMeta(s.id))?.loaded, true);
+    assert.equal((await h.engine.sessionDirectory(1)).sessions[0]?.sessionId, s.id);
+    assert.equal((await h.engine.getSessionToolScope(s.id)).loaded, true);
+    await assert.rejects(h.engine.prompt(s.id, 'new work'), protectedWork);
+    await assert.rejects(h.engine.newSession(h.cwd), protectedWork);
+    await assert.rejects(h.engine.unload(s.id), protectedWork);
+  });
+  assert.equal(h.runtime.closeSession.mock.callCount(), 1);
+  assert.equal(h.runtime.stop.mock.callCount(), 1);
+});
+
+test('confirmed native death during a successful module drain still cleans the dead runtime once', async t => {
+  const h = harness(t);
+  await h.load();
+  const drain = t.mock.fn(async () => { h.runtime.emitFatal(new Error('Owned native child exited')); });
+  await h.engine.stop(drain);
+  assert.equal(drain.mock.callCount(), 1);
+  assert.equal(h.runtime.closeSession.mock.callCount(), 0);
+  assert.equal(h.runtime.stop.mock.callCount(), 1);
+});
+
+test('a changed earlier session invalidates the entire module drain preflight', async t => {
+  const h = harness(t);
+  const first = await h.load();
+  const second = await h.load();
+  const validating = deferred(), pending = deferred<{ processing: boolean }>();
+  second.rpc.metadata.isProcessing.mock.mockImplementationOnce(() => {
+    validating.resolve();
+    return pending.promise;
+  });
+  const drain = t.mock.fn(async () => {});
+  const rejected = assert.rejects(h.engine.stop(drain), protectedWork);
+  await validating.promise;
+  first.state.processing = true;
+  first.emit(event('assistant.turn_start', { turnId: 'late-turn' }));
+  pending.resolve({ processing: false });
+  await rejected;
+  assert.equal(drain.mock.callCount(), 0);
+  assert.equal(h.runtime.closeSession.mock.callCount(), 0);
+});
+
+for (const failure of ['module-failure', 'native-busy'] as const) {
+  test(`native resources remain owned when module drain ends with ${failure}`, async t => {
+    const h = harness(t);
+    const s = await h.load();
+    await assert.rejects(h.engine.stop(async () => {
+      if (failure === 'module-failure') throw new Error('Module failed');
+      s.state.processing = true;
+      s.emit(event('assistant.turn_start', { turnId: 'unexpected-native-turn' }));
+    }), failure === 'module-failure' ? /Module failed/ : protectedWork);
+    assert.equal(h.runtime.closeSession.mock.callCount(), 0);
+    assert.equal(h.runtime.stop.mock.callCount(), 0);
+  });
 }
 
 test('native validation failure waits for sibling RPCs before releasing the lifecycle gate', async t => {

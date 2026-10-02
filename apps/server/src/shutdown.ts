@@ -4,7 +4,7 @@ import type { ServiceShutdown } from '@cockpit/protocol';
 interface Dependencies {
   busyCount(): Promise<number>;
   prepareStop?(): Promise<void>;
-  stopNative(): Promise<void>;
+  stopNative(beforeClose: () => Promise<void>): Promise<void>;
   closeTransport(): Promise<void>;
   exit(code: number): void;
   report(error: unknown, stage: string): void;
@@ -20,6 +20,7 @@ export class GracefulShutdown {
   private dirty = false;
   private disposed = false;
   private nativeFailed = false;
+  private startupFailure = false;
   private preparation: 'unstarted' | 'pending' | 'ready' | 'failed' = 'unstarted';
   private moduleShutdownFailed = false;
   private liveness?: MessageChannel;
@@ -36,7 +37,6 @@ export class GracefulShutdown {
       this.state = { phase: 'waiting', requestedAt: Date.now(), error: null };
     }
     this.holdLiveness();
-    this.prepare();
     this.notify();
     return this.snapshot();
   }
@@ -54,7 +54,7 @@ export class GracefulShutdown {
   }
 
   notify(): void {
-    if (this.disposed || this.state.phase !== 'waiting' || this.preparation !== 'ready') return;
+    if (this.disposed || this.state.phase !== 'waiting') return;
     if (this.nativeFailed) {
       if (!this.retained || !this.dependencies.prepareStop) this.beginClose();
       return;
@@ -91,7 +91,7 @@ export class GracefulShutdown {
 
   private beginClose(): void {
     this.clearTimer();
-    if (this.closing || this.state.phase === 'closing' || this.preparation !== 'ready') return;
+    if (this.closing || this.state.phase === 'closing') return;
     this.state.phase = 'closing';
     this.closing = this.finish().catch(error => {
       this.record(error, 'process exit');
@@ -104,14 +104,16 @@ export class GracefulShutdown {
 
   private async finish(): Promise<void> {
     try {
-      await this.dependencies.stopNative();
+      await this.dependencies.stopNative(() => this.prepare());
     } catch (error) {
-      if (!this.nativeFailed && error && typeof error === 'object' && 'code' in error && error.code === 'SESSION_BUSY') {
+      if (this.preparation === 'failed') return;
+      if (!this.nativeFailed && this.preparation === 'unstarted' && error && typeof error === 'object' && 'code' in error && error.code === 'SESSION_BUSY') {
         this.state.phase = 'waiting';
         return;
       }
       this.record(error, 'native shutdown');
-      if (!this.nativeFailed) { this.state.phase = 'failed'; return; }
+      if (this.preparation !== 'unstarted') this.moduleShutdownFailed = true;
+      if (!this.nativeFailed || this.moduleShutdownFailed) { this.state.phase = 'failed'; return; }
     }
     try {
       await this.dependencies.closeTransport();
@@ -123,7 +125,7 @@ export class GracefulShutdown {
       if (!this.nativeFailed || moduleFailure) { this.state.phase = 'failed'; return; }
     }
     this.state.phase = 'closed';
-    this.dependencies.exit(this.nativeFailed ? 1 : 0);
+    this.dependencies.exit(this.nativeFailed || this.startupFailure ? 1 : 0);
     this.releaseLiveness();
   }
 
@@ -134,29 +136,32 @@ export class GracefulShutdown {
     this.record(error, 'native runtime failure');
     if (this.state.phase !== 'closing') this.state.phase = 'waiting';
     this.clearTimer();
-    this.prepare();
     this.notify();
   }
 
-  private prepare(): void {
-    if (this.preparation !== 'unstarted') return;
+  startupFailed(error: Error): void {
+    if (this.disposed || ['closed', 'failed'].includes(this.state.phase)) return;
+    this.startupFailure = true;
+    this.record(error, 'service startup failure');
+    this.request();
+  }
+
+  private async prepare(): Promise<void> {
+    if (this.preparation !== 'unstarted') throw new Error('Shutdown preparation already started');
     if (!this.dependencies.prepareStop) {
       this.preparation = 'ready';
       return;
     }
     // Set the guard before invoking module code, which may request shutdown again.
     this.preparation = 'pending';
-    let preparation: Promise<void>;
     try {
-      preparation = this.dependencies.prepareStop();
+      await this.dependencies.prepareStop();
+      if (this.disposed) throw new Error('Shutdown controller disposed during preparation');
+      this.preparation = 'ready';
     } catch (error) {
       this.failPreparation(error);
-      return;
+      throw error;
     }
-    void Promise.resolve(preparation).then(() => {
-      this.preparation = 'ready';
-      this.notify();
-    }, error => { this.failPreparation(error); });
   }
 
   private failPreparation(error: unknown): void {

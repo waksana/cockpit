@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import type { NativeObservation } from '@cockpit/module-api/backend';
 import { ModuleHost } from './module-host.ts';
 import { installLocalModule, selectModule } from './module-install.ts';
+import { GracefulShutdown } from './shutdown.ts';
 
 async function writableTree(root: string): Promise<void> {
   const stat = await lstat(root);
@@ -124,7 +125,34 @@ test('independently packaged file module installs and serves uploads and new nat
 
   await selectModule(module.id, { hostRoot, enabled: false });
   assert.equal(host.bootstrap().modules.length, 1, 'Selection changes cannot hot-unload an active module');
-  await host.close();
+  let busy = 1;
+  const exited = Promise.withResolvers<void>();
+  const shutdownErrors: unknown[] = [];
+  const shutdown = new GracefulShutdown({
+    busyCount: async () => busy,
+    prepareStop: () => host.stop(),
+    stopNative: async beforeClose => { await beforeClose(); },
+    closeTransport: () => host.close(),
+    exit: () => exited.resolve(),
+    report: error => { shutdownErrors.push(error); },
+    delayMs: 0,
+  });
+  t.after(() => shutdown.dispose());
+  assert.equal(shutdown.request().phase, 'waiting');
+  await delay(20);
+  assert.ok(observers.size > 0, 'waiting must retain Files native subscriptions');
+  await writeFile(source, 'late shutdown result');
+  await emit('assistant.message_start', 'shutdown', '');
+  await emit('assistant.message_delta', 'shutdown', '[result](./result.txt)');
+  await waitReady(messageUrl('shutdown'));
+  await emit('assistant.message', 'shutdown', '[result](./result.txt)');
+  assert.equal((await app.inject(messageUrl('shutdown'))).body, 'late shutdown result');
+  assert.equal(shutdown.snapshot().phase, 'waiting');
+  busy = 0;
+  shutdown.notify();
+  await exited.promise;
+  assert.equal(shutdown.snapshot().phase, 'closed');
+  assert.deepEqual(shutdownErrors, []);
   await app.close();
   assert.equal(observers.size, 0);
   const next = new ModuleHost({ hostRoot, observer });
