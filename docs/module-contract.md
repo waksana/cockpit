@@ -197,6 +197,13 @@ also fails (including cycles through another interface). Call `next`, not
 `host.call`, to continue. Other public calls remain available subject to their
 ordinary role-hook and lifecycle restrictions.
 
+Native event, control event and prompt-acceptance observers are independent
+work, not continuations of the interface that emitted the event. Their callbacks
+and asynchronous work do not inherit that interface's middleware recursion
+context. Observer-initiated `host.call` still enters the ordinary middleware
+chain, with role-hook and lifecycle restrictions unchanged. The emitter's
+recursion guard remains active, including for detached work started by a wrapper.
+
 Await `next` before consuming the result or finishing persistence. The Host
 also joins a started continuation if a broken wrapper forgets to await it or
 throws, so sends cannot escape shutdown accounting. `next` returns a detached

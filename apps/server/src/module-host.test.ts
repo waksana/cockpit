@@ -58,6 +58,49 @@ test('prompt acceptance observers expose only live receipt facts and are revoked
   assert.equal(observers.size, 0);
 });
 
+test('observer middleware isolation preserves role callback host-call restrictions', async t => {
+  const f = await moduleFixture(t);
+  const installed = await installLocalModule(await f.package(moduleEntries('role-observer', `
+    export const errors = [];
+    export const observed = Promise.withResolvers();
+    export function activate(ctx) { return {
+      routes: [], onStop() {},
+      middleware: { async 'session/get'(_invocation, next) { await next(); } },
+      roleAssignments: { async availability() {
+        await ctx.host.call('session/get', { sessionId: 'synthetic' });
+        await observed.promise;
+        return { reasons: [] };
+      } },
+      events: { types: ['assistant.message_delta'], async handle() {
+        for (const deferred of [false, true]) {
+          const send = () => ctx.host.call('prompt', { sessionId: 'synthetic', text: 'forbidden' });
+          try { await (deferred ? Promise.resolve().then(send) : send()); errors.push('allowed'); }
+          catch (error) { errors.push(error.code); }
+        }
+        observed.resolve();
+      } },
+    }; }
+  `, { roles: [{ id: 'neutral', name: 'Neutral' }] })), { trustLocalCode: true, enable: true });
+  const probe = await import(pathToFileURL(join(installed.root, 'backend.mjs')).href);
+  const app = Fastify(); t.after(() => app.close());
+  const calls: string[] = [];
+  const host: ModuleHost = new ModuleHost({ observer: f.observer, host: { call: async (name, body) => {
+    calls.push(name);
+    assert.equal(name, 'session/get');
+    return host.middleware.run(name, body, async () => {
+      f.emit();
+      return { meta: null };
+    }, 'module') as never;
+  } } });
+  await host.register(app);
+  const result = await host.roles.availability({ operation: 'create', previousRoles: [],
+    roles: [{ moduleId: 'role-observer', roleId: 'neutral' }] });
+  assert.equal(result.status, 'available');
+  assert.deepEqual(probe.errors, ['ROLE_ASSIGNMENT_REENTRANT', 'ROLE_ASSIGNMENT_REENTRANT']);
+  assert.deepEqual(calls, ['session/get']);
+  assert.deepEqual(host.bootstrap().errors, []);
+});
+
 async function waitUntil(predicate: () => boolean, message: string | (() => string)): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt++) {
     if (predicate()) return;

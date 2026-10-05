@@ -185,6 +185,28 @@ test('reentrant host calls are rejected, including cycles through another public
   await assert.rejects(registry.run('prompt', body, async () => receipt, 'api'), /Recursive host.call/);
 });
 
+test('observer isolation restores the emitter guard and cannot release detached wrapper recursion', async () => {
+  const registry = new ModuleMiddleware();
+  const release = Promise.withResolvers<void>();
+  let detached: Promise<unknown> | undefined;
+  let sends = 0;
+  const terminal = async () => { sends++; return receipt; };
+  layer(registry, 'fixture', { prompt: async (_invocation, next) => {
+    detached = release.promise.then(() => registry.run('prompt', body, terminal, 'module'));
+    assert.throws(() => registry.runObserver(() => {
+      registry.assertNotReentrant('prompt');
+      throw new Error('observer failed');
+    }), /observer failed/);
+    assert.throws(() => registry.assertNotReentrant('prompt'), /Recursive host.call/);
+    await next();
+  } });
+  await registry.run('prompt', body, terminal, 'api');
+  const rejected = assert.rejects(detached!, /Recursive host.call/);
+  release.resolve();
+  await rejected;
+  assert.equal(sends, 1);
+});
+
 test('other public intents use the same typed composition', async () => {
   const registry = new ModuleMiddleware();
   layer(registry, 'fixture', { 'session/rename': async (invocation, next) => {
