@@ -277,6 +277,18 @@ runtime instances reading existing role metadata. It proves raw `read-thing` /
 MCP call, conservative unsupported-name failures before mutation and unchanged
 unscoped behavior. CI opts into this fixture; its own homes, cwd, listeners and
 package artifacts are synthetic and cleaned up.
+On a deadline, this fixture reports only its current phase/pending operation labels,
+force-stops its own SDK clients and independently kills children captured during
+its own startup, even if SDK shutdown has already cleared its child reference.
+It closes its loopback connections and awaits native child closure before removing
+its directories; a child-kill failure is reported and preserves those directories.
+Normal completion disarms that deadline handler. The helper's synthetic tests run with
+`pnpm --filter @cockpit/server exec node --import tsx --test src/native-test-lifecycle.test.ts`.
+Opting that command into `COCKPIT_NATIVE_TOOL_SCOPE=1` also runs a subprocess with a
+deliberately unresponsive synthetic MCP: it must retain the test timeout failure,
+exit within the subprocess bound and leave no native child, listener or fixture.
+Use the [bounded user scope](#bounded-user-scopes) for native runs; this test-only
+cleanup does not change production runtime cancellation semantics.
 
 **Files and fork.** File-input tests pass synthetic native files through the Engine
 and read them via the native view; the four attachment schemas do not prove each
