@@ -11,11 +11,13 @@ import { installLocalModule } from './module-install.ts';
 import { archive, moduleEntries, removeFixture } from './test-support/module-fixture.ts';
 import { memorySessionDefaults, fixtureModelCatalog } from '../../../packages/core/test-support/session-defaults.ts';
 import { assertScopeToolMetadata, toolScopeHook } from '../../../packages/core/src/tool-scope.ts';
+import { NativeTestLifecycle } from '../../../packages/core/test-support/native-test-lifecycle.ts';
 type CopilotSession = Awaited<ReturnType<OfficialRuntime['createSession']>>;
 
 test('native immutable tool scope: direct calls, MCP/model changes, role reload and durable Host restart', {
   skip: process.env.COCKPIT_NATIVE_TOOL_SCOPE !== '1', timeout: 90_000,
 }, async t => {
+  const lifecycle = new NativeTestLifecycle(t.signal, message => console.error(message));
   const before = { ...process.env };
   const previousCwd = process.cwd();
   const root = resolve(`.native-tool-scope-${randomUUID()}`);
@@ -33,7 +35,7 @@ test('native immutable tool scope: direct calls, MCP/model changes, role reload 
   const calls: Array<{ path: string; name: string; meta?: Record<string, unknown> }> = [];
   const requests: string[] = [];
   const prompts: Array<{ tools?: Array<{ function: { name: string } }>; messages: unknown[] }> = [];
-  const mcp = createServer(async (request, response) => {
+  const mcp = lifecycle.server(createServer(async (request, response) => {
     requests.push(request.url!);
     let text = ''; for await (const chunk of request) text += chunk;
     const message = JSON.parse(text);
@@ -47,8 +49,8 @@ test('native immutable tool scope: direct calls, MCP/model changes, role reload 
         : { content: [{ type: 'text', text: 'Synthetic selected tool' }] };
     response.writeHead(200, { 'content-type': 'application/json' });
     response.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }));
-  });
-  const provider = createServer(async (request, response) => {
+  }));
+  const provider = lifecycle.server(createServer(async (request, response) => {
     let text = ''; for await (const chunk of request) text += chunk;
     const message = JSON.parse(text);
     prompts.push(message);
@@ -68,7 +70,7 @@ test('native immutable tool scope: direct calls, MCP/model changes, role reload 
         model: 'gpt-4.1', choices: [{ index: 0, ...choice }] })}\n\n`);
     }
     response.end('data: [DONE]\n\n');
-  });
+  }));
   const execute = async (sdk: CopilotSession, name: string, toolCallId?: string) => {
     const result = await sdk.rpc.tools.execute({ name, arguments: {}, ...(toolCallId ? { toolCallId } : {}) });
     assert.ok(typeof result === 'object' && result !== null, 'Expected structured native tool result');
@@ -107,6 +109,7 @@ test('native immutable tool scope: direct calls, MCP/model changes, role reload 
     const handles = new Map<string, CopilotSession>();
     const createEngine = () => {
       const runtime = new OfficialRuntime({
+        clientFactory: lifecycle.clientFactory,
         clientOptions: {
           mode: 'empty', baseDirectory: dirs.copilot,
           workingDirectory: dirs.work, builtinPluginDirectories: [], useLoggedInUser: false,
@@ -129,11 +132,15 @@ test('native immutable tool scope: direct calls, MCP/model changes, role reload 
       t.mock.method(runtime, 'resumeSession', async (...args: Parameters<typeof resume>) => {
         const sdk = await resume(...args); handles.set(sdk.sessionId, sdk); return sdk;
       });
+      const close = runtime.closeSession.bind(runtime);
+      t.mock.method(runtime, 'closeSession', (...args: Parameters<typeof close>) =>
+        lifecycle.operation('runtime.closeSession', () => close(...args)));
       const value = new Engine({ runtime, sessionDefaults: memorySessionDefaults('gpt-4.1') });
       value.setRoleProvider(new ModuleRoles(dirs.cockpit!, mcpUrl, () => [installed]));
       return { runtime, engine: value };
     };
     let current = createEngine(); engine = current.engine;
+    lifecycle.setPhase('initial runtime and scoped session');
     await engine.start();
     await current.runtime.rpc.mcp.config.add({ name: 'unrelated', config: { type: 'http', url: `${mcpUrl}/global`, tools: ['*'] } });
     await current.runtime.rpc.mcp.config.disable({ names: ['unrelated'] });
@@ -153,6 +160,7 @@ test('native immutable tool scope: direct calls, MCP/model changes, role reload 
       }
     };
     await check();
+    lifecycle.setPhase('direct calls and model/tool changes');
     assert.equal(prompts.length, 0, 'scope setup never sends a hidden prompt');
     const allowed = await execute(handles.get(id)!, 'fixture-service-read', 'synthetic-scoped-call');
     assert.equal(allowed.resultType, 'success'); assert.equal(calls.length, 1); assert.equal(calls[0]!.name, 'read');
@@ -198,6 +206,7 @@ test('native immutable tool scope: direct calls, MCP/model changes, role reload 
     assert.equal((await execute(handles.get(intersected)!, 'fixture-service-hidden')).resultType,
       'denied', 'scope does not enlarge the role raw-tool subset');
     const createCount = handles.size;
+    lifecycle.setPhase('empty, unscoped and raw-tool probes');
     await assert.rejects(engine.newSession(dirs.work!, [{ moduleId: 'fixture', roleId: 'foreground' }],
       { builtins: [], mcpServers: [{ name: 'fixture-service', tools: ['read-thing'] }] }), /ASCII letters/);
     assert.equal(handles.size, createCount, 'ambiguous raw selection fails before native creation');
@@ -235,6 +244,7 @@ test('native immutable tool scope: direct calls, MCP/model changes, role reload 
     assert.match(denied.error!, /Tool scope violation/);
     assert.equal(calls.length, beforeDenied);
     await current.runtime.closeSession(guarded); probes.length = 0;
+    lifecycle.setPhase('durable host restart');
     await engine.stop();
     current = createEngine(); engine = current.engine;
     await engine.start();
@@ -244,6 +254,7 @@ test('native immutable tool scope: direct calls, MCP/model changes, role reload 
     assert.deepEqual((await engine.getSessionToolScope(empty)).tools, []);
     assert.equal(calls.length, 3, 'only two selected direct calls and one selected model call reach MCP');
     const foreground = [{ moduleId: 'fixture', roleId: 'foreground' }];
+    lifecycle.setPhase('exclusive roles and reload');
     assert.equal((await engine.roleReadiness(id, foreground)).ready, true);
     assert.equal((await engine.getMeta(id))?.roles?.length, 2);
     assert.equal((await engine.getMeta(id))?.appliedRoles?.length, 2);
@@ -292,6 +303,7 @@ test('native immutable tool scope: direct calls, MCP/model changes, role reload 
       { moduleId: 'fixture', roleId: 'exclusive' }, { moduleId: 'fixture', roleId: 'extra' },
     ]), /conflicts with/);
     await current.runtime.rpc.mcp.config.disable({ names: ['unrelated'] });
+    lifecycle.setPhase('namespace alias guards');
     await current.runtime.rpc.mcp.config.add({ name: 'fixture.service',
       config: { type: 'http', url: `${mcpUrl}/alias`, tools: ['read'] } });
     const configuredBefore = await current.runtime.rpc.mcp.config.list();
@@ -319,19 +331,14 @@ test('native immutable tool scope: direct calls, MCP/model changes, role reload 
     assert.equal((await engine.getSessionToolScope(id)).loaded, false);
     assert.deepEqual((await engine.getSessionToolScope(id)).configured, scope);
   } finally {
-    try {
+    await lifecycle.finish(async () => {
       for (const { runtime, sdk } of probes) await runtime.closeSession(sdk);
       await engine?.stop();
-    }
-    finally {
-      for (const server of [mcp, provider]) {
-        server.closeAllConnections();
-        if (server.listening) await new Promise<void>(resolve => server.close(() => resolve()));
-      }
+    }, async () => {
       process.chdir(previousCwd);
       for (const key of Object.keys(process.env)) delete process.env[key];
       Object.assign(process.env, before);
       await removeFixture(root);
-    }
+    });
   }
 });
