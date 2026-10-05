@@ -298,7 +298,8 @@ export class ModuleHost {
           const callback = backend.promptAccepted;
           loaded.unsubscribePrompts = this.options.observer.onPromptAccepted(event => {
             if (controller.signal.aborted || (this.stopping && lifetime.awaitable)) return;
-            void lifetime.invoke(() => callback(structuredClone(event))).catch(error => this.report(id, error));
+            void lifetime.invoke(() => this.middleware.runObserver(() => callback(structuredClone(event))))
+              .catch(error => this.report(id, error));
           });
           controller.signal.addEventListener('abort', () => loaded.unsubscribePrompts?.(), { once: true });
         }
@@ -307,7 +308,8 @@ export class ModuleHost {
           const types = new Set(events.types);
           loaded.unsubscribe = this.options.observer.onNativeEvent((observation: NativeObservation) => {
             if (controller.signal.aborted || (this.stopping && lifetime.awaitable) || !types.has(observation.event.type)) return;
-            void lifetime.invoke(() => events.handle(observation)).catch(error => this.report(id, error));
+            void lifetime.invoke(() => this.middleware.runObserver(() => events.handle(observation)))
+              .catch(error => this.report(id, error));
           }, { types: events.types });
         }
         if (backend.controlEvents) {
@@ -320,7 +322,8 @@ export class ModuleHost {
           try {
             loaded.unsubscribeControl = this.options.observer.onEvent(event => {
               if (controller.signal.aborted || (this.stopping && lifetime.awaitable) || !types.has(event.type)) return;
-              void lifetime.invoke(() => events.handle(structuredClone(event))).catch(error => this.report(id, error));
+              void lifetime.invoke(() => this.middleware.runObserver(() => events.handle(structuredClone(event))))
+                .catch(error => this.report(id, error));
             });
           } catch (error) {
             loaded.unsubscribe?.();

@@ -41,6 +41,11 @@ export class ModuleMiddleware {
     if (active.getStore()?.has(name)) throw failure(`Recursive host.call(${name}) is forbidden; use next`);
   }
 
+  /** Observations are independent work, not middleware continuations. Keep other async contexts intact. */
+  runObserver<T>(callback: () => T): T {
+    return active.exit(callback);
+  }
+
   cancelPrompts(sessionId: string): void {
     for (const [controller, target] of this.prompts) {
       if (target === sessionId) controller.abort(Object.assign(new Error('Prompt preparation was stopped'), {

@@ -16,12 +16,18 @@ process.env.COCKPIT_SERVE_WEB = '0';
 const { app, setTestDependencies, callModuleIntent } = await import('./index.ts');
 after(() => app.close());
 
-async function setup(t: TestContext, backend: string) {
+async function setup(t: TestContext, backend: string, observerBackend?: string) {
   const f = await moduleFixture(t);
   const h = harness(t);
   const installed = await installLocalModule(await f.package(moduleEntries('wrapper', backend)),
     { trustLocalCode: true, enable: true });
   const probe = await import(pathToFileURL(join(installed.root, 'backend.mjs')).href);
+  let observerProbe;
+  if (observerBackend) {
+    const observer = await installLocalModule(await f.package(moduleEntries('observer', observerBackend)),
+      { trustLocalCode: true, enable: true });
+    observerProbe = await import(pathToFileURL(join(observer.root, 'backend.mjs')).href);
+  }
   const moduleApp = Fastify();
   const host = new ModuleHost({ hostRoot: f.hostRoot, observer: h.engine, host: { call: callModuleIntent } });
   await host.register(moduleApp);
@@ -37,7 +43,131 @@ async function setup(t: TestContext, backend: string) {
   t.after(h.engine.onFatal(error => shutdown.runtimeFailed(error)));
   t.after(() => shutdown.dispose());
   t.after(() => moduleApp.close());
-  return { h, host, probe, moduleApp, shutdown, closed: closed.promise, shutdownErrors };
+  return { h, host, probe, observerProbe, moduleApp, shutdown, closed: closed.promise, shutdownErrors };
+}
+
+for (const kind of ['native', 'control', 'accepted']) {
+  const declaration = kind === 'native' ? "events: { types: ['user.message'], handle: observe }"
+    : kind === 'control' ? "controlEvents: { types: ['session/patch'], handle: observe }"
+      : 'promptAccepted: observe';
+  for (const deferred of [false, true]) {
+    test(`${kind} observers send independent ${deferred ? 'microtask' : 'synchronous'} prompts through middleware`, async t => {
+      const { h, host, probe, observerProbe } = await setup(t, `
+        export const calls = [];
+        export const recursion = [];
+        export function activate(ctx) { return { routes: [], onStop() {}, middleware: {
+          async prompt(invocation, next) {
+            calls.push({ text: invocation.body.text, origin: invocation.origin, id: invocation.invocationId });
+            const rejectRecursion = async () => {
+              try { await ctx.host.call('prompt', invocation.body); recursion.push('allowed'); }
+              catch (error) { recursion.push(error.code); }
+            };
+            await rejectRecursion();
+            await next({ text: invocation.body.text + ' wrapped' });
+            await rejectRecursion();
+          }
+        } }; }
+      `, `
+        export const completed = Promise.withResolvers();
+        export const seen = [];
+        let source, target, sent = false;
+        export function configure(from, to) { source = from; target = to; }
+        export function activate(ctx) {
+          function observe(event) {
+            if (event.sessionId !== source || sent) return;
+            sent = true;
+            seen.push(event);
+            const send = () => ctx.host.call('prompt', { sessionId: target, text: 'notice', mode: 'enqueue' });
+            try {
+              const pending = ${deferred ? 'Promise.resolve().then(send)' : 'send()'};
+              void pending.then(result => completed.resolve({ result }), error => completed.resolve({ error }));
+            } catch (error) { completed.resolve({ error }); }
+          }
+          return { routes: [], onStop() {}, ${declaration} };
+        }
+      `);
+      assert.equal(host.bootstrap().active.length, 2);
+      const source = await h.load('source');
+      const target = await h.load('target');
+      observerProbe!.configure(source.id, target.id);
+      const accepted: Array<{ sessionId: string; origin: string }> = [];
+      h.engine.onPromptAccepted(value => { accepted.push(value); });
+      source.sdk.send.mock.mockImplementation(async () => {
+        source.emit(event('user.message', { content: 'original wrapped', messageId: 'source-receipt' }));
+        return 'source-receipt';
+      });
+      const response = await app.inject({ method: 'POST', url: '/intent/prompt',
+        payload: { sessionId: source.id, text: 'original' } });
+      assert.equal(response.statusCode, 200);
+      const observed = await observerProbe!.completed.promise;
+      assert.equal(observed.error, undefined);
+      assert.equal(observed.result.ok, true);
+      assert.equal(observerProbe!.seen.length, 1);
+      assert.deepEqual(probe.calls.map((call: { text: string; origin: string }) => [call.text, call.origin]),
+        [['original', 'api'], ['notice', 'module']]);
+      assert.equal(new Set(probe.calls.map((call: { id: string }) => call.id)).size, 2);
+      assert.deepEqual(probe.recursion, Array(4).fill('MODULE_MIDDLEWARE_INVALID'));
+      assert.equal(source.sdk.send.mock.callCount(), 1);
+      assert.equal(target.sdk.send.mock.callCount(), 1);
+      assert.equal(target.sdk.send.mock.calls[0]!.arguments[0]!.prompt, 'notice wrapped');
+      assert.equal(accepted.find(value => value.sessionId === target.id)?.origin, 'module');
+      assert.deepEqual(host.bootstrap().errors, []);
+    });
+  }
+
+  test(`${kind} observer callbacks remain synchronous and joined by shutdown drain`, async t => {
+    const { h, host, observerProbe } = await setup(t, `
+      export function activate() { return { routes: [], onStop() {}, middleware: {
+        async prompt(_invocation, next) { await next(); }
+      } }; }
+    `, `
+      export const release = Promise.withResolvers();
+      export const state = { observed: 0, settled: false, stopped: false, disposed: false };
+      let source;
+      export function configure(id) { source = id; }
+      export function activate(ctx) {
+        async function observe(event) {
+          if (event.sessionId !== source) return;
+          state.observed++;
+          await release.promise;
+          await ctx.host.call('session/get', { sessionId: source });
+          try { await ctx.host.call('prompt', { sessionId: source, text: 'too late' }); }
+          catch (error) { state.rejected = error.message; }
+          state.settled = true;
+        }
+        return { routes: [], ${declaration}, onStop() { state.stopped = true; },
+          dispose() { state.disposed = true; } };
+      }
+    `);
+    t.after(() => observerProbe!.release.resolve());
+    const source = await h.load();
+    observerProbe!.configure(source.id);
+    source.sdk.send.mock.mockImplementation(async () => {
+      source.emit(event('user.message', { content: 'synthetic', messageId: 'receipt' }));
+      if (kind === 'native') assert.equal(observerProbe!.state.observed, 1);
+      return 'receipt';
+    });
+    const response = await app.inject({ method: 'POST', url: '/intent/prompt',
+      payload: { sessionId: source.id, text: 'synthetic' } });
+    assert.equal(response.statusCode, 200, 'emitter does not wait for the observer');
+    assert.ok(observerProbe!.state.observed > 0);
+    let closed = false;
+    const closing = host.close().then(() => { closed = true; });
+    await nextTurn();
+    assert.equal(observerProbe!.state.stopped, true);
+    assert.equal(observerProbe!.state.disposed, false);
+    assert.equal(closed, false);
+    const observed = observerProbe!.state.observed;
+    source.emit(event('user.message', { content: 'after stop' }));
+    assert.equal(observerProbe!.state.observed, observed);
+    observerProbe!.release.resolve();
+    await closing;
+    assert.equal(observerProbe!.state.settled, true);
+    assert.equal(observerProbe!.state.disposed, true);
+    assert.match(observerProbe!.state.rejected, /stopping/);
+    assert.equal(source.sdk.send.mock.callCount(), 1);
+    assert.deepEqual(host.bootstrap().errors, []);
+  });
 }
 
 test('Web, API/MCP transport and module calls enter exactly once with true native receipts and origins', async t => {
