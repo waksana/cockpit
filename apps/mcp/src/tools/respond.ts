@@ -4,6 +4,7 @@
 // Get the requestId from cockpit_get_session (ask / planRequest / elicitation).
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { ElicitationContent } from '@cockpit/protocol';
 import { CockpitError, protocolIntent as intent } from '../cockpit.js';
 import { ok, fail, type ToolResult } from '../shared.js';
 
@@ -114,21 +115,25 @@ export function registerRespondTools(server: McpServer): void {
       title: 'Respond to an elicitation request',
       description:
         'Respond to a session paused on an MCP elicitation request (a tool asking the user to ' +
-        'accept/decline/cancel). Get the requestId and message from cockpit_get_session → ' +
-        'elicitation. action is one of: accept, decline, cancel.',
+        'accept/decline/cancel). Get the requestId and schema from cockpit_get_session with response_format:"json" → ' +
+        'elicitation. Use its offered actions. For supported forms, accept requires content matching ' +
+        'requestedSchema; pass explicit user-provided values, not invented answers. URL and unsupported ' +
+        'forms cannot be accepted. Decline/cancel omit content. Invalid answers leave the request pending.',
       inputSchema: {
         session_id: z.string().min(1).describe('The session id'),
         request_id: z.string().min(1).describe('The elicitation requestId (from cockpit_get_session → elicitation.requestId)'),
         action: z.enum(['accept', 'decline', 'cancel']).describe('The response to the elicitation'),
+        content: ElicitationContent.optional().describe('Form values for accept only, matching elicitation.requestedSchema. Omit for simple confirmations.'),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
-    async ({ session_id, request_id, action }): Promise<ToolResult> => {
+    async ({ session_id, request_id, action, content }): Promise<ToolResult> => {
       try {
         await intent('respondElicitation', {
           sessionId: session_id,
           requestId: request_id,
           action,
+          ...(content !== undefined ? { content } : {}),
         });
         return ok(`Responded to elicitation ${request_id} on ${session_id} with "${action}".`);
       } catch (e) {

@@ -375,8 +375,9 @@ export class NetClient {
   planSupersede(sessionId: string, requestId: string, message: string, options?: IntentOptions) {
     return this.intent('planSupersede', { sessionId, requestId, message }, options);
   }
-  respondElicitation(sessionId: string, requestId: string, action: 'accept' | 'decline' | 'cancel', options?: IntentOptions) {
-    return this.intent('respondElicitation', { sessionId, requestId, action }, options);
+  respondElicitation(sessionId: string, requestId: string, action: 'accept' | 'decline' | 'cancel',
+    content?: import('@cockpit/protocol').ElicitationContent, options?: IntentOptions) {
+    return this.intent('respondElicitation', { sessionId, requestId, action, ...(content !== undefined ? { content } : {}) }, options);
   }
   removeQueued(sessionId: string, itemId: string, options?: IntentOptions) {
     return this.intent('queue/remove', { sessionId, itemId }, options);

@@ -630,6 +630,9 @@ button.activity-head {
   display: flex; flex-direction: column; gap: var(--chat-gap-content); min-width: 0;
   padding: var(--chat-gap-control) var(--chat-inset-panel) var(--chat-inset-panel);
 }
+.chat-elicitation-form {
+  display: flex; flex-direction: column; gap: var(--chat-gap-content); min-width: 0;
+}
 .chat-decision-answer {
   display: flex; align-items: flex-start; gap: var(--chat-gap-control);
   padding: var(--chat-inset-compact) var(--chat-inset-field); border-radius: var(--border-radius);

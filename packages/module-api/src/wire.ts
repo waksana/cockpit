@@ -13,8 +13,68 @@ export type ContextTier = "default" | "long_context";
 export type ElicitationRequest = {
     actions?: ("accept" | "cancel" | "decline")[] | undefined;
     message: string;
+    requestedSchema?: {
+        $schema?: "http://json-schema.org/draft-07/schema#" | "https://json-schema.org/draft/2020-12/schema" | undefined;
+        additionalProperties?: false | undefined;
+        properties: Record<string, {
+            default?: boolean | undefined;
+            description?: string | undefined;
+            title?: string | undefined;
+            type: "boolean";
+        } | {
+            default?: number | undefined;
+            description?: string | undefined;
+            maximum?: number | undefined;
+            minimum?: number | undefined;
+            title?: string | undefined;
+            type: "integer" | "number";
+        } | {
+            default?: string | undefined;
+            description?: string | undefined;
+            enum: string[];
+            enumNames?: string[] | undefined;
+            title?: string | undefined;
+            type: "string";
+        } | {
+            default?: string | undefined;
+            description?: string | undefined;
+            format?: "date-time" | "date" | "email" | "uri" | undefined;
+            maxLength?: number | undefined;
+            minLength?: number | undefined;
+            title?: string | undefined;
+            type: "string";
+        } | {
+            default?: string | undefined;
+            description?: string | undefined;
+            oneOf: {
+                const: string;
+                title: string;
+            }[];
+            title?: string | undefined;
+            type: "string";
+        } | {
+            default?: string[] | undefined;
+            description?: string | undefined;
+            items: {
+                anyOf: {
+                    const: string;
+                    title: string;
+                }[];
+            } | {
+                enum: string[];
+                type: "string";
+            };
+            maxItems?: number | undefined;
+            minItems?: number | undefined;
+            title?: string | undefined;
+            type: "array";
+        }>;
+        required?: string[] | undefined;
+        type: "object";
+    } | undefined;
     requestId: string;
     source?: string | undefined;
+    unsupportedReason?: string | undefined;
 };
 export type ExitPlanModeAction = "autopilot_fleet" | "autopilot" | "exit_only" | "interactive";
 export type ModelOption = {
@@ -270,8 +330,68 @@ export type ModuleHostIntentMap = {
                     request: {
                         actions?: ("accept" | "cancel" | "decline")[] | undefined;
                         message: string;
+                        requestedSchema?: {
+                            $schema?: "http://json-schema.org/draft-07/schema#" | "https://json-schema.org/draft/2020-12/schema" | undefined;
+                            additionalProperties?: false | undefined;
+                            properties: Record<string, {
+                                default?: boolean | undefined;
+                                description?: string | undefined;
+                                title?: string | undefined;
+                                type: "boolean";
+                            } | {
+                                default?: number | undefined;
+                                description?: string | undefined;
+                                maximum?: number | undefined;
+                                minimum?: number | undefined;
+                                title?: string | undefined;
+                                type: "integer" | "number";
+                            } | {
+                                default?: string | undefined;
+                                description?: string | undefined;
+                                enum: string[];
+                                enumNames?: string[] | undefined;
+                                title?: string | undefined;
+                                type: "string";
+                            } | {
+                                default?: string | undefined;
+                                description?: string | undefined;
+                                format?: "date-time" | "date" | "email" | "uri" | undefined;
+                                maxLength?: number | undefined;
+                                minLength?: number | undefined;
+                                title?: string | undefined;
+                                type: "string";
+                            } | {
+                                default?: string | undefined;
+                                description?: string | undefined;
+                                oneOf: {
+                                    const: string;
+                                    title: string;
+                                }[];
+                                title?: string | undefined;
+                                type: "string";
+                            } | {
+                                default?: string[] | undefined;
+                                description?: string | undefined;
+                                items: {
+                                    anyOf: {
+                                        const: string;
+                                        title: string;
+                                    }[];
+                                } | {
+                                    enum: string[];
+                                    type: "string";
+                                };
+                                maxItems?: number | undefined;
+                                minItems?: number | undefined;
+                                title?: string | undefined;
+                                type: "array";
+                            }>;
+                            required?: string[] | undefined;
+                            type: "object";
+                        } | undefined;
                         requestId: string;
                         source?: string | undefined;
+                        unsupportedReason?: string | undefined;
                     };
                 } | {
                     kind: "plan";
@@ -286,8 +406,68 @@ export type ModuleHostIntentMap = {
                 elicitation?: {
                     actions?: ("accept" | "cancel" | "decline")[] | undefined;
                     message: string;
+                    requestedSchema?: {
+                        $schema?: "http://json-schema.org/draft-07/schema#" | "https://json-schema.org/draft/2020-12/schema" | undefined;
+                        additionalProperties?: false | undefined;
+                        properties: Record<string, {
+                            default?: boolean | undefined;
+                            description?: string | undefined;
+                            title?: string | undefined;
+                            type: "boolean";
+                        } | {
+                            default?: number | undefined;
+                            description?: string | undefined;
+                            maximum?: number | undefined;
+                            minimum?: number | undefined;
+                            title?: string | undefined;
+                            type: "integer" | "number";
+                        } | {
+                            default?: string | undefined;
+                            description?: string | undefined;
+                            enum: string[];
+                            enumNames?: string[] | undefined;
+                            title?: string | undefined;
+                            type: "string";
+                        } | {
+                            default?: string | undefined;
+                            description?: string | undefined;
+                            format?: "date-time" | "date" | "email" | "uri" | undefined;
+                            maxLength?: number | undefined;
+                            minLength?: number | undefined;
+                            title?: string | undefined;
+                            type: "string";
+                        } | {
+                            default?: string | undefined;
+                            description?: string | undefined;
+                            oneOf: {
+                                const: string;
+                                title: string;
+                            }[];
+                            title?: string | undefined;
+                            type: "string";
+                        } | {
+                            default?: string[] | undefined;
+                            description?: string | undefined;
+                            items: {
+                                anyOf: {
+                                    const: string;
+                                    title: string;
+                                }[];
+                            } | {
+                                enum: string[];
+                                type: "string";
+                            };
+                            maxItems?: number | undefined;
+                            minItems?: number | undefined;
+                            title?: string | undefined;
+                            type: "array";
+                        }>;
+                        required?: string[] | undefined;
+                        type: "object";
+                    } | undefined;
                     requestId: string;
                     source?: string | undefined;
+                    unsupportedReason?: string | undefined;
                 } | null | undefined;
                 error?: null | string | undefined;
                 intent?: null | string | undefined;
@@ -559,8 +739,68 @@ export type PendingDecision = {
     request: {
         actions?: ("accept" | "cancel" | "decline")[] | undefined;
         message: string;
+        requestedSchema?: {
+            $schema?: "http://json-schema.org/draft-07/schema#" | "https://json-schema.org/draft/2020-12/schema" | undefined;
+            additionalProperties?: false | undefined;
+            properties: Record<string, {
+                default?: boolean | undefined;
+                description?: string | undefined;
+                title?: string | undefined;
+                type: "boolean";
+            } | {
+                default?: number | undefined;
+                description?: string | undefined;
+                maximum?: number | undefined;
+                minimum?: number | undefined;
+                title?: string | undefined;
+                type: "integer" | "number";
+            } | {
+                default?: string | undefined;
+                description?: string | undefined;
+                enum: string[];
+                enumNames?: string[] | undefined;
+                title?: string | undefined;
+                type: "string";
+            } | {
+                default?: string | undefined;
+                description?: string | undefined;
+                format?: "date-time" | "date" | "email" | "uri" | undefined;
+                maxLength?: number | undefined;
+                minLength?: number | undefined;
+                title?: string | undefined;
+                type: "string";
+            } | {
+                default?: string | undefined;
+                description?: string | undefined;
+                oneOf: {
+                    const: string;
+                    title: string;
+                }[];
+                title?: string | undefined;
+                type: "string";
+            } | {
+                default?: string[] | undefined;
+                description?: string | undefined;
+                items: {
+                    anyOf: {
+                        const: string;
+                        title: string;
+                    }[];
+                } | {
+                    enum: string[];
+                    type: "string";
+                };
+                maxItems?: number | undefined;
+                minItems?: number | undefined;
+                title?: string | undefined;
+                type: "array";
+            }>;
+            required?: string[] | undefined;
+            type: "object";
+        } | undefined;
         requestId: string;
         source?: string | undefined;
+        unsupportedReason?: string | undefined;
     };
 } | {
     kind: "plan";
@@ -865,8 +1105,68 @@ export type ServerEvent = {
         request: {
             actions?: ("accept" | "cancel" | "decline")[] | undefined;
             message: string;
+            requestedSchema?: {
+                $schema?: "http://json-schema.org/draft-07/schema#" | "https://json-schema.org/draft/2020-12/schema" | undefined;
+                additionalProperties?: false | undefined;
+                properties: Record<string, {
+                    default?: boolean | undefined;
+                    description?: string | undefined;
+                    title?: string | undefined;
+                    type: "boolean";
+                } | {
+                    default?: number | undefined;
+                    description?: string | undefined;
+                    maximum?: number | undefined;
+                    minimum?: number | undefined;
+                    title?: string | undefined;
+                    type: "integer" | "number";
+                } | {
+                    default?: string | undefined;
+                    description?: string | undefined;
+                    enum: string[];
+                    enumNames?: string[] | undefined;
+                    title?: string | undefined;
+                    type: "string";
+                } | {
+                    default?: string | undefined;
+                    description?: string | undefined;
+                    format?: "date-time" | "date" | "email" | "uri" | undefined;
+                    maxLength?: number | undefined;
+                    minLength?: number | undefined;
+                    title?: string | undefined;
+                    type: "string";
+                } | {
+                    default?: string | undefined;
+                    description?: string | undefined;
+                    oneOf: {
+                        const: string;
+                        title: string;
+                    }[];
+                    title?: string | undefined;
+                    type: "string";
+                } | {
+                    default?: string[] | undefined;
+                    description?: string | undefined;
+                    items: {
+                        anyOf: {
+                            const: string;
+                            title: string;
+                        }[];
+                    } | {
+                        enum: string[];
+                        type: "string";
+                    };
+                    maxItems?: number | undefined;
+                    minItems?: number | undefined;
+                    title?: string | undefined;
+                    type: "array";
+                }>;
+                required?: string[] | undefined;
+                type: "object";
+            } | undefined;
             requestId: string;
             source?: string | undefined;
+            unsupportedReason?: string | undefined;
         };
     } | {
         kind: "plan";
@@ -881,8 +1181,68 @@ export type ServerEvent = {
     elicitation?: {
         actions?: ("accept" | "cancel" | "decline")[] | undefined;
         message: string;
+        requestedSchema?: {
+            $schema?: "http://json-schema.org/draft-07/schema#" | "https://json-schema.org/draft/2020-12/schema" | undefined;
+            additionalProperties?: false | undefined;
+            properties: Record<string, {
+                default?: boolean | undefined;
+                description?: string | undefined;
+                title?: string | undefined;
+                type: "boolean";
+            } | {
+                default?: number | undefined;
+                description?: string | undefined;
+                maximum?: number | undefined;
+                minimum?: number | undefined;
+                title?: string | undefined;
+                type: "integer" | "number";
+            } | {
+                default?: string | undefined;
+                description?: string | undefined;
+                enum: string[];
+                enumNames?: string[] | undefined;
+                title?: string | undefined;
+                type: "string";
+            } | {
+                default?: string | undefined;
+                description?: string | undefined;
+                format?: "date-time" | "date" | "email" | "uri" | undefined;
+                maxLength?: number | undefined;
+                minLength?: number | undefined;
+                title?: string | undefined;
+                type: "string";
+            } | {
+                default?: string | undefined;
+                description?: string | undefined;
+                oneOf: {
+                    const: string;
+                    title: string;
+                }[];
+                title?: string | undefined;
+                type: "string";
+            } | {
+                default?: string[] | undefined;
+                description?: string | undefined;
+                items: {
+                    anyOf: {
+                        const: string;
+                        title: string;
+                    }[];
+                } | {
+                    enum: string[];
+                    type: "string";
+                };
+                maxItems?: number | undefined;
+                minItems?: number | undefined;
+                title?: string | undefined;
+                type: "array";
+            }>;
+            required?: string[] | undefined;
+            type: "object";
+        } | undefined;
         requestId: string;
         source?: string | undefined;
+        unsupportedReason?: string | undefined;
     } | null | undefined;
     error?: null | string | undefined;
     intent?: null | string | undefined;
@@ -1012,8 +1372,68 @@ export type ServerEvent = {
             request: {
                 actions?: ("accept" | "cancel" | "decline")[] | undefined;
                 message: string;
+                requestedSchema?: {
+                    $schema?: "http://json-schema.org/draft-07/schema#" | "https://json-schema.org/draft/2020-12/schema" | undefined;
+                    additionalProperties?: false | undefined;
+                    properties: Record<string, {
+                        default?: boolean | undefined;
+                        description?: string | undefined;
+                        title?: string | undefined;
+                        type: "boolean";
+                    } | {
+                        default?: number | undefined;
+                        description?: string | undefined;
+                        maximum?: number | undefined;
+                        minimum?: number | undefined;
+                        title?: string | undefined;
+                        type: "integer" | "number";
+                    } | {
+                        default?: string | undefined;
+                        description?: string | undefined;
+                        enum: string[];
+                        enumNames?: string[] | undefined;
+                        title?: string | undefined;
+                        type: "string";
+                    } | {
+                        default?: string | undefined;
+                        description?: string | undefined;
+                        format?: "date-time" | "date" | "email" | "uri" | undefined;
+                        maxLength?: number | undefined;
+                        minLength?: number | undefined;
+                        title?: string | undefined;
+                        type: "string";
+                    } | {
+                        default?: string | undefined;
+                        description?: string | undefined;
+                        oneOf: {
+                            const: string;
+                            title: string;
+                        }[];
+                        title?: string | undefined;
+                        type: "string";
+                    } | {
+                        default?: string[] | undefined;
+                        description?: string | undefined;
+                        items: {
+                            anyOf: {
+                                const: string;
+                                title: string;
+                            }[];
+                        } | {
+                            enum: string[];
+                            type: "string";
+                        };
+                        maxItems?: number | undefined;
+                        minItems?: number | undefined;
+                        title?: string | undefined;
+                        type: "array";
+                    }>;
+                    required?: string[] | undefined;
+                    type: "object";
+                } | undefined;
                 requestId: string;
                 source?: string | undefined;
+                unsupportedReason?: string | undefined;
             };
         } | {
             kind: "plan";
@@ -1028,8 +1448,68 @@ export type ServerEvent = {
         elicitation?: {
             actions?: ("accept" | "cancel" | "decline")[] | undefined;
             message: string;
+            requestedSchema?: {
+                $schema?: "http://json-schema.org/draft-07/schema#" | "https://json-schema.org/draft/2020-12/schema" | undefined;
+                additionalProperties?: false | undefined;
+                properties: Record<string, {
+                    default?: boolean | undefined;
+                    description?: string | undefined;
+                    title?: string | undefined;
+                    type: "boolean";
+                } | {
+                    default?: number | undefined;
+                    description?: string | undefined;
+                    maximum?: number | undefined;
+                    minimum?: number | undefined;
+                    title?: string | undefined;
+                    type: "integer" | "number";
+                } | {
+                    default?: string | undefined;
+                    description?: string | undefined;
+                    enum: string[];
+                    enumNames?: string[] | undefined;
+                    title?: string | undefined;
+                    type: "string";
+                } | {
+                    default?: string | undefined;
+                    description?: string | undefined;
+                    format?: "date-time" | "date" | "email" | "uri" | undefined;
+                    maxLength?: number | undefined;
+                    minLength?: number | undefined;
+                    title?: string | undefined;
+                    type: "string";
+                } | {
+                    default?: string | undefined;
+                    description?: string | undefined;
+                    oneOf: {
+                        const: string;
+                        title: string;
+                    }[];
+                    title?: string | undefined;
+                    type: "string";
+                } | {
+                    default?: string[] | undefined;
+                    description?: string | undefined;
+                    items: {
+                        anyOf: {
+                            const: string;
+                            title: string;
+                        }[];
+                    } | {
+                        enum: string[];
+                        type: "string";
+                    };
+                    maxItems?: number | undefined;
+                    minItems?: number | undefined;
+                    title?: string | undefined;
+                    type: "array";
+                }>;
+                required?: string[] | undefined;
+                type: "object";
+            } | undefined;
             requestId: string;
             source?: string | undefined;
+            unsupportedReason?: string | undefined;
         } | null | undefined;
         error?: null | string | undefined;
         intent?: null | string | undefined;
@@ -1168,8 +1648,68 @@ export type ServerEvent = {
             request: {
                 actions?: ("accept" | "cancel" | "decline")[] | undefined;
                 message: string;
+                requestedSchema?: {
+                    $schema?: "http://json-schema.org/draft-07/schema#" | "https://json-schema.org/draft/2020-12/schema" | undefined;
+                    additionalProperties?: false | undefined;
+                    properties: Record<string, {
+                        default?: boolean | undefined;
+                        description?: string | undefined;
+                        title?: string | undefined;
+                        type: "boolean";
+                    } | {
+                        default?: number | undefined;
+                        description?: string | undefined;
+                        maximum?: number | undefined;
+                        minimum?: number | undefined;
+                        title?: string | undefined;
+                        type: "integer" | "number";
+                    } | {
+                        default?: string | undefined;
+                        description?: string | undefined;
+                        enum: string[];
+                        enumNames?: string[] | undefined;
+                        title?: string | undefined;
+                        type: "string";
+                    } | {
+                        default?: string | undefined;
+                        description?: string | undefined;
+                        format?: "date-time" | "date" | "email" | "uri" | undefined;
+                        maxLength?: number | undefined;
+                        minLength?: number | undefined;
+                        title?: string | undefined;
+                        type: "string";
+                    } | {
+                        default?: string | undefined;
+                        description?: string | undefined;
+                        oneOf: {
+                            const: string;
+                            title: string;
+                        }[];
+                        title?: string | undefined;
+                        type: "string";
+                    } | {
+                        default?: string[] | undefined;
+                        description?: string | undefined;
+                        items: {
+                            anyOf: {
+                                const: string;
+                                title: string;
+                            }[];
+                        } | {
+                            enum: string[];
+                            type: "string";
+                        };
+                        maxItems?: number | undefined;
+                        minItems?: number | undefined;
+                        title?: string | undefined;
+                        type: "array";
+                    }>;
+                    required?: string[] | undefined;
+                    type: "object";
+                } | undefined;
                 requestId: string;
                 source?: string | undefined;
+                unsupportedReason?: string | undefined;
             };
         } | {
             kind: "plan";
@@ -1184,8 +1724,68 @@ export type ServerEvent = {
         elicitation?: {
             actions?: ("accept" | "cancel" | "decline")[] | undefined;
             message: string;
+            requestedSchema?: {
+                $schema?: "http://json-schema.org/draft-07/schema#" | "https://json-schema.org/draft/2020-12/schema" | undefined;
+                additionalProperties?: false | undefined;
+                properties: Record<string, {
+                    default?: boolean | undefined;
+                    description?: string | undefined;
+                    title?: string | undefined;
+                    type: "boolean";
+                } | {
+                    default?: number | undefined;
+                    description?: string | undefined;
+                    maximum?: number | undefined;
+                    minimum?: number | undefined;
+                    title?: string | undefined;
+                    type: "integer" | "number";
+                } | {
+                    default?: string | undefined;
+                    description?: string | undefined;
+                    enum: string[];
+                    enumNames?: string[] | undefined;
+                    title?: string | undefined;
+                    type: "string";
+                } | {
+                    default?: string | undefined;
+                    description?: string | undefined;
+                    format?: "date-time" | "date" | "email" | "uri" | undefined;
+                    maxLength?: number | undefined;
+                    minLength?: number | undefined;
+                    title?: string | undefined;
+                    type: "string";
+                } | {
+                    default?: string | undefined;
+                    description?: string | undefined;
+                    oneOf: {
+                        const: string;
+                        title: string;
+                    }[];
+                    title?: string | undefined;
+                    type: "string";
+                } | {
+                    default?: string[] | undefined;
+                    description?: string | undefined;
+                    items: {
+                        anyOf: {
+                            const: string;
+                            title: string;
+                        }[];
+                    } | {
+                        enum: string[];
+                        type: "string";
+                    };
+                    maxItems?: number | undefined;
+                    minItems?: number | undefined;
+                    title?: string | undefined;
+                    type: "array";
+                }>;
+                required?: string[] | undefined;
+                type: "object";
+            } | undefined;
             requestId: string;
             source?: string | undefined;
+            unsupportedReason?: string | undefined;
         } | null | undefined;
         error?: null | string | undefined;
         intent?: null | string | undefined;
@@ -1348,8 +1948,68 @@ export type SessionMeta = {
         request: {
             actions?: ("accept" | "cancel" | "decline")[] | undefined;
             message: string;
+            requestedSchema?: {
+                $schema?: "http://json-schema.org/draft-07/schema#" | "https://json-schema.org/draft/2020-12/schema" | undefined;
+                additionalProperties?: false | undefined;
+                properties: Record<string, {
+                    default?: boolean | undefined;
+                    description?: string | undefined;
+                    title?: string | undefined;
+                    type: "boolean";
+                } | {
+                    default?: number | undefined;
+                    description?: string | undefined;
+                    maximum?: number | undefined;
+                    minimum?: number | undefined;
+                    title?: string | undefined;
+                    type: "integer" | "number";
+                } | {
+                    default?: string | undefined;
+                    description?: string | undefined;
+                    enum: string[];
+                    enumNames?: string[] | undefined;
+                    title?: string | undefined;
+                    type: "string";
+                } | {
+                    default?: string | undefined;
+                    description?: string | undefined;
+                    format?: "date-time" | "date" | "email" | "uri" | undefined;
+                    maxLength?: number | undefined;
+                    minLength?: number | undefined;
+                    title?: string | undefined;
+                    type: "string";
+                } | {
+                    default?: string | undefined;
+                    description?: string | undefined;
+                    oneOf: {
+                        const: string;
+                        title: string;
+                    }[];
+                    title?: string | undefined;
+                    type: "string";
+                } | {
+                    default?: string[] | undefined;
+                    description?: string | undefined;
+                    items: {
+                        anyOf: {
+                            const: string;
+                            title: string;
+                        }[];
+                    } | {
+                        enum: string[];
+                        type: "string";
+                    };
+                    maxItems?: number | undefined;
+                    minItems?: number | undefined;
+                    title?: string | undefined;
+                    type: "array";
+                }>;
+                required?: string[] | undefined;
+                type: "object";
+            } | undefined;
             requestId: string;
             source?: string | undefined;
+            unsupportedReason?: string | undefined;
         };
     } | {
         kind: "plan";
@@ -1364,8 +2024,68 @@ export type SessionMeta = {
     elicitation?: {
         actions?: ("accept" | "cancel" | "decline")[] | undefined;
         message: string;
+        requestedSchema?: {
+            $schema?: "http://json-schema.org/draft-07/schema#" | "https://json-schema.org/draft/2020-12/schema" | undefined;
+            additionalProperties?: false | undefined;
+            properties: Record<string, {
+                default?: boolean | undefined;
+                description?: string | undefined;
+                title?: string | undefined;
+                type: "boolean";
+            } | {
+                default?: number | undefined;
+                description?: string | undefined;
+                maximum?: number | undefined;
+                minimum?: number | undefined;
+                title?: string | undefined;
+                type: "integer" | "number";
+            } | {
+                default?: string | undefined;
+                description?: string | undefined;
+                enum: string[];
+                enumNames?: string[] | undefined;
+                title?: string | undefined;
+                type: "string";
+            } | {
+                default?: string | undefined;
+                description?: string | undefined;
+                format?: "date-time" | "date" | "email" | "uri" | undefined;
+                maxLength?: number | undefined;
+                minLength?: number | undefined;
+                title?: string | undefined;
+                type: "string";
+            } | {
+                default?: string | undefined;
+                description?: string | undefined;
+                oneOf: {
+                    const: string;
+                    title: string;
+                }[];
+                title?: string | undefined;
+                type: "string";
+            } | {
+                default?: string[] | undefined;
+                description?: string | undefined;
+                items: {
+                    anyOf: {
+                        const: string;
+                        title: string;
+                    }[];
+                } | {
+                    enum: string[];
+                    type: "string";
+                };
+                maxItems?: number | undefined;
+                minItems?: number | undefined;
+                title?: string | undefined;
+                type: "array";
+            }>;
+            required?: string[] | undefined;
+            type: "object";
+        } | undefined;
         requestId: string;
         source?: string | undefined;
+        unsupportedReason?: string | undefined;
     } | null | undefined;
     error?: null | string | undefined;
     intent?: null | string | undefined;
@@ -1535,8 +2255,68 @@ export type Snapshot = {
             request: {
                 actions?: ("accept" | "cancel" | "decline")[] | undefined;
                 message: string;
+                requestedSchema?: {
+                    $schema?: "http://json-schema.org/draft-07/schema#" | "https://json-schema.org/draft/2020-12/schema" | undefined;
+                    additionalProperties?: false | undefined;
+                    properties: Record<string, {
+                        default?: boolean | undefined;
+                        description?: string | undefined;
+                        title?: string | undefined;
+                        type: "boolean";
+                    } | {
+                        default?: number | undefined;
+                        description?: string | undefined;
+                        maximum?: number | undefined;
+                        minimum?: number | undefined;
+                        title?: string | undefined;
+                        type: "integer" | "number";
+                    } | {
+                        default?: string | undefined;
+                        description?: string | undefined;
+                        enum: string[];
+                        enumNames?: string[] | undefined;
+                        title?: string | undefined;
+                        type: "string";
+                    } | {
+                        default?: string | undefined;
+                        description?: string | undefined;
+                        format?: "date-time" | "date" | "email" | "uri" | undefined;
+                        maxLength?: number | undefined;
+                        minLength?: number | undefined;
+                        title?: string | undefined;
+                        type: "string";
+                    } | {
+                        default?: string | undefined;
+                        description?: string | undefined;
+                        oneOf: {
+                            const: string;
+                            title: string;
+                        }[];
+                        title?: string | undefined;
+                        type: "string";
+                    } | {
+                        default?: string[] | undefined;
+                        description?: string | undefined;
+                        items: {
+                            anyOf: {
+                                const: string;
+                                title: string;
+                            }[];
+                        } | {
+                            enum: string[];
+                            type: "string";
+                        };
+                        maxItems?: number | undefined;
+                        minItems?: number | undefined;
+                        title?: string | undefined;
+                        type: "array";
+                    }>;
+                    required?: string[] | undefined;
+                    type: "object";
+                } | undefined;
                 requestId: string;
                 source?: string | undefined;
+                unsupportedReason?: string | undefined;
             };
         } | {
             kind: "plan";
@@ -1551,8 +2331,68 @@ export type Snapshot = {
         elicitation?: {
             actions?: ("accept" | "cancel" | "decline")[] | undefined;
             message: string;
+            requestedSchema?: {
+                $schema?: "http://json-schema.org/draft-07/schema#" | "https://json-schema.org/draft/2020-12/schema" | undefined;
+                additionalProperties?: false | undefined;
+                properties: Record<string, {
+                    default?: boolean | undefined;
+                    description?: string | undefined;
+                    title?: string | undefined;
+                    type: "boolean";
+                } | {
+                    default?: number | undefined;
+                    description?: string | undefined;
+                    maximum?: number | undefined;
+                    minimum?: number | undefined;
+                    title?: string | undefined;
+                    type: "integer" | "number";
+                } | {
+                    default?: string | undefined;
+                    description?: string | undefined;
+                    enum: string[];
+                    enumNames?: string[] | undefined;
+                    title?: string | undefined;
+                    type: "string";
+                } | {
+                    default?: string | undefined;
+                    description?: string | undefined;
+                    format?: "date-time" | "date" | "email" | "uri" | undefined;
+                    maxLength?: number | undefined;
+                    minLength?: number | undefined;
+                    title?: string | undefined;
+                    type: "string";
+                } | {
+                    default?: string | undefined;
+                    description?: string | undefined;
+                    oneOf: {
+                        const: string;
+                        title: string;
+                    }[];
+                    title?: string | undefined;
+                    type: "string";
+                } | {
+                    default?: string[] | undefined;
+                    description?: string | undefined;
+                    items: {
+                        anyOf: {
+                            const: string;
+                            title: string;
+                        }[];
+                    } | {
+                        enum: string[];
+                        type: "string";
+                    };
+                    maxItems?: number | undefined;
+                    minItems?: number | undefined;
+                    title?: string | undefined;
+                    type: "array";
+                }>;
+                required?: string[] | undefined;
+                type: "object";
+            } | undefined;
             requestId: string;
             source?: string | undefined;
+            unsupportedReason?: string | undefined;
         } | null | undefined;
         error?: null | string | undefined;
         intent?: null | string | undefined;

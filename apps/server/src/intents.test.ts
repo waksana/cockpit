@@ -261,7 +261,7 @@ const cases = {
   respondAsk: { body: { sessionId: 's', requestId: 'r', answer: 'yes', wasFreeform: true }, method: 'respondAsk', args: ['s', 'r', 'yes', true] },
   respondPlan: { body: { sessionId: 's', requestId: 'r', action: 'interactive' }, method: 'respondPlan', args: ['s', 'r', 'interactive'] },
   planSupersede: { body: { sessionId: 's', requestId: 'r', message: 'instead' }, method: 'planSupersede', args: ['s', 'r', 'instead'] },
-  respondElicitation: { body: { sessionId: 's', requestId: 'r', action: 'decline' }, method: 'respondElicitation', args: ['s', 'r', 'decline'] },
+  respondElicitation: { body: { sessionId: 's', requestId: 'r', action: 'accept', content: { confirmed: false } }, method: 'respondElicitation', args: ['s', 'r', 'accept', { confirmed: false }] },
   'queue/remove': { body: { sessionId: 's', itemId: 'q' }, method: 'removeQueued', args: ['s', 'q'] },
   'session/refresh': { body: {}, method: 'refreshList', args: [] },
   'session/list': { body: {}, method: 'listLive', args: [] },

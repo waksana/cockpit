@@ -212,6 +212,9 @@ importers:
       '@waksana/cockpit-module-sdk':
         specifier: workspace:*
         version: file:packages/module-api(@types/node@26.5.0)(@types/react@19.2.18)(react@19.2.8)
+      ajv-formats:
+        specifier: ^3.0.1
+        version: 3.0.1(ajv@8.20.0)
       zod:
         specifier: ^3.25.76
         version: 3.25.76

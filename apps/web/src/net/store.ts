@@ -70,7 +70,7 @@ interface CockpitState {
   respondAsk: (sessionId: string, requestId: string, answer: string, wasFreeform: boolean) => Promise<boolean>;
   respondPlan: (sessionId: string, requestId: string, action: import('@cockpit/protocol').ExitPlanModeAction) => Promise<boolean>;
   planSupersede: (sessionId: string, requestId: string, message: string) => Promise<boolean>;
-  respondElicitation: (sessionId: string, requestId: string, action: 'accept' | 'decline' | 'cancel') => Promise<boolean>;
+  respondElicitation: (sessionId: string, requestId: string, action: 'accept' | 'decline' | 'cancel', content?: import('@cockpit/protocol').ElicitationContent) => Promise<boolean>;
   removeQueued: (sessionId: string, itemId: string) => Promise<void>;
   refreshList: () => Promise<void>;
   watchControls: (sessionId: string) => () => void;
@@ -858,7 +858,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     respondAsk(sid, requestId, answer, wasFreeform) { return acknowledged(sid, (net, options) => net.respondAsk(sid, requestId, answer, wasFreeform, options)); },
     respondPlan(sid, requestId, action) { return acknowledged(sid, (net, options) => net.respondPlan(sid, requestId, action, options)); },
     planSupersede(sid, requestId, message) { return acknowledged(sid, (net, options) => net.planSupersede(sid, requestId, message, options)); },
-    respondElicitation(sid, requestId, action) { return acknowledged(sid, (net, options) => net.respondElicitation(sid, requestId, action, options)); },
+    respondElicitation(sid, requestId, action, content) { return acknowledged(sid, (net, options) => net.respondElicitation(sid, requestId, action, content, options)); },
     removeQueued(sid, itemId) { return mutation(sid, '移除排队消息', 'chat', (net, options) => net.removeQueued(sid, itemId, options)); },
     refreshList() { return mutation(null, '刷新会话列表', 'global', (net, options) => net.refresh(options)); },
     getResources(sid, resources, signal) {
