@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { ExitPlanModeAction } from '@cockpit/protocol';
+import type { ElicitationContent, ExitPlanModeAction } from '@cockpit/protocol';
 import { invalid, notPending } from './errors.ts';
 import type { SessionKernel } from './kernel.ts';
 import type { Decision, DecisionKind, InterruptTarget, SessionHandle } from './session-handle.ts';
@@ -66,8 +66,8 @@ export class DecisionBroker {
     this.answerPending(id, requestId, 'planRequest', { approved: true, selectedAction: action });
   }
 
-  async respondElicitation(id: string, requestId: string, action: 'accept' | 'decline' | 'cancel'): Promise<void> {
-    this.answerPending(id, requestId, 'elicitation', { action });
+  async respondElicitation(id: string, requestId: string, action: 'accept' | 'decline' | 'cancel', content?: ElicitationContent): Promise<void> {
+    this.answerPending(id, requestId, 'elicitation', { action, ...(content !== undefined ? { content } : {}) });
   }
 
   async planSupersede(id: string, requestId: string, message: string): Promise<void> {

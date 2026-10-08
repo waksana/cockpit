@@ -404,7 +404,7 @@ const handlers: IntentHandlers = {
     return { ok: true };
   },
   respondElicitation: async (b) => {
-    await engine.respondElicitation(b.sessionId, b.requestId, b.action);
+    await engine.respondElicitation(b.sessionId, b.requestId, b.action, b.content);
     return { ok: true };
   },
   'queue/remove': async (b) => {

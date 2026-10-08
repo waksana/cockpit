@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "@waksana/cockpit-module-sdk": "workspace:*",
+    "ajv-formats": "^3.0.1",
     "zod": "^3.25.76"
   },
   "devDependencies": {

@@ -1,6 +1,8 @@
 // Decision cards in the transcript: the pending card the user answers (one
 // tab per request) and the read-only records of answered decisions.
-import { useId, useRef, type KeyboardEvent, type ReactNode } from 'react';
+import { useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import type { ElicitationContent } from '@cockpit/protocol';
+import { ElicitationForm, type ElicitationDraft } from './ElicitationForm';
 import type { ExitPlanModeAction } from '../net/types';
 import type { PendingDecision } from '../lib/pendingDecisions';
 import { pendingDecisionKey, PLAN_ACTION_LABEL } from '../lib/pendingDecisions';
@@ -52,7 +54,7 @@ export interface PendingDecisionHandlers {
   actions?: ReactNode;
   onChoice: (requestId: string, choice: string) => void;
   onPlan: (requestId: string, action: ExitPlanModeAction) => void;
-  onElicitation: (request: Extract<PendingDecision, { kind: 'elicitation' }>['request'], action: ElicitationAction) => void;
+  onElicitation: (request: Extract<PendingDecision, { kind: 'elicitation' }>['request'], action: ElicitationAction, content?: ElicitationContent) => void;
 }
 
 // One card for every pending request. The selected tab is the request the
@@ -61,6 +63,8 @@ export function PendingDecisionCard({ decisions, selected, onSelect, ...handlers
   decisions: readonly PendingDecision[]; selected: PendingDecision; onSelect: (decision: PendingDecision) => void;
 }) {
   const id = useId();
+  const [forms, setForms] = useState<Record<string, ElicitationDraft>>({});
+  const formKey = `${handlers.sessionId}:${pendingDecisionKey(selected)}`;
   const tabs = useRef<(HTMLButtonElement | null)[]>([]);
   const labels = tabLabels(decisions);
   const index = Math.max(0, decisions.findIndex(decision => pendingDecisionKey(decision) === pendingDecisionKey(selected)));
@@ -92,13 +96,15 @@ export function PendingDecisionCard({ decisions, selected, onSelect, ...handlers
       ? { role: 'tabpanel', 'aria-labelledby': `${id}-tab-${index}` } : {})}>
       <CardHead kind={selected.kind} state="pending"
         source={selected.kind === 'elicitation' ? selected.request.source : undefined} actions={handlers.actions} />
-      <div className="chat-decision-body" key={pendingDecisionKey(selected)}><PendingBody decision={selected} {...handlers} /></div>
+      <div className="chat-decision-body" key={formKey}><PendingBody decision={selected} {...handlers}
+        formDraft={forms[formKey] ?? {}} onFormChange={draft => setForms(previous => ({ ...previous, [formKey]: draft }))} /></div>
     </div>
     <span className="chat-sr-only" aria-live="polite">{label}</span>
   </div>;
 }
 
-function PendingBody({ decision, sessionId, pending, disabled, onChoice, onPlan, onElicitation }: PendingDecisionHandlers & { decision: PendingDecision }) {
+function PendingBody({ decision, sessionId, pending, disabled, onChoice, onPlan, onElicitation, formDraft, onFormChange }:
+  PendingDecisionHandlers & { decision: PendingDecision; formDraft: ElicitationDraft; onFormChange: (draft: ElicitationDraft) => void }) {
   if (decision.kind === 'ask') {
     const request = decision.request;
     return <>
@@ -133,14 +139,21 @@ function PendingBody({ decision, sessionId, pending, disabled, onChoice, onPlan,
     </>;
   }
   const request = decision.request;
+  const actions = request.actions ?? ['accept', 'decline', 'cancel'];
+  const form = request.requestedSchema && actions.includes('accept');
+  const buttons = (form ? actions.filter(action => action !== 'accept') : actions).map(action => <Button key={action}
+    className="chat-ask-choice" disabled={pending || disabled.elicitation} onClick={() => onElicitation(request, action)}>
+    {ELICITATION_ACTION_LABEL[action]}
+  </Button>);
   return <>
     <div className="chat-ask-q">{request.message}</div>
-    <div className="chat-ask-choices">
-      {(request.actions ?? ['accept', 'decline', 'cancel']).map(action => <Button key={action}
-        className="chat-ask-choice" disabled={pending || disabled.elicitation} onClick={() => onElicitation(request, action)}>
-        {ELICITATION_ACTION_LABEL[action]}
-      </Button>)}
-    </div>
+    {request.unsupportedReason && <div className="chat-pending-hint" role="status">{request.unsupportedReason}</div>}
+    {form && request.requestedSchema
+      ? <ElicitationForm schema={request.requestedSchema} draft={formDraft} onChange={onFormChange}
+        disabled={pending || disabled.elicitation} onAccept={content => onElicitation(request, 'accept', content)}>
+        {buttons}
+      </ElicitationForm>
+      : <div className="chat-ask-choices">{buttons}</div>}
   </>;
 }
 

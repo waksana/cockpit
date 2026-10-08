@@ -585,6 +585,17 @@ test('published tool guidance matches native inputs and timer limits', async () 
   assert.equal(requests.length, 0, 'reading guidance must not discover or invoke backend operations');
 });
 
+test('elicitation MCP forwards typed content exactly once and rejects content on decline', async () => {
+  const content = { confirmed: false, count: 0, selections: ['a'] };
+  const result = await call('cockpit_respond_elicitation', { session_id: 'B', request_id: 'form', action: 'accept', content });
+  assert.equal(result.isError, false);
+  assert.deepEqual(requests.map(({ path, body }) => ({ path, body })), [
+    { path: '/intent/respondElicitation', body: { sessionId: 'B', requestId: 'form', action: 'accept', content } },
+  ]);
+  const rejected = await call('cockpit_respond_elicitation', { session_id: 'B', request_id: 'form', action: 'decline', content });
+  assert.equal(rejected.isError, true);
+});
+
 test('plan feedback acknowledgement promises no separate host prompt or mode actions', async () => {
   const result = await call('cockpit_plan_supersede', { session_id: 'B', request_id: 'plan', message: 'Revise the plan' });
   assert.equal(result.isError, false);

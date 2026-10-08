@@ -337,6 +337,25 @@ Answered requests stay in the transcript as done cards: ask and plan replies com
 native history (`ask-reply`, `plan-reply`); elicitation answers are not in native history,
 so the browser tab keeps a local "handled" marker whose chosen action is lost on refresh.
 
+<a id="elicitation"></a>
+MCP elicitation supports explicit acceptance of simple confirmations and flat
+forms from the pinned SDK: strings (including enums and titled choices), numbers,
+integers, booleans and string-choice arrays. The pending request exposes
+`requestedSchema`; the card displays labels, descriptions and defaults, and returns
+typed `content` with `respondElicitation`. Defaults never submit automatically.
+Optional fields have an explicit omit action, distinct from an empty string.
+Required fields, types, choices, bounds and supported string formats are checked
+again before resolving the native callback. Invalid content leaves it pending;
+decline/cancel omit content and do not require a valid form. Empty forms accept
+with `{}`. The browser keeps form edits only in memory while the decision card is
+mounted, including across its tabs; it does not persist form content in handled
+markers or local storage.
+
+URL flows and schemas with unknown fields or constraints remain decline/cancel-only
+with an explicit `unsupportedReason`. The host does not open URLs, invent missing
+values or weaken a schema to make Accept available. This is independent of
+`allow-all`, which approves tool execution permissions, not elicitation answers.
+
 Ask questions and their recorded originals use the existing chat Markdown renderer,
 including lists, links, code and tables. Each choice remains one full clickable button,
 with a noninteractive label produced by the same Markdown parser. Emphasis, strikeout

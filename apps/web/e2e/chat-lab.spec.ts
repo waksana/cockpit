@@ -67,6 +67,23 @@ const componentScenes: [scene: string, ready: string][] = [
   ['decision-history', '.chat-decision-card[data-state="done"]'],
 ];
 
+test('structured elicitation validates input and submits typed content without overflow', async ({ page }, testInfo) => {
+  const guard = await open(page, 'scene=elicitation-form');
+  const card = page.locator('.chat-decision-card[data-state="pending"]');
+  await expect(card).toBeVisible();
+  await card.getByRole('button', { name: '同意', exact: true }).click();
+  await expect(card.getByRole('alert')).toContainText('confirmed');
+  await page.getByLabel('Confirm *', { exact: true }).selectOption('false');
+  await page.getByLabel('Note *', { exact: true }).fill('Synthetic confirmation');
+  await page.getByLabel('Targets', { exact: true }).selectOption(['0', '1']);
+  await snapshot(page, testInfo, 'elicitation-form');
+  await expectHealthy(page, guard);
+  await card.getByRole('button', { name: '同意', exact: true }).click();
+  await expect(page.getByText(/lab-form \/ accept \/.*"confirmed":false/)).toBeVisible();
+  await expect(card).toHaveCount(0);
+  await expectHealthy(page, guard);
+});
+
 test('session-list descriptions preserve native rows and wrap without nested controls', async ({ page }, testInfo) => {
   const plainGuard = await open(page, 'scene=sidebar');
   const row = page.locator('[data-session-id="demo-roles"]');

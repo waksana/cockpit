@@ -249,7 +249,7 @@ export function Lab() {
         onRespondPlan={(id, answer) => action(`${id} / ${answer}`, () => {
           resolve('plan', id); append(`已批准：${PLAN_ACTION_LABEL[answer]}`, 'user', 'plan-reply', summaryOf(id)?.summary);
         })}
-        onRespondElicitation={(id, answer) => action(`${id} / ${answer}`, () => resolve('elicitation', id))}
+        onRespondElicitation={(id, answer, content) => action(`${id} / ${answer}${content === undefined ? '' : ` / ${JSON.stringify(content)}`}`, () => resolve('elicitation', id))}
         onRemoveQueued={id => { setReceipt(`移除队列项：${id}`); setSession(value => ({ ...value, queue: value.queue?.filter(q => q.id !== id) })); }}
         onCancel={async () => {
           const owner = generation.current;

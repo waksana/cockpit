@@ -125,6 +125,12 @@ non-directory or inaccessible paths fail. Large JSON listings retain the resolve
 `parent` while explicitly compacting entries; `_returned` reports retained entry count.
 <a id="confirmation-boundaries"></a>
 ### Native outcomes and irreversible operations
+`cockpit_respond_elicitation` accepts optional typed `content` for supported forms.
+Read `cockpit_get_session` with `response_format:"json"` for the offered actions
+and `requestedSchema`; do not infer answers from the tool permission policy.
+See [elicitation behavior](../../docs/native-chat.md#elicitation)
+for validation and unsupported-flow boundaries.
+
 `cockpit_compact_session` compacts model-facing context only; retained chat events remain. There is
 no undo. `cockpit_rewind_session` discards conversation history from the chosen user message, and
 `cockpit_delete_session` permanently deletes a native session through native `deleteSession` /

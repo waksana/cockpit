@@ -54,7 +54,7 @@ export const coreCapabilities = {
   deleteSession: true,
   mcpReload: 'native-session-connections',
   planSupersede: 'pending-plan-feedback',
-  elicitationAccept: 'unstructured-only',
+  elicitationAccept: 'unstructured-and-validated-forms',
   schedule: {
     intervalPattern: '^[1-9]\\d*(s|m|h|d)$', minSeconds: 1, maxSeconds: 86400,
     at: true, recurring: true, recurringAt: false, cron: false, tz: false, displayPrompt: false,
@@ -563,8 +563,8 @@ export class Engine {
     return this.decisions.respondPlan(id, requestId, action);
   }
 
-  respondElicitation(id: string, requestId: string, action: 'accept' | 'decline' | 'cancel'): Promise<void> {
-    return this.decisions.respondElicitation(id, requestId, action);
+  respondElicitation(id: string, requestId: string, action: 'accept' | 'decline' | 'cancel', content?: import('@cockpit/protocol').ElicitationContent): Promise<void> {
+    return this.decisions.respondElicitation(id, requestId, action, content);
   }
 
   planSupersede(id: string, requestId: string, message: string): Promise<void> {

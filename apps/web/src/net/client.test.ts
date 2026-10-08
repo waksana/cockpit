@@ -63,6 +63,13 @@ const chatPage: NativeChatPage = {
 };
 const attachment: NativeAttachment = { type: 'file', path: '/native/fixture.txt' };
 
+test('elicitation content reaches the typed intent once without dropping false or zero', async t => {
+  const { client, fetch } = setup(t, async () => Response.json({ ok: true }));
+  const content = { confirmed: false, count: 0, labels: ['a'] };
+  await client.respondElicitation('session', 'form', 'accept', content);
+  assertOnlyPost(fetch, 'respondElicitation', { sessionId: 'session', requestId: 'form', action: 'accept', content });
+});
+
 for (const mode of [undefined, 'enqueue', 'immediate'] as const) {
   test(`native prompt forwards native attachment fields once (${mode ?? 'default'})`, async t => {
     const attachments: NativeAttachment[] = [

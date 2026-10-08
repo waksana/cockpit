@@ -3,6 +3,7 @@
 // Thread composes the per-concern hooks and presentation in features/thread.
 
 import type { ReactNode } from 'react';
+import type { ElicitationContent } from '@cockpit/protocol';
 import { Composer } from './Composer';
 import { ComposerCard } from './ComposerSurface';
 import { ConversationFrame } from './ModuleComponents';
@@ -28,7 +29,7 @@ interface ThreadProps {
   onSend?: (request: NativeDraftRequest) => Promise<boolean>;
   onRespondAsk?: (requestId: string, answer: string, wasFreeform: boolean) => Promise<boolean>;
   onRespondPlan?: (requestId: string, action: ExitPlanModeAction) => Promise<boolean>;
-  onRespondElicitation?: (requestId: string, action: 'accept' | 'decline' | 'cancel') => Promise<boolean>;
+  onRespondElicitation?: (requestId: string, action: 'accept' | 'decline' | 'cancel', content?: ElicitationContent) => Promise<boolean>;
   onRemoveQueued?: (itemId: string) => void;
   onCancel?: () => void | Promise<void>;
   onInterrupt?: () => Promise<{ ok: true; interrupted: boolean }>;
@@ -87,11 +88,11 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
       const target = draftOf('plan', requestId);
       if (target) void runAction(target, () => onRespondPlan?.(requestId, action));
     }}
-    onElicitation={(request, action) => {
+    onElicitation={(request, action, content) => {
       const target = draftOf('elicitation', request.requestId);
       if (!target) return;
       const anchor = session.messages.at(-1)?.id ?? null;
-      void runAction(target, () => onRespondElicitation?.(request.requestId, action)).then(ok => {
+      void runAction(target, () => onRespondElicitation?.(request.requestId, action, content)).then(ok => {
         if (ok) recordElicitation(session.sessionId, { requestId: request.requestId, message: request.message,
           ...(request.source ? { source: request.source } : {}), anchor, timestamp: Date.now(), action });
       });

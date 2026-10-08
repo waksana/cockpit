@@ -200,6 +200,7 @@ export const scenarios = [
   ['freeform', '自由输入提问'],
   ['plan', '计划 / 完整计划 / 新指令'],
   ['elicitation', '同意 / 拒绝 / 取消'],
+  ['elicitation-form', '工具表单 / 校验 / 同意'],
   ['empty', '空对话'],
   ['loading', '首次加载'],
   ['initial-history', '异步首次历史 / 绘制定位'],
@@ -303,6 +304,16 @@ export function fixtureSession(scenario: Scenario): ChatSession {
     actions: ['interactive', 'autopilot', 'autopilot_fleet', 'exit_only'], recommendedAction: 'interactive',
   };
   if (['elicitation', 'elicitation-queued', 'decision-stack'].includes(scenario)) session.elicitation = { requestId: 'lab-elicitation', message: '此工具请求你的确认。是否允许读取选定目录？这是隔离组件场景，不会调用真实工具。', source: 'fixture-mcp', actions: ['accept', 'decline', 'cancel'] };
+  if (scenario === 'elicitation-form') session.elicitation = {
+    requestId: 'lab-form', message: '这是合成表单，不会调用真实工具。请填写后明确选择同意、拒绝或取消。',
+    source: 'fixture-mcp', actions: ['accept', 'decline', 'cancel'],
+    requestedSchema: { type: 'object', properties: {
+      confirmed: { type: 'boolean', title: 'Confirm', description: 'Choose explicitly; tool execution permission does not answer this form.' },
+      note: { type: 'string', title: 'Note', minLength: 2, maxLength: 200 },
+      count: { type: 'integer', title: 'Count', minimum: 0, maximum: 5, default: 0 },
+      targets: { type: 'array', title: 'Targets', items: { type: 'string', enum: ['alpha', 'beta'] } },
+    }, required: ['confirmed', 'note'] },
+  };
   if (session.ask || session.planRequest || session.elicitation) Object.assign(session, { status: 'running', nativeProcessing: true });
   if (scenario.endsWith('-queued') || scenario === 'decision-stack') session.queue = [
     { id: 'queued-short', text: '完成之后，再检查窄屏布局。' },

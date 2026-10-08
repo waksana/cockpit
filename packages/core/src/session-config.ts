@@ -1,4 +1,5 @@
 import type { ElicitationResult, ExitPlanModeResult, SessionConfig } from '@github/copilot-sdk';
+import { ElicitationSchema, validateElicitationContent } from '@cockpit/protocol';
 import { CockpitError, invalid } from './errors.ts';
 import { settled } from './async.ts';
 import type { SessionKernel } from './kernel.ts';
@@ -104,14 +105,29 @@ export class SessionConfigurator {
           throw invalid('Plan action was not offered or is unsupported');
         }
       }),
-      onElicitationRequest: request => this.decisions.decision<ElicitationResult>(st, 'elicitation', {
-        message: request.message, ...(request.elicitationSource ? { source: request.elicitationSource } : {}),
-        actions: request.mode === 'url' || request.requestedSchema ? ['decline', 'cancel'] : ['accept', 'decline', 'cancel'],
-      }, response => {
-        if (response.action === 'accept' && (request.mode === 'url' || request.requestedSchema)) {
-          throw new CockpitError('UNSUPPORTED', 'Structured/URL elicitation acceptance is unsupported; decline or cancel the real request');
-        }
-      }),
+      onElicitationRequest: request => {
+        const parsed = request.requestedSchema === undefined ? undefined : ElicitationSchema.safeParse(request.requestedSchema);
+        const unsupportedReason = request.mode === 'url' ? 'URL elicitation acceptance is unsupported.'
+          : parsed && !parsed.success ? 'This elicitation schema contains unsupported fields or constraints.'
+            : request.mode === 'form' && !parsed ? 'Form elicitation is missing its schema.' : undefined;
+        const schema = parsed?.success ? parsed.data : undefined;
+        return this.decisions.decision<ElicitationResult>(st, 'elicitation', {
+          message: request.message, ...(request.elicitationSource ? { source: request.elicitationSource } : {}),
+          actions: unsupportedReason ? ['decline', 'cancel'] : ['accept', 'decline', 'cancel'],
+          ...(schema && !unsupportedReason ? { requestedSchema: schema } : {}),
+          ...(unsupportedReason ? { unsupportedReason } : {}),
+        }, response => {
+          if (response.action !== 'accept') {
+            if (response.content !== undefined) throw invalid('Only accept may include content');
+            return;
+          }
+          if (unsupportedReason) throw new CockpitError('UNSUPPORTED', unsupportedReason);
+          if (schema) {
+            const result = validateElicitationContent(schema, response.content);
+            if (!result.success) throw invalid(result.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; '));
+          } else if (response.content !== undefined) throw invalid('This confirmation does not request form content');
+        });
+      },
     } };
   }
 }

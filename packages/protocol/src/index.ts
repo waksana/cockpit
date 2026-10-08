@@ -4,6 +4,8 @@
 // validate against them, so the frontend and backend can never drift.
 
 import { z } from 'zod';
+import { ElicitationContent, ElicitationSchema } from './elicitation.ts';
+export { ElicitationContent, ElicitationSchema, ElicitationField, elicitationOptions, validateElicitationContent } from './elicitation.ts';
 export { ErrorCodes, errorCode, isErrorCode } from './errors.ts';
 export type { ErrorCode } from './errors.ts';
 import { snapshotModuleEventPayload } from './module-event.ts';
@@ -444,13 +446,14 @@ export const PlanRequest = z.object({
 });
 export type PlanRequest = z.infer<typeof PlanRequest>;
 
-// MCP/agent elicitation (elicitation.requested) — a request for input. v1 surfaces
-// the message + accept/decline (no dynamic form rendering yet).
+// Native pending elicitation, including supported flat form schemas.
 export const ElicitationRequest = z.object({
   requestId: z.string(),
   message: z.string(),
   source: z.string().optional().describe('Native elicitation source, such as an MCP server name, when reported.'),
   actions: z.array(z.enum(['accept', 'decline', 'cancel'])).optional(),
+  requestedSchema: ElicitationSchema.optional(),
+  unsupportedReason: z.string().optional(),
 });
 export type ElicitationRequest = z.infer<typeof ElicitationRequest>;
 
@@ -1015,7 +1018,10 @@ export const Intents = {
     result: z.object({ ok: z.boolean() }),
   },
   respondElicitation: {
-    body: z.object({ sessionId: z.string(), requestId: z.string(), action: z.enum(['accept', 'decline', 'cancel']) }).strict(),
+    description: 'Answer the pending native elicitation. Accept a supported form with content matching requestedSchema; URL and unsupported forms cannot be accepted. Decline/cancel must omit content. Invalid answers leave the request pending.',
+    body: z.object({ sessionId: z.string(), requestId: z.string(), action: z.enum(['accept', 'decline', 'cancel']),
+      content: ElicitationContent.optional() }).strict().refine(b => b.action === 'accept' || b.content === undefined,
+      'Only accept may include content'),
     result: z.object({ ok: z.boolean() }),
   },
   'queue/remove': {

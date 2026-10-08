@@ -348,13 +348,13 @@ test('a native plan action outside the supported protocol cannot be accepted thr
 });
 
 for (const mode of ['form', 'url'] as const) {
-  test(`${mode} elicitation cannot fake structured acceptance; decline resolves the real callback`, async t => {
+  test(`${mode} unsupported elicitation cannot fake acceptance; decline resolves the real callback`, async t => {
     const h = harness(t);
     const s = await h.load();
     const result = h.configs.get(s.id)!.onElicitationRequest!({
       sessionId: s.id, message: 'Provide account details', mode,
       ...(mode === 'form'
-        ? { requestedSchema: { type: 'object' as const, properties: { label: { type: 'string' as const } }, required: ['label'] } }
+        ? {}
         : { url: 'https://example.invalid/never-opened' }),
     });
     assert.ok(result instanceof Promise);
@@ -363,6 +363,7 @@ for (const mode of ['form', 'url'] as const) {
     const id = (await h.engine.getMeta(s.id))!.elicitation!.requestId;
     assert.deepEqual((await h.engine.getMeta(s.id))!.elicitation, {
       requestId: id, message: 'Provide account details', actions: ['decline', 'cancel'],
+      unsupportedReason: mode === 'url' ? 'URL elicitation acceptance is unsupported.' : 'Form elicitation is missing its schema.',
     });
     await assert.rejects(h.engine.respondElicitation(s.id, 'stale', 'decline'), errorWithCode('REQUEST_NOT_PENDING'));
     await assert.rejects(h.engine.respondElicitation(s.id, id, 'accept'), errorWithCode('UNSUPPORTED'));
@@ -466,6 +467,51 @@ test('plan feedback resolves the exact native callback without mode changes or a
   assert.equal(coreCapabilities.planSupersede, 'pending-plan-feedback');
   assert.equal(coreCapabilities.deleteSession, true);
   assert.equal('purgeSession' in coreCapabilities, false);
-  assert.equal(coreCapabilities.elicitationAccept, 'unstructured-only');
+  assert.equal(coreCapabilities.elicitationAccept, 'unstructured-and-validated-forms');
   assert.equal(coreCapabilities.schedule.cron, false);
+});
+
+test('structured accept validates content before settling the native callback and does not approve under allow-all', async t => {
+  const h = harness(t);
+  const s = await h.load();
+  const schema = { type: 'object' as const, properties: { confirmed: { type: 'boolean' as const, default: true } }, required: ['confirmed'] };
+  const result = h.configs.get(s.id)!.onElicitationRequest!({
+    sessionId: s.id, message: 'Confirm publication', mode: 'form', requestedSchema: schema,
+  });
+  let settled = false;
+  void Promise.resolve(result).then(() => { settled = true; });
+  const request = (await h.engine.getMeta(s.id))!.elicitation!;
+  assert.deepEqual(request.requestedSchema, schema);
+  assert.deepEqual(request.actions, ['accept', 'decline', 'cancel']);
+  const invalidContents: Array<import('@cockpit/protocol').ElicitationContent | undefined> =
+    [undefined, {}, { confirmed: 'true' }, { confirmed: true, extra: 'x' }];
+  for (const content of invalidContents) {
+    await assert.rejects(h.engine.respondElicitation(s.id, request.requestId, 'accept', content), errorWithCode('INVALID_REQUEST'));
+  }
+  await assert.rejects(h.engine.respondElicitation(s.id, request.requestId, 'cancel', { confirmed: true }), errorWithCode('INVALID_REQUEST'));
+  await nextTurn();
+  assert.equal(settled, false);
+  assert.equal((await h.engine.getMeta(s.id))!.elicitation!.requestId, request.requestId);
+  await h.engine.respondElicitation(s.id, request.requestId, 'accept', { confirmed: false });
+  assert.deepEqual(await result, { action: 'accept', content: { confirmed: false } });
+  await assert.rejects(h.engine.respondElicitation(s.id, request.requestId, 'accept', { confirmed: true }), errorWithCode('REQUEST_NOT_PENDING'));
+  assert.equal(s.sdk.send.mock.callCount(), 0);
+});
+
+test('empty forms accept explicit empty content and unsupported constraints keep cancel available', async t => {
+  const h = harness(t);
+  const s = await h.load();
+  const config = h.configs.get(s.id)!;
+  const empty = config.onElicitationRequest!({ sessionId: s.id, message: 'Confirm', requestedSchema: { type: 'object', properties: {} } });
+  const id = (await h.engine.getMeta(s.id))!.elicitation!.requestId;
+  await h.engine.respondElicitation(s.id, id, 'accept', {});
+  assert.deepEqual(await empty, { action: 'accept', content: {} });
+  const schema = { type: 'object' as const, properties: { value: { type: 'string' as const, pattern: '^a$' } } };
+  const unsupported = config.onElicitationRequest!({ sessionId: s.id, message: 'Pattern', requestedSchema: schema });
+  const request = (await h.engine.getMeta(s.id))!.elicitation!;
+  assert.deepEqual(request.actions, ['decline', 'cancel']);
+  assert.ok(request.unsupportedReason);
+  await assert.rejects(h.engine.respondElicitation(s.id, request.requestId, 'accept', { value: 'a' }), errorWithCode('UNSUPPORTED'));
+  await h.engine.respondElicitation(s.id, request.requestId, 'cancel');
+  assert.deepEqual(await unsupported, { action: 'cancel' });
 });
