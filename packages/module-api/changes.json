@@ -1,5 +1,10 @@
 [
   {
+    "version": "0.18.0",
+    "kind": "additive",
+    "summary": "Expose optional supported elicitation form schemas, unsupported reasons and typed acceptance content in the generated host wire contract. Preserve simple confirmations and explicit decline/cancel. SDK source preparation only; independent publication remains required."
+  },
+  {
     "version": "0.17.0",
     "kind": "additive",
     "summary": "Add capability-gated transparent public interface middleware with typed input enhancements, single-use continuation, Host-owned native results and shutdown drain. SDK source preparation only; independent publication remains required."
