@@ -71,3 +71,30 @@ test('legacy empty history stays neutral and reports unknown evidence', async ()
   assert.ok(screen.getByText(/这不是健康检查结果/));
   assert.equal(screen.queryByRole('alert'), null);
 });
+
+test('ordinary dismissal preserves neighboring focus, panel fallback and Escape ownership', async t => {
+  t.mock.method(console, 'error', () => {});
+  const store = moduleRuntime.diagnostics;
+  store.replace({ errors: [] });
+  for (const error of getUxErrors()) dismissUxError(error.id);
+  for (const message of ['first neighbor', 'middle neighbor', 'last neighbor']) reportUxError(message);
+  t.after(() => { for (const error of getUxErrors()) dismissUxError(error.id); });
+  let escaped = 0;
+  render(createElement('div', { onKeyDown: () => { escaped++; } },
+    createElement('details', { className: 'inspector-pane', open: true },
+      createElement('summary', null, 'Panel control'),
+      createElement('div', { className: 'inspector-surface', tabIndex: -1 }, 'Panel')),
+    createElement(UxErrorNotifications)));
+  const buttons = screen.getAllByRole('button', { name: '关闭错误通知' });
+  buttons[1].focus();
+  const user = userEvent.setup();
+  await user.keyboard('{Escape}');
+  assert.equal(document.activeElement, buttons[2]);
+  assert.equal(escaped, 0);
+  await user.keyboard('{Escape}');
+  assert.equal(document.activeElement, buttons[0]);
+  await user.keyboard('{Escape}');
+  assert.equal(document.activeElement, screen.getByText('Panel'));
+  assert.equal(escaped, 0);
+  assert.equal(screen.queryByRole('complementary'), null);
+});

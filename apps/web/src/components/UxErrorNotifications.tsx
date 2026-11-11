@@ -12,9 +12,10 @@ export function UxErrorNotifications({ withinDialog = false }: { withinDialog?: 
   const dismiss = (action: () => void, button: HTMLButtonElement) => {
     if (document.activeElement === button) {
       const card = button.closest('.ux-error-notification, .module-diagnostic-notification');
-      const buttons = Array.from(button.closest('aside')?.querySelectorAll<HTMLButtonElement>('button') ?? [])
-        .filter(candidate => !card?.contains(candidate));
-      const fallback = buttons[0]
+      const buttons = Array.from(button.closest('aside')?.querySelectorAll<HTMLButtonElement>('button') ?? []);
+      const index = buttons.indexOf(button);
+      const outsideCard = (candidate: HTMLButtonElement) => !card?.contains(candidate);
+      const fallback = buttons.slice(index + 1).find(outsideCard) ?? buttons.slice(0, index).reverse().find(outsideCard)
         ?? button.closest('dialog')?.querySelector<HTMLElement>('[data-dialog-focus]')
         ?? document.querySelector<HTMLElement>('.inspector-pane[open] .inspector-surface')
         ?? document.querySelector<HTMLElement>('.cockpit-shell');

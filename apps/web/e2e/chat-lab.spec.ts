@@ -434,6 +434,8 @@ test('global settings preserve one scroll area and a reachable close control wit
   }, savedModelId);
   await dialog.getByRole('button', { name: '刷新关于信息' }).click();
   await expect(dialog.getByText('版本未知')).toBeVisible();
+  await dialog.getByRole('button', { name: '展开模块诊断历史' }).click();
+  await expect(dialog.getByText(/Synthetic failure details/)).toBeVisible();
   await dialog.getByRole('button', { name: '刷新默认模型' }).click();
   await expect(dialog.getByRole('combobox')).toHaveValue(savedModelId);
   await dialog.getByRole('combobox').selectOption('synthetic-long-model');
@@ -465,6 +467,8 @@ test('global settings preserve one scroll area and a reachable close control wit
     .toBe(dimensions.headerTop);
   await expect(dialog.getByRole('button', { name: '关闭设置' })).toBeInViewport();
   await snapshot(page, testInfo, 'global-settings-short-dark');
+  await page.keyboard.press('Tab');
+  await expect(dialog.getByRole('button', { name: '收起模块诊断历史' })).toBeFocused();
   await page.keyboard.press('Tab');
   // Native dialog navigation may visit browser chrome before wrapping.
   const focus = await page.evaluate(() => ({
