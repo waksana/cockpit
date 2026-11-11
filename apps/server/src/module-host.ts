@@ -1,6 +1,6 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { constants } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { open, realpath } from 'node:fs/promises';
 import { validateHeaderName, validateHeaderValue } from 'node:http';
 import { join } from 'node:path';
@@ -17,6 +17,7 @@ import { ModuleMiddleware, isModuleHostIntent } from './module-middleware.ts';
 import { isDeclaredAsset, moduleDataRoot, MODULE_WORKER_LIMIT, readModuleInstallation, readModuleSettings, safeModulePath, type ModuleInstallation } from './module-install.ts';
 
 const DEFAULT_BODY_LIMIT = 1024 * 1024;
+const MAX_DIAGNOSTICS = 100;
 const routeSchema = z.object({
   method: z.enum(['GET', 'HEAD', 'POST', 'DELETE', 'PUT', 'PATCH']),
   path: z.string().max(1024).refine(path => path === '/' || /^\/(?:[A-Za-z0-9._~-]+|:[A-Za-z][A-Za-z0-9_]*)(?:\/(?:[A-Za-z0-9._~-]+|:[A-Za-z][A-Za-z0-9_]*))*(?:\/\*)?$/.test(path),
@@ -54,8 +55,11 @@ const backendSchema = z.object({
 }).strict().refine(backend => !backend.middleware || !Object.keys(backend.middleware).length || !!backend.onStop,
   'Interface middleware requires onStop and shutdownVersion 1');
 
-/** activation: the module did not load; runtime: a loaded module's lifecycle/background failure. */
-export interface ModuleHostError { id: string; stage: 'activation' | 'runtime'; code: string; error: string }
+/** Observations, not a current-health signal or evidence of recovery. */
+export interface ModuleHostError {
+  id: string; stage: 'activation' | 'runtime'; code: string; error: string;
+  firstObservedAt: string; lastObservedAt: string; count: number;
+}
 type ReportStage = ModuleHostError['stage'] | 'request';
 interface Loaded {
   installation: ModuleInstallation;
@@ -80,6 +84,7 @@ export interface ModuleBootstrap {
   modules: ModuleAsset[];
   active: Array<{ id: string; name: string; version: string; digest: string }>;
   errors: ModuleHostError[];
+  errorHistory: { id: string; semantics: 'historical'; currentHealth: 'unknown'; limit: number; evicted: number };
 }
 
 function failure(error: unknown): { status: number; code: string; error: string } {
@@ -105,6 +110,8 @@ export class ModuleHost {
   readonly middleware = new ModuleMiddleware();
   private readonly loaded: Loaded[] = [];
   private readonly errors = new Map<string, ModuleHostError>();
+  private readonly historyId = randomUUID();
+  private evictedErrors = 0;
   private readonly lifetimes = new Set<ModuleLifetime>();
   private readonly retirements = new Set<Promise<void>>();
   private readonly retiring = new WeakSet<ModuleLifetime>();
@@ -156,7 +163,20 @@ export class ModuleHost {
   private report(id: string, error: unknown, stage: ReportStage = 'runtime'): void {
     if (stage !== 'request') {
       const code = failure(error).code;
-      this.errors.set(`${stage}:${id}`, { id, stage, code, error: error instanceof Error ? error.message.slice(0, 2000) : 'Module failed' });
+      const key = JSON.stringify([id, stage, code]);
+      const previous = this.errors.get(key);
+      const now = new Date().toISOString();
+      this.errors.delete(key);
+      this.errors.set(key, {
+        id, stage, code, error: error instanceof Error ? error.message.slice(0, 2000) : 'Module failed',
+        firstObservedAt: previous?.firstObservedAt ?? now, lastObservedAt: now,
+        count: Math.min(Number.MAX_SAFE_INTEGER, (previous?.count ?? 0) + 1),
+      });
+      // Least recently observed aggregate is evicted, never silently replaced by another code.
+      if (this.errors.size > MAX_DIAGNOSTICS) {
+        this.errors.delete(this.errors.keys().next().value!);
+        this.evictedErrors = Math.min(Number.MAX_SAFE_INTEGER, this.evictedErrors + 1);
+      }
     }
     try { this.options.report?.(id, error); } catch { /* Reporting never changes native or module lifecycle. */ }
   }
@@ -178,7 +198,9 @@ export class ModuleHost {
       }),
       active: this.loaded.map(({ installation: { manifest, digest } }) =>
         ({ id: manifest.id, name: manifest.name, version: manifest.version, digest })),
-      errors: [...this.errors.values()],
+      errors: [...this.errors.values()].reverse().map(error => ({ ...error })),
+      errorHistory: { id: this.historyId, semantics: 'historical', currentHealth: 'unknown',
+        limit: MAX_DIAGNOSTICS, evicted: this.evictedErrors },
     };
   }
 

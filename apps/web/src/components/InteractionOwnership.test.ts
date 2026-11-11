@@ -130,10 +130,6 @@ test('panel keyboard scope includes the nonmodal error tray and dismissal does n
   assert.match(details, /modalFooter=\{<UxErrorNotifications withinDialog/);
   assert.match(source('./Shell.tsx'), /!wide && modalFooter/);
   assert.match(source('./Shell.tsx'), /event.defaultPrevented/);
-  assert.match(notifications, /event.stopPropagation\(\)/);
-  assert.match(notifications, /dismiss\(error.id, event.currentTarget\)/);
-  assert.match(notifications, /buttons\[index \+ 1\] \?\? buttons\[index - 1\]/);
-  assert.match(notifications, /querySelector<HTMLElement>\('\.inspector-pane\[open\] \.inspector-surface'\) \?\? document.querySelector<HTMLElement>\('\.cockpit-shell'\)/);
   assert.match(css, /bottom: var\(--ux-error-height, 0px\)/);
   assert.match(css, /height: calc\(100dvh - var\(--ux-error-height, 0px\)\)/);
   assert.match(css, /:root:has\(\.ux-error-notifications\) \.chat-input \{\s*padding-bottom: 0\.25rem/);

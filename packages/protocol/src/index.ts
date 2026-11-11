@@ -61,17 +61,33 @@ export const ServiceIdentity = z.object({
 });
 export type ServiceIdentity = z.infer<typeof ServiceIdentity>;
 
+// Optional observation fields keep older /_modules responses readable without inventing evidence.
+export const ModuleDiagnosticHistory = z.object({
+  errors: z.array(z.object({
+    id: z.string().min(1),
+    stage: z.enum(['activation', 'runtime']),
+    code: z.string().optional(),
+    error: z.string(),
+    firstObservedAt: z.string().datetime().optional(),
+    lastObservedAt: z.string().datetime().optional(),
+    count: z.number().int().positive().safe().optional(),
+  })),
+  errorHistory: z.object({
+    id: z.string().uuid(),
+    semantics: z.literal('historical'),
+    currentHealth: z.literal('unknown'),
+    limit: z.number().int().positive(),
+    evicted: z.number().int().nonnegative().safe(),
+  }).optional(),
+});
+export type ModuleDiagnosticHistory = z.infer<typeof ModuleDiagnosticHistory>;
+
 // Read-only projection of /_modules; asset URLs and public configuration are not needed here.
-export const ModuleInventory = z.object({
+export const ModuleInventory = ModuleDiagnosticHistory.extend({
   active: z.array(z.object({
     id: z.string().min(1),
     name: z.string().min(1).optional(),
     version: z.string().min(1).nullable().optional(),
-  })),
-  errors: z.array(z.object({
-    id: z.string().min(1),
-    stage: z.enum(['activation', 'runtime']),
-    error: z.string().min(1),
   })),
 });
 export type ModuleInventory = z.infer<typeof ModuleInventory>;

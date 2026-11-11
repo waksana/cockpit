@@ -57,3 +57,19 @@
   top: 0;
   min-width: var(--ck-control-size);
 }
+
+.module-diagnostic-notification {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.module-diagnostic-history {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+
+  ol { padding-inline-start: 1.5rem; }
+  li + li { margin-top: 1rem; }
+  p { white-space: pre-wrap; }
+}

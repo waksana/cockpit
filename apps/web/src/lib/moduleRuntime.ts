@@ -18,6 +18,7 @@ import type { NativeDraftRequest } from './draft';
 import { publicComponentBases } from './publicComponents';
 import { PublicComponentRuntime } from './publicComponentContext';
 import { useConversationScroll } from './useConversationScroll';
+import { ModuleDiagnostics } from './moduleDiagnostics';
 
 interface RuntimeOptions {
   baseUrl?: string;
@@ -48,13 +49,6 @@ const BOUNDARIES = new Set<Boundary>(['message', 'messageList', 'chatMessage', '
   'managementHeader', 'managementDetailHeader', 'settings', 'button', 'conversationFrame', 'conversationHeader', 'conversationTranscript']);
 const EMPTY_VIEW: HostSnapshot = Object.freeze({ sessionId: null, visible: false, connected: false });
 let moduleSequence = 0;
-
-// Backend errors are activation failures or loaded-module runtime failures; request errors are not listed.
-function bootstrapError(error: unknown): unknown {
-  if (!record(error)) return error;
-  const kind = error.stage === 'runtime' ? 'runtime error' : 'load failed';
-  return `${String(error.id ?? 'module')}: ${kind}: ${String(error.error ?? error.message ?? 'unknown error')}`;
-}
 
 export class ModuleErrorBoundary extends React.Component<{
   children: React.ReactNode; fallback: React.ReactNode; onFailure(error: unknown): void;
@@ -215,6 +209,7 @@ function installStyle(url: string): () => void {
 }
 
 export class ModuleRuntime {
+  readonly diagnostics = new ModuleDiagnostics();
   private readonly options: RuntimeOptions;
   private snapshot: readonly LoadedModule[] = [];
   private readonly listeners = new Set<() => void>();
@@ -340,7 +335,7 @@ export class ModuleRuntime {
       if (controller.signal.aborted || this.controller !== controller) return;
       if (!record(bootstrap) || !Array.isArray(bootstrap.modules) || !Array.isArray(bootstrap.errors)
         || ('apiVersion' in bootstrap && bootstrap.apiVersion !== 1)) throw new Error('Invalid module bootstrap');
-      for (const error of bootstrap.errors) this.report(bootstrapError(error));
+      this.diagnostics.replace(bootstrap);
       const counts = new Map<string, number>();
       for (const item of bootstrap.modules) if (record(item) && typeof item.id === 'string') counts.set(item.id, (counts.get(item.id) ?? 0) + 1);
       const pending: Promise<void>[] = [];

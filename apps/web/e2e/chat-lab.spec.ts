@@ -1,5 +1,5 @@
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
-import type { SessionMeta } from '@cockpit/protocol';
+import type { ModuleDiagnosticHistory, ModuleInventory, SessionMeta } from '@cockpit/protocol';
 import { askMarkdownChoices } from '../src/dev/ask-markdown-fixture';
 
 // Chat Lab browser smoke: every page loads the production components on
@@ -66,6 +66,55 @@ const componentScenes: [scene: string, ready: string][] = [
   ['decision-stack', '.chat-decision-tabs'],
   ['decision-history', '.chat-decision-card[data-state="done"]'],
 ];
+
+test('module diagnostic history exposes every retained record and remains reachable after dismissal', async ({ page }, testInfo) => {
+  const guard = await open(page, 'scene=sidebar');
+  await page.evaluate(async () => {
+    const runtimePath = '/src/lib/moduleRuntime.ts';
+    const apiPath = '/src/net/api.ts';
+    const { moduleRuntime } = await import(runtimePath) as {
+      moduleRuntime: { diagnostics: { replace(history: ModuleDiagnosticHistory): void } };
+    };
+    const { cockpitApi } = await import(apiPath) as {
+      cockpitApi: { moduleInventory(): Promise<ModuleInventory> };
+    };
+    const history: ModuleDiagnosticHistory = {
+      errors: Array.from({ length: 5 }, (_, index) => ({
+        id: `synthetic-${index}`, stage: 'runtime', code: `SYNTHETIC_${index}`, count: index + 1,
+        error: `Historical cause ${index}: ${'long-diagnostic-without-spaces-'.repeat(12)}`,
+        firstObservedAt: '2026-11-11T00:00:00.000Z', lastObservedAt: '2026-11-11T01:00:00.000Z',
+      })),
+      errorHistory: { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', semantics: 'historical',
+        currentHealth: 'unknown', limit: 100, evicted: 4 },
+    };
+    moduleRuntime.diagnostics.replace(history);
+    cockpitApi.moduleInventory = async () => ({ ...history, active: [] });
+  });
+  await expect(page.getByText('模块诊断历史（5 条）')).toBeVisible();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  const toggle = page.getByRole('button', { name: '展开模块诊断历史' });
+  await toggle.focus();
+  await page.keyboard.press('Enter');
+  const tray = page.getByRole('complementary', { name: '本地错误通知' });
+  await expect(tray.getByRole('listitem')).toHaveCount(5);
+  await tray.getByText('SYNTHETIC_4', { exact: true }).scrollIntoViewIfNeeded();
+  await expect(tray.getByText('SYNTHETIC_4', { exact: true })).toBeVisible();
+  await snapshot(page, testInfo, 'module-diagnostic-history');
+  await expectHealthy(page, guard);
+  const close = tray.getByRole('button', { name: '关闭模块诊断提示' });
+  await expect(close).toBeInViewport();
+  await close.click();
+  await expect(tray).toHaveCount(0);
+  await page.getByRole('button', { name: '全局导航' }).click();
+  await page.getByRole('menuitem', { name: '设置', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '设置', exact: true });
+  await dialog.getByRole('button', { name: '展开模块诊断历史' }).click();
+  await expect(dialog.getByRole('listitem')).toHaveCount(5);
+  await dialog.getByText('SYNTHETIC_4', { exact: true }).scrollIntoViewIfNeeded();
+  await expect(dialog.getByText('SYNTHETIC_4', { exact: true })).toBeVisible();
+  await expect(dialog.getByRole('alert')).toHaveCount(0);
+  await expectHealthy(page, guard);
+});
 
 test('structured elicitation validates input and submits typed content without overflow', async ({ page }, testInfo) => {
   const guard = await open(page, 'scene=elicitation-form');
@@ -385,6 +434,8 @@ test('global settings preserve one scroll area and a reachable close control wit
   }, savedModelId);
   await dialog.getByRole('button', { name: '刷新关于信息' }).click();
   await expect(dialog.getByText('版本未知')).toBeVisible();
+  await dialog.getByRole('button', { name: '展开模块诊断历史' }).click();
+  await expect(dialog.getByText(/Synthetic failure details/)).toBeVisible();
   await dialog.getByRole('button', { name: '刷新默认模型' }).click();
   await expect(dialog.getByRole('combobox')).toHaveValue(savedModelId);
   await dialog.getByRole('combobox').selectOption('synthetic-long-model');
@@ -416,6 +467,8 @@ test('global settings preserve one scroll area and a reachable close control wit
     .toBe(dimensions.headerTop);
   await expect(dialog.getByRole('button', { name: '关闭设置' })).toBeInViewport();
   await snapshot(page, testInfo, 'global-settings-short-dark');
+  await page.keyboard.press('Tab');
+  await expect(dialog.getByRole('button', { name: '收起模块诊断历史' })).toBeFocused();
   await page.keyboard.press('Tab');
   // Native dialog navigation may visit browser chrome before wrapping.
   const focus = await page.evaluate(() => ({

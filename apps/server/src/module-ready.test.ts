@@ -125,9 +125,11 @@ test('ready throws and rejections are reported locally, without retries or unloa
   }
   const bootstrap = (await app.inject('/_modules')).json();
   assert.deepEqual(bootstrap.errors.map((error: { id: string; stage: string; error: string }) => [error.id, error.stage]),
-    [['d-invalid', 'activation'], ['a-sync', 'runtime'], ['b-async', 'runtime']]);
-  assert.deepEqual(bootstrap.errors.slice(1).map((error: { error: string }) => error.error), ['sync ready failed', 'async ready failed']);
+    [['b-async', 'runtime'], ['a-sync', 'runtime'], ['d-invalid', 'activation']]);
+  assert.deepEqual(bootstrap.errors.slice(0, 2).map((error: { error: string }) => error.error), ['async ready failed', 'sync ready failed']);
   assert.equal((await app.inject(`/_modules/a-sync/${installed[0]!.digest}/api/probe`)).body, 'healthy');
+  assert.deepEqual((await app.inject('/_modules')).json().errors, bootstrap.errors);
+  assert.equal(bootstrap.errorHistory.currentHealth, 'unknown');
 });
 
 test('close before or during readiness skips callbacks and cancels pending work without waiting', {

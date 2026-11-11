@@ -92,8 +92,11 @@ test('About lists loaded module identities, unknown versions and failures indepe
   assert.ok(within(modules).getByText('backend-only', { exact: true }));
   assert.ok(within(modules).getByText('1.2.3'));
   assert.ok(within(modules).getByText('版本未知'));
-  assert.ok(within(modules).getByText(/broken · 加载失败/));
-  assert.ok(within(modules).getByText(/backend-only · 运行错误/));
+  await userEvent.setup().click(within(modules).getByRole('button', { name: '展开模块诊断历史' }));
+  assert.ok(within(modules).getByText(/broken · 加载阶段/));
+  assert.ok(within(modules).getByText(/backend-only · 运行阶段/));
+  assert.ok(within(modules).getByText(/当前健康未知/));
+  assert.equal(within(modules).queryByRole('alert'), null);
   t.mock.method(cockpitApi, 'moduleInventory', async () => { throw new Error('Inventory unavailable'); });
   await userEvent.setup().click(screen.getByRole('button', { name: '刷新关于信息' }));
   await within(modules).findByText(/Inventory unavailable/);

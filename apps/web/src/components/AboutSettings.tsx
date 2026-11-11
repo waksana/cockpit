@@ -3,6 +3,7 @@ import { loadModuleInventory, loadServiceIdentity } from '../net/api';
 import { useKeyedResource } from '../lib/useKeyedResource';
 import { RefreshButton } from './Button';
 import { ResourceStatus, StateNotice } from './StateNotice';
+import { ModuleDiagnosticHistory } from './ModuleDiagnosticHistory';
 
 export function AboutSettings() {
   const titleId = useId();
@@ -33,9 +34,7 @@ export function AboutSettings() {
             <dd>{module.version ?? '版本未知'}</dd>
           </div>)}
         </dl> : <StateNotice kind="empty">当前宿主未加载模块。</StateNotice>}
-        {inventory.errors.map((error, index) => <StateNotice kind="error" key={`${error.id}:${error.stage}:${index}`}>
-          {error.id} · {error.stage === 'activation' ? '加载失败' : '运行错误'}：{error.error}
-        </StateNotice>)}
+        <ModuleDiagnosticHistory history={inventory} />
       </>}
     </section>
   </section>;

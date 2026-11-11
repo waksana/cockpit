@@ -1,14 +1,21 @@
 import { useSyncExternalStore } from 'react';
 import { dismissUxError, getUxErrors, subscribeUxErrors } from '../lib/errorReporter';
 import { Button } from './Button';
+import { moduleRuntime } from '../lib/moduleRuntime';
+import { ModuleDiagnosticHistory } from './ModuleDiagnosticHistory';
 
 export function UxErrorNotifications({ withinDialog = false }: { withinDialog?: boolean }) {
   const errors = useSyncExternalStore(subscribeUxErrors, getUxErrors, getUxErrors);
-  const dismiss = (id: number, button: HTMLButtonElement) => {
+  const diagnostics = moduleRuntime.diagnostics;
+  const history = useSyncExternalStore(diagnostics.subscribe, diagnostics.getSnapshot, diagnostics.getSnapshot);
+  const showHistory = history.errors.length > 0 && !history.dismissed;
+  const dismiss = (action: () => void, button: HTMLButtonElement) => {
     if (document.activeElement === button) {
+      const card = button.closest('.ux-error-notification, .module-diagnostic-notification');
       const buttons = Array.from(button.closest('aside')?.querySelectorAll<HTMLButtonElement>('button') ?? []);
       const index = buttons.indexOf(button);
-      const fallback = buttons[index + 1] ?? buttons[index - 1]
+      const outsideCard = (candidate: HTMLButtonElement) => !card?.contains(candidate);
+      const fallback = buttons.slice(index + 1).find(outsideCard) ?? buttons.slice(0, index).reverse().find(outsideCard)
         ?? button.closest('dialog')?.querySelector<HTMLElement>('[data-dialog-focus]')
         ?? document.querySelector<HTMLElement>('.inspector-pane[open] .inspector-surface')
         ?? document.querySelector<HTMLElement>('.cockpit-shell');
@@ -17,12 +24,23 @@ export function UxErrorNotifications({ withinDialog = false }: { withinDialog?: 
         fallback.focus();
       }
     }
-    dismissUxError(id);
+    action();
   };
-  if (!errors.length) return null;
+  if (!errors.length && !showHistory) return null;
 
   return (
     <aside className="ux-error-notifications" data-dialog-notices={withinDialog || undefined} aria-label="本地错误通知">
+      {showHistory && <div className="module-diagnostic-notification ck-surface">
+        <ModuleDiagnosticHistory history={history} />
+        <Button className="ux-error-notification-dismiss" aria-label="关闭模块诊断提示"
+          onClick={event => dismiss(diagnostics.dismiss, event.currentTarget)}
+          onKeyDown={event => {
+            if (event.key !== 'Escape') return;
+            event.preventDefault();
+            event.stopPropagation();
+            dismiss(diagnostics.dismiss, event.currentTarget);
+          }}>关闭</Button>
+      </div>}
       {errors.map((error) => (
         <div key={error.id} className="ux-error-notification ck-surface">
           <div className="ux-error-notification-content" role="alert">
@@ -32,12 +50,12 @@ export function UxErrorNotifications({ withinDialog = false }: { withinDialog?: 
           <Button
             className="ux-error-notification-dismiss"
             aria-label="关闭错误通知"
-            onClick={(event) => dismiss(error.id, event.currentTarget)}
+            onClick={(event) => dismiss(() => dismissUxError(error.id), event.currentTarget)}
             onKeyDown={(event) => {
               if (event.key !== 'Escape') return;
               event.preventDefault();
               event.stopPropagation();
-              dismiss(error.id, event.currentTarget);
+              dismiss(() => dismissUxError(error.id), event.currentTarget);
             }}
           >
             关闭
