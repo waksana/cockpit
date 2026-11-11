@@ -107,6 +107,7 @@ test('a stopped bootstrap body cannot activate modules or report stale errors', 
   assert.equal(runtime.getSnapshot(), current);
   assert.equal(imports.length, 1);
   assert.deepEqual(reports, []);
+  assert.deepEqual(runtime.diagnostics.getSnapshot().errors, []);
   assert.equal(notifications, 0);
   unsubscribe();
   runtime.stop();
@@ -1040,7 +1041,7 @@ test('draft schemas stage initialization and prepare drafts discovered during as
   assert.equal(b.getSnapshot().hasContent, false);
 });
 
-test('bootstrap errors distinguish activation failures from loaded-module runtime failures', async () => {
+test('legacy bootstrap errors retain stage as history without reporting current failures', async () => {
   const errors: unknown[] = [];
   const runtime = new ModuleRuntime({ pageUrl: 'https://fixture.invalid',
     fetch: async () => Response.json({ modules: [], errors: [
@@ -1050,5 +1051,14 @@ test('bootstrap errors distinguish activation failures from loaded-module runtim
     report: error => { errors.push(error); },
   });
   await runtime.start();
-  assert.deepEqual(errors, ['broken: load failed: activate threw', 'loaded: runtime error: onReady rejected']);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(runtime.diagnostics.getSnapshot().errors.map(error => [error.id, error.stage, error.count]), [
+    ['broken', 'activation', undefined], ['loaded', 'runtime', undefined],
+  ]);
+  runtime.diagnostics.dismiss();
+  runtime.stop();
+  await runtime.start();
+  assert.equal(runtime.diagnostics.getSnapshot().dismissed, true, 'reconnect does not reannounce unchanged history');
+  assert.deepEqual(errors, []);
+  runtime.stop();
 });

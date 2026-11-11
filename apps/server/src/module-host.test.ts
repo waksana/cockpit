@@ -119,6 +119,56 @@ export function activate(ctx) {
 export function publish(value) { context.publish(value); }
 `;
 
+test('diagnostics retain bounded per-code observation history without inferring recovery', async t => {
+  const f = await moduleFixture(t);
+  const installed = await installLocalModule(await f.package(moduleEntries('history', `
+    export let report;
+    export function activate(ctx) {
+      report = (code, message = code) => ctx.report(Object.assign(new Error(message), { code }));
+      return { routes: [
+        { method: 'GET', path: '/ok', handler: () => ({ body: { ok: true } }) },
+        { method: 'GET', path: '/bad', handler: () => { throw new Error('request only'); } }
+      ] };
+    }
+  `)), { trustLocalCode: true, enable: true });
+  const app = Fastify(); t.after(() => app.close());
+  const host = new ModuleHost({ observer: f.observer });
+  await host.register(app);
+  const probe = await import(pathToFileURL(join(installed.root, 'backend.mjs')).href);
+  let now = Date.parse('2026-11-11T00:00:00.000Z');
+  t.mock.timers.enable({ apis: ['Date'], now });
+  probe.report('FIRST', 'first cause');
+  now += 1000; t.mock.timers.setTime(now);
+  probe.report('SECOND');
+  now += 1000; t.mock.timers.setTime(now);
+  probe.report('FIRST', 'latest cause');
+  const snapshot = host.bootstrap();
+  assert.deepEqual(snapshot.errors, [
+    { id: 'history', stage: 'runtime', code: 'FIRST', error: 'latest cause', count: 2,
+      firstObservedAt: '2026-11-11T00:00:00.000Z', lastObservedAt: '2026-11-11T00:00:02.000Z' },
+    { id: 'history', stage: 'runtime', code: 'SECOND', error: 'SECOND', count: 1,
+      firstObservedAt: '2026-11-11T00:00:01.000Z', lastObservedAt: '2026-11-11T00:00:01.000Z' },
+  ]);
+  assert.equal(snapshot.errorHistory.currentHealth, 'unknown');
+  assert.equal(snapshot.errorHistory.semantics, 'historical');
+  const base = snapshot.modules[0]!.apiBase;
+  await app.inject(`${base}/ok`);
+  await app.inject(`${base}/bad`);
+  assert.deepEqual(host.bootstrap(), snapshot, 'successful and failed requests do not rewrite history or claim recovery');
+  snapshot.errors[0]!.count = 900;
+  assert.equal(host.bootstrap().errors[0]!.count, 2, 'bootstrap callers cannot mutate retained counters');
+  for (let i = 0; i < 99; i++) probe.report(`CODE_${i}`);
+  const bounded = (await app.inject('/_modules')).json();
+  assert.equal(bounded.errors.length, 100);
+  assert.equal(bounded.errorHistory.evicted, 1);
+  assert.equal(bounded.errorHistory.limit, 100);
+  assert.equal(bounded.errors.some((error: { code: string }) => error.code === 'SECOND'), false);
+  assert.equal(bounded.errors.some((error: { code: string }) => error.code === 'FIRST'), true);
+  probe.report('SECOND');
+  assert.equal(host.bootstrap().errors[0]!.count, 1, 'an evicted aggregate starts a new retained interval');
+  assert.equal(host.bootstrap().errorHistory.evicted, 2);
+});
+
 test('module publish captures immutable data with host-owned routing and stops with its activation', async t => {
   const f = await moduleFixture(t);
   const installed = await installLocalModule(await f.package(moduleEntries('publisher', publishingBackend)), { trustLocalCode: true, enable: true });
@@ -328,7 +378,7 @@ test('activation and route compilation failures stay local and activation is not
   app.get('/native', async () => ({ native: 'healthy' }));
   const bootstrap = (await app.inject('/_modules')).json();
   assert.deepEqual(bootstrap.modules.map((value: { id: string }) => value.id), ['d-good']);
-  assert.deepEqual(bootstrap.errors.map((value: { id: string }) => value.id), ['a-throws', 'b-invalid', 'c-duplicate']);
+  assert.deepEqual(bootstrap.errors.map((value: { id: string }) => value.id), ['c-duplicate', 'b-invalid', 'a-throws']);
   assert.equal(await readFile(join(f.hostRoot, 'modules/data/c-duplicate/activated'), 'utf8'), 'once');
   assert.equal(await readFile(join(f.hostRoot, 'modules/data/c-duplicate/disposed'), 'utf8'), 'yes');
   assert.equal(await readFile(join(f.hostRoot, 'modules/data/b-invalid/disposed'), 'utf8'), 'once');

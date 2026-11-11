@@ -995,7 +995,35 @@ GET /_modules
 `/_modules` returns successfully activated frontend modules, active state for all loaded
 modules (`id`, `name`, `version`, `digest`, including backend-only modules), and errors.
 This is a passive process inventory, not the installed or next-start selection.
-`errors[].stage` is `activation` (not loaded) or `runtime` (lifecycle/background failures of a loaded module, such as `onReady`, event handlers or `context.report`); only the latest error per module and stage is kept. Module HTTP request failures (such as a 409 digest mismatch or a handler exception) are already returned to the caller, so they are only logged and not listed. Errors do not automatically mean a module stopped; actual runtime identity is in active/modules. API and asset URLs are digest-bound. Frontend entry/styles/assets must be declared roots. Old digest paths do
+`errors[]` is bounded **observation history**, not current service health.
+`stage` is `activation` (the load attempt failed) or `runtime` (a reported
+lifecycle/background failure, such as `onReady`, event handlers or `context.report`).
+Each `(id, stage, code)` aggregate retains its latest `error` text (up to 2000
+characters), UTC ISO `firstObservedAt` and `lastObservedAt`, and `count`.
+The host retains at most 100 aggregates globally, ordered most recently observed
+first; capacity evicts the least recently observed aggregate. Reappearance after
+eviction starts a new retained interval. Counts and eviction totals saturate at
+`Number.MAX_SAFE_INTEGER`.
+`errorHistory` exposes the process-local history `id`, `limit`, number of
+`evicted` aggregates, `semantics: "historical"` and `currentHealth: "unknown"`.
+Evicted totals are not distinct-code or lifetime-event totals. This is in-memory
+diagnostic retention, not a durable event archive.
+
+Module HTTP request failures (such as a 409 digest mismatch or a handler exception)
+are already returned to their caller, so they are logged but not added to this
+history. Successful requests, elapsed time and frontend dismissal do not resolve
+observations. There is no generic recovery signal: modules own domain-specific
+health evidence. Process restart loses retained history and is not proof of
+recovery; `active`/`modules` describe loaded identity, not service health.
+
+The Web shows one dismissible, neutral history disclosure with the complete
+retained count/list, not one error toast per record. Settings > About Cockpit
+provides the same complete history with an explicit refresh. An unchanged
+bootstrap after reconnect does not reopen a dismissed notice. Legacy backend
+records remain readable, with missing times, counts and retention marked unknown.
+Historical observations do not consume the ordinary local-error toast budget.
+
+API and asset URLs are digest-bound. Frontend entry/styles/assets must be declared roots. Old digest paths do
 not fall back to newer packages.
 
 Browser `context.request(path, init)` sends relative module API requests with host credentials and `x-cockpit-module-digest`. Mutating methods require the matching digest header. GET/HEAD may omit it for image/video-style fetches, but the URL still contains the digest; a wrong header is rejected. Digest binding is not
